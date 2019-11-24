@@ -1,0 +1,55 @@
+{
+  "interface": {
+    "eth3": {
+      "name": "WAN",
+      "type": "ethernet",
+      "dhcp": true,
+      "intf": "eth3"
+    },
+    "br0": {
+      "name": "LAN",
+      "type": "lan",
+      "ipv4": "10.0.0.1/24",
+      "intf": [
+        "eth0",
+        "eth1",
+        "eth2"
+      ]
+    }
+  },
+  "dns": {
+    "br0": {
+      "useNameserversFromWAN": true
+    }
+  },
+  "routing": {
+    "global": {
+      "default": {
+        "viaIntf": "eth3"
+      }
+    }
+  },
+  "nat": [
+    {
+      "in": "br0",
+      "out": "eth3"
+    }
+  ],
+  "dhcp": {
+    "br0": {
+      "gateway": "10.0.0.1",
+      "subnetMask": "255.255.255.0",
+      "dnsServers": [
+        "10.0.0.1"
+      ],
+      "searchDomain": [
+        ".lan"
+      ],
+      "range": {
+        "from": "10.0.0.10",
+        "to": "10.0.0.250"
+      },
+      "lease": 86400
+    }
+  }
+}
