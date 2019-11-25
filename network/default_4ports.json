@@ -1,9 +1,15 @@
 {
   "interface": {
     "phy": {
-      "eth0": {},
-      "eth1": {},
-      "eth2": {},
+      "eth0": {
+        "enabled": true
+      },
+      "eth1": {
+        "enabled": true
+      },
+      "eth2": {
+        "enabled": true
+      },
       "eth3": {
         "enabled": true,
         "dhcp": true
