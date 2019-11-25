@@ -1,0 +1,9 @@
+{
+  "plugins": {
+    "phy_intf_plugin": {},
+    "bridge_intf_plugin": {},
+    "dns_plugin": {},
+    "nat_plugin": {},
+    "dhcp_plugin": {}
+  }
+}

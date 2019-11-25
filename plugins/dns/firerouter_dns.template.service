@@ -1,0 +1,14 @@
+[Unit]
+Description=FireRouter DNS
+After=network.target
+
+[Service]
+User=root
+Type=simple
+Restart=always
+WorkingDirectory=%WORKING_DIRECTORY%
+ExecStart=/bin/bash %DNS_DIRECTORY%/dns.sh
+ExecReload=/usr/bin/pkill -HUP dnsmasq
+
+[Install]
+WantedBy=multi-user.target

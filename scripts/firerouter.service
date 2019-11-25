@@ -1,0 +1,12 @@
+[Unit]
+Description=FireRouter
+After=network.target
+
+[Service]
+User=pi
+Type=oneshot
+WorkingDirectory=/home/pi/firerouter
+ExecStart=/home/pi/.nvm/versions/node/v10.16.3/bin/node run.js
+
+[Install]
+WantedBy=multi-user.target

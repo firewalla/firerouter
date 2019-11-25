@@ -1,20 +1,24 @@
 {
   "interface": {
-    "eth3": {
-      "name": "WAN",
-      "type": "ethernet",
-      "dhcp": true,
-      "intf": "eth3"
+    "phy": {
+      "eth0": {},
+      "eth1": {},
+      "eth2": {},
+      "eth3": {
+        "enabled": true,
+        "dhcp": true
+      }
     },
-    "br0": {
-      "name": "LAN",
-      "type": "lan",
-      "ipv4": "10.0.0.1/24",
-      "intf": [
-        "eth0",
-        "eth1",
-        "eth2"
-      ]
+    "bridge": {
+      "br0": {
+        "ipv4": "192.168.218.1/24",
+        "intf": [
+          "eth0",
+          "eth1",
+          "eth2"
+        ],
+        "enabled": true
+      }
     }
   },
   "dns": {
