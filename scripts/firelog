@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# -t 'debug' or 'cloud'
+# -m message
+#
+
+while getopts t:m: option
+do
+ case "${option}"
+ in
+ t) DEBUG=${OPTARG};;
+ m) MESSAGE=$OPTARG;;
+ esac
+done
+
+if [[ -e /tmp/FWPRODUCTION ]]
+then
+    if [[ "$DEBUG" != "debug" ]]
+    then
+        /usr/bin/logger "FIREROUTER:("$DEBUG"): "$MESSAGE
+        echo "FIREROUTER:("$DEBUG"): "$MESSAGE >> /home/pi/logs/Trace.log
+    fi
+else
+    /usr/bin/logger "FIREROUTER:("$DEBUG"): "$MESSAGE
+    echo "FIREROUTER:("$DEBUG"): "$MESSAGE >> /home/pi/logs/Trace.log
+fi
