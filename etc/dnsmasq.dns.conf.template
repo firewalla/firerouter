@@ -1,0 +1,23 @@
+port=53
+interface=%INTERFACE%
+bind-interfaces
+except-interface=lo
+
+bogus-priv
+
+user=pi
+group=pi
+
+cache-size=1000
+log-facility=/dev/null
+
+strict-order
+
+# per-interface configurations
+conf-dir=/home/pi/.firewalla/config/dnsmasq/%INTERFACE%
+# global configurations
+conf-dir=/home/pi/.firewalla/config/dnsmasq/
+
+resolv-file=/home/pi/.router/config/dnsmasq/%INTERFACE%.resolv.conf
+
+pid-file=/home/pi/.router/run/dnsmasq/dnsmasq.%INTERFACE%.pid

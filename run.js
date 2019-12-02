@@ -9,6 +9,7 @@ const log = require('./util/logger')(__filename);
 (async () => {
   await pl.initPlugins();
   const activeConfig = ( await ncm.getActiveConfig() ) || require('./network/default_4ports');
+  await ns.prepareEnvironment();
   await ns.setup(activeConfig);
   log.info("Setup Complete!");
   process.exit(0);

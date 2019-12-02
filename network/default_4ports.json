@@ -17,7 +17,7 @@
     },
     "bridge": {
       "br0": {
-        "ipv4": "192.168.218.1/24",
+        "ipv4": "10.0.0.1/24",
         "intf": [
           "eth0",
           "eth1",
@@ -27,11 +27,6 @@
       }
     }
   },
-  "dns": {
-    "br0": {
-      "useNameserversFromWAN": true
-    }
-  },
   "routing": {
     "global": {
       "default": {
@@ -39,17 +34,28 @@
       }
     }
   },
-  "nat": [
-    {
+  "dns": {
+    "default": {
+      "nameservers": [
+        "114.114.114.114",
+        "1.1.1.1"
+      ]
+    },
+    "br0": {
+      "useNameserversFromWAN": true
+    }
+  },
+  "nat": {
+    "br0_eth3": {
       "in": "br0",
       "out": "eth3"
     }
-  ],
+  },
   "dhcp": {
     "br0": {
       "gateway": "10.0.0.1",
       "subnetMask": "255.255.255.0",
-      "dnsServers": [
+      "nameservers": [
         "10.0.0.1"
       ],
       "searchDomain": [

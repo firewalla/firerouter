@@ -14,9 +14,27 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
+const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
+const dhcpRuntimeDir = r.getRuntimeFolder() + "/dhcp";
+
 class DHCPPlugin extends Plugin {
-  init(config) {
-    super.init(config);
+
+  _getConfFilePath() {
+    return `${dhcpConfDir}/${this.name}.conf`;
+  }
+
+  async flush() {
+    log.info("Flushing dhcp", this.name);
+    const confPath = this._getConfFilePath();
+    await fs.unlinkAsync(confPath).catch((err) => {});
+    await exec("sudo systemctl restart firerouter_dhcp");
+  }
+
+  async prepareEnvironment() {
+    await exec(`mkdir -p ${dhcpConfDir}`);
+    await exec(`mkdir -p ${dhcpHostsDir}`);
+    await exec(`mkdir -p ${dhcpRuntimeDir}`);
   }
 
   async installSystemService() {
@@ -37,9 +55,39 @@ class DHCPPlugin extends Plugin {
     await fs.writeFileAsync(targetFile, content);
   }
 
-  async run(name, networkConfig) {
+  async writeDHCPConfFile(iface, tags, from, to, subnetMask, leaseTime, gateway, nameservers, searchDomains) {
+    tags = tags || [];
+    nameservers = nameservers || [];
+    searchDomains = searchDomains || [];
+    let extraTags = "";
+    if (tags.length > 0) {
+      extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
+    }
+    
+    const dhcpRange = `dhcp-range=tag:${iface},${extraTags}${from},${to},${subnetMask},${leaseTime}`;
+    const dhcpOptions = [];
+    if (gateway)
+      dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}3,${gateway}`);
+    if (nameservers.length > 0)
+      dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}6,${nameservers.join(",")}`);
+    if (searchDomains.length > 0)
+      dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}119,${searchDomains.join(",")}`);
+    
+    const content = `${dhcpRange}\n${dhcpOptions.join("\n")}`;
+    await fs.writeFileAsync(this._getConfFilePath(), content);
+  }
+
+  async apply() {
+    await this.prepareEnvironment();
     await this.installDHCPScript();
     await this.installSystemService();
+    let iface = this.name;
+    if (iface.includes(":")) {
+      // virtual interface, need to strip suffix
+      iface = this.name.substr(0, this.name.indexOf(":"));
+    }
+    await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
+      this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain);
     await exec("sudo systemctl restart firerouter_dhcp");
   }
 }
