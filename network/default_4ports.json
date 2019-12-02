@@ -8,7 +8,9 @@
         "enabled": true
       },
       "eth2": {
-        "enabled": true
+        "enabled": true,
+        "ipv4": "192.168.1.111/24",
+        "gateway": "192.168.1.2"
       },
       "eth3": {
         "enabled": true,
@@ -19,9 +21,14 @@
       "br0": {
         "ipv4": "10.0.0.1/24",
         "intf": [
-          "eth0",
-          "eth1",
-          "eth2"
+          "eth0"
+        ],
+        "enabled": true
+      },
+      "br1": {
+        "ipv4": "10.0.1.1/24",
+        "intf": [
+          "eth1"
         ],
         "enabled": true
       }
@@ -31,6 +38,11 @@
     "global": {
       "default": {
         "viaIntf": "eth3"
+      }
+    },
+    "br1": {
+      "default": {
+        "viaIntf": "eth2"
       }
     }
   },
@@ -43,12 +55,22 @@
     },
     "br0": {
       "useNameserversFromWAN": true
+    },
+    "br1": {
+      "nameservers": [
+        "8.8.8.8",
+        "114.114.114.114"
+      ]
     }
   },
   "nat": {
     "br0_eth3": {
       "in": "br0",
       "out": "eth3"
+    },
+    "br1_eth2": {
+      "in": "br1",
+      "out": "eth2"
     }
   },
   "dhcp": {

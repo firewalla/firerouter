@@ -62,12 +62,10 @@ class BridgeInterfacePlugin extends Plugin {
     await exec(`sudo ip link set dev ${this.name} up`);
 
     if(this.networkConfig.ipv4) {
-      await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).then(() => {
-        return this.changeRoutingTables();
-      }).catch((err) => {
+      await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).then(() => {}).catch((err) => {
         log.error(`Got error when setup ipv4: ${err.message}`);
       });
-
+      await this.changeRoutingTables();
     }
   }
 

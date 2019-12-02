@@ -67,17 +67,23 @@ class PhyInterfacePlugin extends Plugin {
       await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
     } else {
       if (this.networkConfig.ipv4) {
-
+        await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).then(() => {
+        }).catch((err) => {
+          log.error(`Failed to set ipv4 for interface ${this.name}`, err.message);
+        })
       }
     }
   }
 
   async changeRoutingTables() {
-    const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout).catch((err) => null);
-    if (!ip4)
-      return;
-    const cidr = ip.cidrSubnet(ip4);
-    await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, `${this.name}_local`).catch((err) => {});
+    // if dhcp is set, dhclient should take care of local and default routing table
+    if (this.networkConfig.ipv4) {
+      const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
+      await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, `${this.name}_local`).catch((err) => {});
+    }
+    if (this.networkConfig.gateway) {
+      await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
+    }
     if (this.networkConfig && (this.networkConfig.gateway || this.networkConfig.dhcp)) {
       // considered as WAN interface, accessbile to "routable"
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_ROUTABLE, 5001).catch((err) => {});
