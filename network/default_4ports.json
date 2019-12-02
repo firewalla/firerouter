@@ -10,11 +10,27 @@
       "eth2": {
         "enabled": true,
         "ipv4": "192.168.1.111/24",
-        "gateway": "192.168.1.2"
+        "gateway": "192.168.1.2",
+        "nameservers": [
+          "114.114.114.114",
+          "8.8.8.8"
+        ]
       },
       "eth3": {
         "enabled": true,
         "dhcp": true
+      }
+    },
+    "vlan": {
+      "eth0.100": {
+        "enabled": true,
+        "vid": 100,
+        "intf": "eth0"
+      },
+      "eth1.100": {
+        "enabled": true,
+        "vid": 100,
+        "intf": "eth1"
       }
     },
     "bridge": {
@@ -29,6 +45,14 @@
         "ipv4": "10.0.1.1/24",
         "intf": [
           "eth1"
+        ],
+        "enabled": true
+      },
+      "vbr100": {
+        "ipv4": "10.100.0.1/24",
+        "intf": [
+          "eth0.100",
+          "eth1.100"
         ],
         "enabled": true
       }
@@ -57,10 +81,10 @@
       "useNameserversFromWAN": true
     },
     "br1": {
-      "nameservers": [
-        "8.8.8.8",
-        "114.114.114.114"
-      ]
+      "useNameserversFromWAN": true
+    },
+    "vbr100": {
+      "useNameserversFromWAN": true
     }
   },
   "nat": {
@@ -71,6 +95,10 @@
     "br1_eth2": {
       "in": "br1",
       "out": "eth2"
+    },
+    "vbr100_eth3": {
+      "in": "vbr100",
+      "out": "eth3"
     }
   },
   "dhcp": {
@@ -86,6 +114,21 @@
       "range": {
         "from": "10.0.0.10",
         "to": "10.0.0.250"
+      },
+      "lease": 86400
+    },
+    "vbr100": {
+      "gateway": "10.100.0.1",
+      "subnetMask": "255.255.255.0",
+      "nameservers": [
+        "10.100.0.1"
+      ],
+      "searchDomain": [
+        ".lan100"
+      ],
+      "range": {
+        "from": "10.100.0.10",
+        "to": "10.100.0.250"
       },
       "lease": 86400
     }
