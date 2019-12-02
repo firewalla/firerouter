@@ -5,19 +5,20 @@ const log = require('../../util/logger.js')(__filename);
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const routing = require('../../util/routing.js');
-const _ = require('lodash');
 const ip = require('ip');
 
 class BridgeInterfacePlugin extends Plugin {
 
   async flush() {
-    log.info("Flushing bridge", this.name);
-    await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {
-      log.error(`Failed to bring down interface ${this.name}`, err);
-    });
-    await exec(`sudo brctl delbr ${this.name}`).catch((err) => {
-      log.error(`Failed to delete bridge ${this.name}`, err);
-    });
+    if (this.networkConfig && this.networkConfig.enabled) {
+      log.info("Flushing bridge", this.name);
+      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {
+        log.error(`Failed to bring down interface ${this.name}`, err.message);
+      });
+      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {
+        log.error(`Failed to delete bridge ${this.name}`, err.message);
+      });
+    }
   }
 
   async prepareEnvironment() {
@@ -41,13 +42,14 @@ class BridgeInterfacePlugin extends Plugin {
   async apply() {
     log.info(`Setup network ${this.name} with config`, this.networkConfig);
 
-    if(_.isEmpty(this.networkConfig.intf)) {
-      log.error("Invalid bridge config");
-      return;
-    }
-
-    if(!this.networkConfig.enabled) {
-      log.info(`Interface ${this.name} is disabled`);
+    if(this.networkConfig.enabled) {
+      await exec(`sudo ip link set ${this.name} up`).catch((err) => {
+        log.error(`Failed to bring up interface ${this.name}`, err.message);
+      });
+    } else {
+      await exec(`sudo ip link set ${this.name} down`).catch((err) => {
+        log.error(`Failed to bring down interface ${this.name}`, err.message);
+      });
       return;
     }
 

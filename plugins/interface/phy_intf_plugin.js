@@ -20,11 +20,11 @@ const routing = require('../../util/routing.js');
 class PhyInterfacePlugin extends Plugin {
 
   async flush() {
-    await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
-      log.error(`Failed to flush ip address of ${this.name}`, err);
-    });
-
     if (this.networkConfig && this.networkConfig.enabled) {
+      await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
+        log.error(`Failed to flush ip address of ${this.name}`, err);
+      });
+
       if (this.networkConfig.dhcp)
         await exec(`cat ${this._getDHClientPidFilePath()}`).then((result) => exec(`sudo kill -9 ${result.stdout.trim()}`)).catch((err) => {});
       
@@ -72,6 +72,11 @@ class PhyInterfacePlugin extends Plugin {
           log.error(`Failed to set ipv4 for interface ${this.name}`, err.message);
         })
       }
+      if (this.networkConfig.nameservers) {
+        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+        await fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name)).catch((err) => {});
+        await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
+      }
     }
   }
 
@@ -89,29 +94,28 @@ class PhyInterfacePlugin extends Plugin {
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_ROUTABLE, 5001).catch((err) => {});
     } else {
       // considered as LAN interface, add to "routable"
-      await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
+      if (this.networkConfig.ipv4) {
+        const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
+        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
+      }
     }
   }
 
   async apply() {
     log.info(`Setup network ${this.name} with config`, this.networkConfig);
-    if(_.isEmpty(this.networkConfig)) {
-      log.info("Nothing to configure");
+
+    if(this.networkConfig.enabled) {
+      await exec(`sudo ip link set ${this.name} up`).catch((err) => {
+        log.error(`Failed to bring up interface ${this.name}`, err.message);
+      });
+    } else {
+      await exec(`sudo ip link set ${this.name} down`).catch((err) => {
+        log.error(`Failed to bring down interface ${this.name}`, err.message);
+      });
       return;
     }
 
     await this.prepareEnvironment();
-
-    if(this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} up`).catch((err) => {
-        log.error(`Failed to bring up interface ${this.name}`, err);
-      });
-    } else {
-      await exec(`sudo ip link set ${this.name} down`).catch((err) => {
-        log.error(`Failed to bring down interface ${this.name}`, err);
-      });
-      return;
-    }
 
     await this.applyIpSettings();
 
