@@ -17,92 +17,132 @@
 const log = require('../util/logger.js')(__filename);
 const config = require('../util/config.js').getConfig();
 
-const plugins = [];
-const pluginsHash = {};
+let pluginConfs = [];
+
+const pluginCategoryMap = {};
 
 const _ = require('lodash');
 
-const Promise = require('bluebird');
-
-function initSinglePlugin(name, path, config) {
-  try {
-    const s = require(path);
-    const ss = new s();
-    ss.name = name;
-    ss.init(config);
-    plugins.push(ss);
-    pluginsHash[name] = ss;
-    return ss;
-  } catch(err) {
-    log.error(`Failed to load plugin: ${name}: ${err}`);
-    return null
-  }
-}
-
-async function initPlugins() {
+function initPlugins() {
   if(_.isEmpty(config.plugins)) {
     return;
   }
 
-  const plugins = await findEnabledPlugins();
-  const configuredPluginNames = Object.keys(config.plugins);
-
-  configuredPluginNames.forEach((pluginName) => {
-    if(!plugins[pluginName]) {
-      return;
-    }
-
-    initSinglePlugin(pluginName, plugins[pluginName].path, config.plugins[pluginName]);
+  pluginConfs = config.plugins.sort((a, b) => {
+    return a.init_seq - b.init_seq
   });
-}
 
-async function run(config) {
-  for(const plugin of plugins) {
-    log.info("Configuring network with plugin:", plugin.name);
+  for (let pluginConf of pluginConfs) {
     try {
-      await pluginsHash[plugin.name].run(config);
-    } catch(err) {
-      log.error(`Failed to configure network with plugin: ${plugin.name}, err: ${err}`)
+      const filePath = pluginConf.file_path;
+      if (!pluginCategoryMap[pluginConf.category])
+        pluginCategoryMap[pluginConf.category] = {};
+      const pluginClass = require(filePath);
+      pluginConf.c = pluginClass;
+    } catch (err) {
+      log.error("Failed to initialize plugin ", pluginConf, err);
     }
   }
+
+  log.info("Plugin initialized", pluginConfs);
 }
 
-function getPlugin(name) {
-  return pluginsHash[name]
+function createPluginInstance(category, name, constructor) {
+  let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
+  if (instance)
+    return instance;
+
+  if (!pluginCategoryMap[category])
+    pluginCategoryMap[category] = {};
+
+  if (!constructor)
+    return null;
+
+  instance = new constructor(name);
+  instance.name = name;
+  pluginCategoryMap[category][name] = instance;
+  log.info("Instance created", instance);
+  return instance;
 }
 
-async function findPluginFiles() {
-  const glob = require('glob');
-
-  return new Promise((resolve, reject) => {
-    glob(__dirname + '/**/*_plugin.js', {}, (err, files)=>{
-      resolve(files);
-    })
-  });
+function getPluginInstance(category, name) {
+  return pluginCategoryMap[category] && pluginCategoryMap[category][name];
 }
 
-async function findEnabledPlugins() {
-  const files = await findPluginFiles();
-  if(_.isEmpty(config.plugins)) {
-    return {};
+async function reapply(config) {
+  const newPluginCategoryMap = {};
+
+  const reversedPluginConfs = pluginConfs.reverse();
+  // remove or flush plugins in descending order by init sequence
+  for (let pluginConf of reversedPluginConfs) {
+    newPluginCategoryMap[pluginConf.category] = newPluginCategoryMap[pluginConf.category] || {};
+    if (!pluginConf.c)
+      continue;
+    const instances = Object.values(pluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+    if (instances) {
+      for (let instance of instances) {
+        instance._mark = 0;
+      }
+    } else pluginCategoryMap[pluginConf.category] = {};
+
+    const newInstances = {};
+    const keys = pluginConf.config_path.split(".");
+    let value = config;
+    for (let key of keys) {
+      if (value)
+        value = value[key];
+    }
+    if (value) {
+      for (let name in value) {
+        log.info("Creating instance", pluginConf.category, name);
+        const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
+        if (!instance)
+          continue;
+        instance._mark = 1;
+        const oldConfig = instance.networkConfig;
+        if (oldConfig && !_.isEqual(oldConfig, value[name])) {
+          // network config is changed, flush plugin instance with old config
+          log.info(`Network config of ${pluginConf.category}-->${name} is changed, flush old config ...`);
+          await instance.flush();
+        }
+        instance.configure(value[name]);
+        if (!oldConfig) {
+          // initialization of network config, flush instance with new config
+          log.info(`Initial setup of ${pluginConf.category}-->${name}, flushing ...`);
+          await instance.flush();
+        }
+        newInstances[name] = instance;
+      }
+    }
+
+    if (instances) {
+      const removedInstances = instances.filter(i => i._mark == 0);
+      for (let instance of removedInstances) {
+        log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`)
+        await instance.flush();
+      }
+    }
+    // merge with new pluginCategoryMap
+    newPluginCategoryMap[pluginConf.category] = Object.assign({}, newPluginCategoryMap[pluginConf.category], newInstances);
   }
 
-  const plugins = {};
-
-  files.forEach((file) => {
-    const basename = file.replace(/.*\//, "").replace(/\.js$/, "");
-    const relativePath = file.replace(__dirname, ".");
-    plugins[basename] = {
-      path: relativePath
+  // apply plugin configs in ascending order by init sequence
+  pluginConfs = reversedPluginConfs.reverse();
+  for (let pluginConf of pluginConfs) {
+    const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+    if (instances) {
+      for (let instance of instances) {
+        log.info("Applying config", pluginConf.category, instance.name);
+        await instance.apply().catch((err) => {
+          log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
+        });
+      }
     }
-  });
-
-  return plugins;
+  }
 }
 
 module.exports = {
   initPlugins:initPlugins,
-  initSinglePlugin:initSinglePlugin,
-  run:run,
-  getPlugin: getPlugin
+  getPluginInstance: getPluginInstance,
+  reapply: reapply,
 };

@@ -74,6 +74,10 @@ function getHiddenFolder() {
   return getUserHome() + "/.router";
 }
 
+function getFirewallaHiddenFolder() {
+  return getUserHome() +  "/.firewalla";
+}
+
 function isDevelopmentVersion() {
   let branch = getBranch();
   if(branch === "master" || branch.includes("master")) {
@@ -133,6 +137,18 @@ function getTempFolder() {
   return getHiddenFolder() + "/tmp";
 }
 
+function getRuntimeFolder() {
+  return getHiddenFolder() + "/run";
+}
+
+function getFirewallaUserConfigFolder() {
+  return getFirewallaHiddenFolder() + "/config";
+}
+
+function getInterfaceResolvConfPath(iface) {
+  return `${getRuntimeFolder()}/${iface}.resolv.conf`;
+}
+
 function getVersion() {
   if(!version) {
     let cmd = "git describe --tags";
@@ -185,6 +201,7 @@ module.exports = {
   getVersion: getVersion,
   getBranch:getBranch,
   getTempFolder: getTempFolder,
+  getRuntimeFolder: getRuntimeFolder,
   isProduction: isProduction,
   isBeta:isBeta,
   isAlpha: isAlpha,
@@ -196,5 +213,7 @@ module.exports = {
   getLastCommitDate:getLastCommitDate,
   getProcessName:getProcessName,
   getLatestCommitHash:getLatestCommitHash,
-  getFireRouterHome:getFireRouterHome
+  getFireRouterHome:getFireRouterHome,
+  getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
+  getInterfaceResolvConfPath: getInterfaceResolvConfPath
 };
