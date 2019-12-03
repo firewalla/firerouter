@@ -2,7 +2,7 @@
 
 const log = require('../../util/logger.js')(__filename);
 
-const InterfaceBasePlugin = require('./phy_intf_plugin.js');
+const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
