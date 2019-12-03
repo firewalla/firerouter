@@ -2,16 +2,14 @@
 
 const log = require('../../util/logger.js')(__filename);
 
-const Plugin = require('../plugin.js');
+const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
-const routing = require('../../util/routing.js');
-const ip = require('ip');
 
-class BridgeInterfacePlugin extends Plugin {
+class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
+    await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
-      log.info("Flushing bridge", this.name);
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {
         log.error(`Failed to bring down interface ${this.name}`, err.message);
       });
@@ -21,62 +19,17 @@ class BridgeInterfacePlugin extends Plugin {
     }
   }
 
-  async prepareEnvironment() {
-    // create routing tables and add rules for interface
-    if (this.networkConfig && this.networkConfig.ipv4) {
-      await routing.initializeInterfaceRoutingTables(this.name);
-      await routing.createInterfaceRoutingRules(this.name);
-      await routing.createInterfaceGlobalRoutingRules(this.name);
-    }
-  }
-
-  async changeRoutingTables() {
-    const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout).catch((err) => null);
-    if (!ip4)
-      return;
-    const cidr = ip.cidrSubnet(ip4);
-    await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, `${this.name}_local`).catch((err) => {});
-    await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
-  }
-
-  async apply() {
-    log.info(`Setup network ${this.name} with config`, this.networkConfig);
-
-    if(this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} up`).catch((err) => {
-        log.error(`Failed to bring up interface ${this.name}`, err.message);
-      });
-    } else {
-      await exec(`sudo ip link set ${this.name} down`).catch((err) => {
-        log.error(`Failed to bring down interface ${this.name}`, err.message);
-      });
-      return;
-    }
-
-    await this.prepareEnvironment();
-
+  async createInterface() {
     for(const intf of this.networkConfig.intf) {
       await exec(`sudo ip addr flush dev ${intf}`);
     }
 
-    await exec(`sudo brctl addbr ${this.name}`);
-    await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`);
-    await exec(`sudo ip link set dev ${this.name} up`);
-
-    if(this.networkConfig.ipv4) {
-      await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).then(() => {}).catch((err) => {
-        log.error(`Got error when setup ipv4: ${err.message}`);
-      });
-      await this.changeRoutingTables();
-    }
-  }
-
-  async _getSysFSClassNetValue(key) {
-    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
-      log.error(`Failed to get ${key} of ${this.name}`, err.message);
-      return null;
-    })
-    return value;
+    await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
+      log.error(`Failed to create bridge interface ${this.name}`, err.message);
+    });
+    await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
+      log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
+    });
   }
 
   async state() {

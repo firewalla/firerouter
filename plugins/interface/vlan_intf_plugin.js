@@ -17,13 +17,11 @@
 
 const log = require('../../util/logger.js')(__filename);
 
-const PhyInterfacePlugin = require('./phy_intf_plugin.js');
+const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
-const routing = require('../../util/routing.js');
-const ip = require('ip');
 
-class VLANInterfacePlugin extends PhyInterfacePlugin {
+class VLANInterfacePlugin extends InterfaceBasePlugin {
   
   async flush() {
     await super.flush();
@@ -34,16 +32,12 @@ class VLANInterfacePlugin extends PhyInterfacePlugin {
     }
   }
 
-  async prepareEnvironment() {
-    const vid = this.networkConfig.vid;
+  async createInterface() {
     const intf = this.networkConfig.intf;
+    const vid = this.networkConfig.vid;
     await exec(`sudo vconfig add ${intf} ${vid}`).catch((err) => {
       log.error(`Failed to create vlan interface ${this.name}`, err.message);
-    });
-    await exec(`sudo ip link set ${this.name} up`).catch((err) => {
-      log.error(`Failed to bring up vlan interface ${this.name}`, err.message);
-    });
-    await super.prepareEnvironment();
+    })
   }
 }
 
