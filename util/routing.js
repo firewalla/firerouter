@@ -127,11 +127,14 @@ async function removeRouteFromTable(dest, gateway, intf, tableName) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
+  cmd = `sudo ip route del ${dest}`;
   if (gateway) {
-    cmd = `sudo ip route del ${dest} via ${gateway} dev ${intf} table ${tableName}`;
-  } else {
-    cmd = `sudo ip route del ${dest} dev ${intf} table ${tableName}`;
+    cmd = `${cmd} via ${gateway}`;
   }
+  if (intf) {
+    cmd = `${cmd} dev ${intf}`;
+  }
+  cmd = `${cmd} table ${tableName}`;
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to remove route from table.", result.stderr);

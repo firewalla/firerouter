@@ -7,34 +7,40 @@
       "init_seq": 1
     },
     {
+      "file_path": "./interface/vlan_intf_plugin.js",
+      "config_path": "interface.vlan",
+      "category": "interface",
+      "init_seq": 2
+    },
+    {
       "file_path": "./interface/bridge_intf_plugin.js",
       "config_path": "interface.bridge",
       "category": "interface",
-      "init_seq": 2
+      "init_seq": 3
     },
     {
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
-      "init_seq": 3
+      "init_seq": 4
     },
     {
       "file_path": "./nat/nat_plugin.js",
       "config_path": "nat",
       "category": "nat",
-      "init_seq": 4
+      "init_seq": 5
     },
     {
       "file_path": "./dns/dns_plugin.js",
       "config_path": "dns",
       "category": "dns",
-      "init_seq": 5
+      "init_seq": 6
     },
     {
       "file_path": "./dhcp/dhcp_plugin.js",
       "config_path": "dhcp",
       "category": "dhcp",
-      "init_seq": 6
+      "init_seq": 7
     }
   ]
 }

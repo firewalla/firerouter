@@ -60,6 +60,9 @@ class RoutingPlugin extends Plugin {
                     const gw = await routing.getInterfaceGWIP(viaIntf);
                     if (gw) {
                       await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => {});
+                      // replace default gateway in main routing table
+                      await routing.removeRouteFromTable("default", null, null, null).catch((err) => {});
+                      await routing.addRouteToTable("default", gw, viaIntf, "main").catch((err) => {});
                     } else {
                       log.error("Failed to get gateway IP of global default interface " + viaIntf);
                     }
@@ -77,16 +80,43 @@ class RoutingPlugin extends Plugin {
               }
               break;
             }
-            case "static":
-
+            case "static": {
+              break;
+            }
             default:
-              log.error("Unsupported routing type: ", type);
+              log.error(`Unsupported routing type for ${this.name}: ${type}`);
           }
         }
         break;
       }
       default: {
-
+        for (let type of Object.keys(this.networkConfig)) {
+          const settings = this.networkConfig[type];
+          switch (type) {
+            case "default": {
+              const viaIntf = settings.viaIntf;
+              const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
+              let iface = this.name;
+              if (iface.includes(":")) {
+                // virtual interface, need to strip suffix
+                iface = this.name.substr(0, this.name.indexOf(":"));
+              }
+              if (viaIntfPlugin) {
+                // local and default routing table accesible to the interface
+                await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_local`, 2001).catch((err) => {});
+                await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_default`, 7001).catch((err) => {});
+              } else {
+                log.error(`Cannot find global default interface plugin ${viaIntf}`)
+              }
+              break;
+            }
+            case "static": {
+              break;
+            }
+            default:
+              log.error(`Unsupported routing type for ${this.name}: ${type}`);
+          }
+        }
       }
     }
   }
