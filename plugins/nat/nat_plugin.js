@@ -15,8 +15,6 @@
 
 'use strict';
 
-const log = require('../../util/logger.js')(__filename);
-
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const util = require('../../util/util');
@@ -26,7 +24,7 @@ class NatPlugin extends Plugin {
 
   async flush() {
     if (!this.networkConfig) {
-      log.error(`Network config of ${this.name} is not given.`);
+      this.log.error(`Network config of ${this.name} is not given.`);
       return;
     }
 
@@ -34,7 +32,7 @@ class NatPlugin extends Plugin {
     const oif = this.networkConfig.out;
 
     if (!iif || !oif) {
-      log.error(`Invalid config of ${this.name}`, this.networkConfig);
+      this.log.error(`Invalid config of ${this.name}`, this.networkConfig);
       return;
     }
 
@@ -44,14 +42,14 @@ class NatPlugin extends Plugin {
       if (state && state.ip4) {
         await exec(util.wrapIptables(`sudo iptables -t nat -D POSTROUTING -s ${state.ip4} -o ${oif} -j MASQUERADE`));
       } else {
-        log.error("Failed to get ip4 of incoming interface " + iif);
+        this.log.error("Failed to get ip4 of incoming interface " + iif);
       }
     }
   }
 
   async apply() {
     if (!this.networkConfig) {
-      log.error(`Network config of ${this.name} is not given.`);
+      this.fatal(`Network config of ${this.name} is not given.`);
       return;
     }
 
@@ -59,7 +57,7 @@ class NatPlugin extends Plugin {
     const oif = this.networkConfig.out;
 
     if (!iif || !oif) {
-      log.error(`Invalid config of ${this.name}`, this.networkConfig);
+      this.fatal(`Missing in/out interface in config of ${this.name}`);
       return;
     }
 
@@ -70,10 +68,10 @@ class NatPlugin extends Plugin {
       if (state && state.ip4) {
         await exec(util.wrapIptables(`sudo iptables -t nat -A POSTROUTING -s ${state.ip4} -o ${oif} -j MASQUERADE`));
       } else {
-        log.error("Failed to get ip4 of incoming interface " + iif);
+        this.fatal("Failed to get ip4 of incoming interface " + iif);
       }
     } else {
-      log.error("Cannot find interface plugin", iif);
+      this.fatal("Cannot find interface plugin " + iif);
     }
   }
 }

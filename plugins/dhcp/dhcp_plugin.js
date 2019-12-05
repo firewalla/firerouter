@@ -15,8 +15,6 @@
 
 'use strict';
 
-const log = require('../../util/logger.js')(__filename);
-
 const Plugin = require('../plugin.js');
 
 const dhcpServiceFileTemplate = __dirname + "/firerouter_dhcp.template.service";
@@ -33,6 +31,8 @@ const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
 const dhcpRuntimeDir = r.getRuntimeFolder() + "/dhcp";
 
+let _restartTask = null;
+
 class DHCPPlugin extends Plugin {
 
   _getConfFilePath() {
@@ -40,10 +40,10 @@ class DHCPPlugin extends Plugin {
   }
 
   async flush() {
-    log.info("Flushing dhcp", this.name);
+    this.log.info("Flushing dhcp", this.name);
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
-    await exec("sudo systemctl restart firerouter_dhcp");
+    this._restartService();
   }
 
   async prepareEnvironment() {
@@ -92,6 +92,15 @@ class DHCPPlugin extends Plugin {
     await fs.writeFileAsync(this._getConfFilePath(), content);
   }
 
+  _restartService() {
+    if (!_restartTask) {
+      _restartTask = setTimeout(() => {
+        exec("sudo systemctl stop firerouter_dhcp; sudo systemctl start firerouter_dhcp");
+        _restartTask = null;
+      }, 10000);
+    }
+  }
+
   async apply() {
     await this.prepareEnvironment();
     await this.installDHCPScript();
@@ -103,7 +112,7 @@ class DHCPPlugin extends Plugin {
     }
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
       this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain);
-    await exec("sudo systemctl restart firerouter_dhcp");
+    this._restartService();
   }
 }
 

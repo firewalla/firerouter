@@ -15,8 +15,6 @@
 
 'use strict';
 
-const log = require('../../util/logger.js')(__filename);
-
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 
@@ -30,12 +28,13 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+let _restartTask = null;
+
 const dnsConfTemplate = r.getFireRouterHome() + "/etc/dnsmasq.dns.conf.template";
 
 class DNSPlugin extends Plugin {
 
   async flush() {
-    log.info("Flushing dns", this.name);
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
     this._restartService();
@@ -91,10 +90,10 @@ class DNSPlugin extends Plugin {
           if (wanIntf) {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            log.error(`Cannot find WAN interface for ${this.name}`);
+            this.fatal(`Cannot find WAN interface for ${this.name}`);
           }
         } else {
-          log.error(`Cannot find routing plugin for ${this.name}`);
+          this.fatal(`Cannot find routing plugin for ${this.name}`);
         }
       }
     }
@@ -114,7 +113,7 @@ class DNSPlugin extends Plugin {
           if (wanIntf) {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            log.error(`Cannot find WAN interface for ${this.name}`);
+            this.fatal(`Cannot find WAN interface for ${this.name}`);
             return;
           }
         }
@@ -125,10 +124,10 @@ class DNSPlugin extends Plugin {
   }
 
   _restartService() {
-    if (!this._restartTask) {
-      this._restartTask = setTimeout(() => {
+    if (!_restartTask) {
+      _restartTask = setTimeout(() => {
         exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns");
-        this._restartTask = null;
+        _restartTask = null;
       }, 10000);
     }
   }
