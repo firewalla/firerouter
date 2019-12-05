@@ -15,8 +15,6 @@
 
 'use strict';
 
-const log = require('../../util/logger.js')(__filename);
-
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
@@ -36,7 +34,7 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     const intf = this.networkConfig.intf;
     const vid = this.networkConfig.vid;
     await exec(`sudo vconfig add ${intf} ${vid}`).catch((err) => {
-      log.error(`Failed to create vlan interface ${this.name}`, err.message);
+      this.log.error(`Failed to create vlan interface ${this.name}`, err.message);
     })
   }
 }

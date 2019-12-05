@@ -15,8 +15,6 @@
 
 'use strict';
 
-const log = require('../../util/logger.js')(__filename);
-
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 
@@ -26,10 +24,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {
-        log.error(`Failed to bring down interface ${this.name}`, err.message);
+        this.log.error(`Failed to bring down interface ${this.name}`, err.message);
       });
       await exec(`sudo brctl delbr ${this.name}`).catch((err) => {
-        log.error(`Failed to delete bridge ${this.name}`, err.message);
+        this.log.error(`Failed to delete bridge ${this.name}`, err.message);
       });
     }
   }
@@ -40,10 +38,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     }
 
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
-      log.error(`Failed to create bridge interface ${this.name}`, err.message);
+      this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
     });
     await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
-      log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
+      this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
     });
   }
 

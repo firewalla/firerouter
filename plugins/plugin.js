@@ -22,12 +22,13 @@ class Plugin {
     this.name = name;
     this.changeSubscribers = [];
     this.changePublishers = []
+    this.log = require('../util/logger.js')(this.constructor.name);
     return this;
   }
 
   init(pluginConfig) {
     this.pluginConfig = pluginConfig;
-    log.info(`Initializing Plugin ${this.constructor.name}...`);
+    this.log.info(`Initializing Plugin ${this.constructor.name}...`);
   }
 
   configure(networkConfig) {
@@ -92,6 +93,11 @@ class Plugin {
 
   isChanged() {
     return this._changed === true;
+  }
+
+  fatal(msg) {
+    this.log.error(msg);
+    throw msg;
   }
 }
 
