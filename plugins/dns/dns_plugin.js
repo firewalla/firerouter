@@ -38,7 +38,7 @@ class DNSPlugin extends Plugin {
     log.info("Flushing dns", this.name);
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
-    await exec("sudo systemctl restart firerouter_dns");
+    this._restartService();
   }
 
   _getConfFilePath() {
@@ -86,6 +86,7 @@ class DNSPlugin extends Plugin {
       if (this.networkConfig.useNameserversFromWAN) {
         const routingPlugin = pl.getPluginInstance("routing", this.name) || pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
+          this.subscribeChangeFrom(routingPlugin);
           const wanIntf = routingPlugin.networkConfig && routingPlugin.networkConfig.default && routingPlugin.networkConfig.default.viaIntf;
           if (wanIntf) {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
@@ -95,7 +96,6 @@ class DNSPlugin extends Plugin {
         } else {
           log.error(`Cannot find routing plugin for ${this.name}`);
         }
-        
       }
     }
   }
@@ -109,6 +109,7 @@ class DNSPlugin extends Plugin {
       if (this.networkConfig.useNameserversFromWAN) {
         const routingPlugin = pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
+          this.subscribeChangeFrom(routingPlugin);
           const wanIntf = routingPlugin.networkConfig && routingPlugin.networkConfig.default && routingPlugin.networkConfig.default.viaIntf;
           if (wanIntf) {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
@@ -123,13 +124,22 @@ class DNSPlugin extends Plugin {
     await exec(`sudo ln -s ${this._getResolvFilePath()} /etc/resolv.conf`);
   }
 
+  _restartService() {
+    if (!this._restartTask) {
+      this._restartTask = setTimeout(() => {
+        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns");
+        this._restartTask = null;
+      }, 10000);
+    }
+  }
+
   async apply() {
     if (this.name !== "default") {
       await this.prepareEnvironment();
       await this.installDNSScript();
       await this.installSystemService();
       await this.writeDNSConfFile();
-      await exec("sudo systemctl restart firerouter_dns");
+      this._restartService();
     } else {
       await this.applyDefaultResolvConf();
     }

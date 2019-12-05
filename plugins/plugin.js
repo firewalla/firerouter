@@ -20,6 +20,8 @@ const log = require('../util/logger.js')(__filename);
 class Plugin {
   constructor(name) {
     this.name = name;
+    this.changeSubscribers = [];
+    this.changePublishers = []
     return this;
   }
 
@@ -44,6 +46,52 @@ class Plugin {
 
   async state() {
     return null;
+  }
+
+  _publishChangeTo(pluginInstance) {
+    if (pluginInstance) {
+      if (!this.changeSubscribers.includes(pluginInstance)) {
+        this.changeSubscribers.push(pluginInstance);
+      }
+    }
+  }
+
+  _unpublishChangeTo(pluginInstance) {
+    if (pluginInstance) {
+      const index = this.changeSubscribers.indexOf(pluginInstance);
+      if (index !== -1) {
+        this.changeSubscribers.splice(index, 1);
+      }
+    }
+  }
+
+  subscribeChangeFrom(pluginInstance) {
+    if (pluginInstance) {
+      pluginInstance._publishChangeTo(this);
+      if (!this.changePublishers.includes(pluginInstance)) {
+        this.changePublishers.push(pluginInstance);
+      }
+    }
+  }
+
+  unsubscribeAllChanges() {
+    for (let publisher of this.changePublishers) {
+      publisher._unpublishChangeTo(this);
+    }
+    this.changePublishers = [];
+  }
+
+  setChanged(changed) {
+    this._changed = changed;
+    if (this._changed === true) {
+      for (let instance of this.changeSubscribers) {
+        instance.setChanged(true);
+      }
+    }
+  }
+
+  isChanged() {
+    return this._changed === true;
   }
 }
 

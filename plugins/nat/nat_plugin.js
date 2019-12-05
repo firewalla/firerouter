@@ -65,12 +65,15 @@ class NatPlugin extends Plugin {
 
     const iifPlugin = pl.getPluginInstance("interface", iif);
     if (iifPlugin) {
+      this.subscribeChangeFrom(iifPlugin);
       const state = await iifPlugin.state();
       if (state && state.ip4) {
         await exec(util.wrapIptables(`sudo iptables -t nat -A POSTROUTING -s ${state.ip4} -o ${oif} -j MASQUERADE`));
       } else {
         log.error("Failed to get ip4 of incoming interface " + iif);
       }
+    } else {
+      log.error("Cannot find interface plugin", iif);
     }
   }
 }

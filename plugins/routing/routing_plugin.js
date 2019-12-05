@@ -19,7 +19,6 @@ const log = require('../../util/logger.js')(__filename);
 
 const Plugin = require('../plugin.js');
 
-const exec = require('child-process-promise').exec;
 const ip = require('ip');
 
 const pl = require('../plugin_loader.js');
@@ -49,6 +48,7 @@ class RoutingPlugin extends Plugin {
                   const viaIntf = settings.viaIntf;
                   const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
                   if (viaIntfPlugin) {
+                    this.subscribeChangeFrom(viaIntfPlugin);
                     const state = await viaIntfPlugin.state();
                     if (state && state.ip4) {
                       const cidr = ip.cidrSubnet(state.ip4);
@@ -102,6 +102,7 @@ class RoutingPlugin extends Plugin {
                 iface = this.name.substr(0, this.name.indexOf(":"));
               }
               if (viaIntfPlugin) {
+                this.subscribeChangeFrom(viaIntfPlugin);
                 // local and default routing table accesible to the interface
                 await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_local`, 2001).catch((err) => {});
                 await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_default`, 7001).catch((err) => {});

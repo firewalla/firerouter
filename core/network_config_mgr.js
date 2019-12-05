@@ -18,6 +18,7 @@
 let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getPrimaryDBRedisClient();
+const ns = require('./network_setup.js');
 
 class NetworkConfigManager {
   constructor() {
@@ -29,7 +30,7 @@ class NetworkConfigManager {
   }
 
   async getActiveConfig() {
-    const configString = await rclient.getAsync("config");
+    const configString = await rclient.getAsync("sysdb:networkConfig");
     if(configString) {
       try {
         const config = JSON.parse(configString);
@@ -39,6 +40,35 @@ class NetworkConfigManager {
       }
     } else {
       return null;
+    }
+  }
+
+  async getDefaultConfig() {
+    const config = require('../network/default_setup.json');
+    return config;
+  }
+
+  async validateConfig(config) {
+    return [];
+  }
+
+  async tryApplyConfig(config) {
+    const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
+
+    const errors = await ns.setup(config);
+    if (errors && errors.length != 0) {
+      log.error("Failed to apply network config, rollback to previous setup", errors);
+      await ns.setup(currentConfig).catch((err) => {
+        log.error("Failed to rollback network config", err);
+      });
+    }
+    return errors;
+  }
+
+  async saveConfig(networkConfig) {
+    const configString = JSON.stringify(networkConfig);
+    if (configString) {
+      await rclient.setAsync("sysdb:networkConfig", configString);
     }
   }
 }

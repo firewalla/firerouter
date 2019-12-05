@@ -20,7 +20,7 @@ const config = require('../util/config.js').getConfig();
 
 let pluginConfs = [];
 
-const pluginCategoryMap = {};
+let pluginCategoryMap = {};
 
 const _ = require('lodash');
 
@@ -71,6 +71,7 @@ function getPluginInstance(category, name) {
 }
 
 async function reapply(config) {
+  const errors = [];
   const newPluginCategoryMap = {};
 
   const reversedPluginConfs = pluginConfs.reverse();
@@ -95,22 +96,20 @@ async function reapply(config) {
     }
     if (value) {
       for (let name in value) {
-        log.info("Creating instance", pluginConf.category, name);
         const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
         if (!instance)
           continue;
         instance._mark = 1;
         const oldConfig = instance.networkConfig;
-        if (oldConfig && !_.isEqual(oldConfig, value[name])) {
-          // network config is changed, flush plugin instance with old config
-          log.info(`Network config of ${pluginConf.category}-->${name} is changed, flush old config ...`);
-          await instance.flush();
+        if (oldConfig && !_.isEqual(oldConfig, value[name])) {          
+          instance.setChanged(true);
         }
         instance.configure(value[name]);
         if (!oldConfig) {
           // initialization of network config, flush instance with new config
-          log.info(`Initial setup of ${pluginConf.category}-->${name}, flushing ...`);
-          await instance.flush();
+          log.info(`Initial setup of ${pluginConf.category}-->${name}`);
+          instance.setChanged(true);
+          instance.unsubscribeAllChanges();
         }
         newInstances[name] = instance;
       }
@@ -121,6 +120,8 @@ async function reapply(config) {
       for (let instance of removedInstances) {
         log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`)
         await instance.flush();
+        await instance.setChanged(true);
+        instance.unsubscribeAllChanges();
       }
     }
     // merge with new pluginCategoryMap
@@ -133,13 +134,24 @@ async function reapply(config) {
     const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
     if (instances) {
       for (let instance of instances) {
-        log.info("Applying config", pluginConf.category, instance.name);
-        await instance.apply().catch((err) => {
-          log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
-        });
+        if (instance.isChanged()) {
+          log.info(`Network config of ${pluginConf.category}-->${instance.name} is changed, flush old config ...`);
+          await instance.flush();
+          instance.unsubscribeAllChanges();
+          log.info("Instance config changed. Applying config", pluginConf.category, instance.name);
+          await instance.apply().catch((err) => {
+            log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
+            errors.push(err.message || err);
+          });
+        } else {
+          log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
+        }
+        instance.setChanged(false);
       }
     }
   }
+  pluginCategoryMap = newPluginCategoryMap;
+  return errors;
 }
 
 module.exports = {

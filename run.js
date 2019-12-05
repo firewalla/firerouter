@@ -23,10 +23,13 @@ const log = require('./util/logger')(__filename);
 
 (async () => {
   await pl.initPlugins();
-  const activeConfig = ( await ncm.getActiveConfig() ) || require('./network/default_4ports');
+  const activeConfig = ( await ncm.getActiveConfig() ) || (await ncm.getDefaultConfig());
   await ns.prepareEnvironment();
-  await ns.setup(activeConfig);
+  await ncm.tryApplyConfig(activeConfig);
+  await ncm.saveConfig(activeConfig);
   log.info("Setup Complete!");
-  process.exit(0);
+  setTimeout(() => {
+    process.exit(0);
+  }, 10000);
 })();
 
