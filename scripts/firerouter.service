@@ -4,9 +4,10 @@ After=network.target
 
 [Service]
 User=pi
-Type=oneshot
-WorkingDirectory=/home/pi/firerouter
-ExecStart=/home/pi/.nvm/versions/node/v10.16.3/bin/node run.js
+Restart=always
+RestartSec=1
+WorkingDirectory=/home/pi/firerouter/service
+ExecStart=/home/pi/firerouter/bin/node bin/main.js
 
 [Install]
 WantedBy=multi-user.target
