@@ -27,7 +27,7 @@ log.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 const debug = require('debug')('api:server');
 const http = require('http');
-const port = normalizePort(process.env.PORT || '8833');
+const port = normalizePort(process.env.PORT || '8843');
 
 const pl = require('../../plugins/plugin_loader.js');
 const ns = require('../../core/network_setup.js');
@@ -39,9 +39,9 @@ async function pre_run() {
   await pl.initPlugins();
   const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
   await ns.prepareEnvironment();
-  await ncm.tryApplyConfig(activeConfig);
+  await ncm.tryApplyConfig(activeConfig, true);
   await ncm.saveConfig(activeConfig);
-  log.info("Booting setup complete");
+  log.info("Booting setup complete.");
 }
 
 function run() {
