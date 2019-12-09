@@ -39,9 +39,9 @@ async function pre_run() {
   await pl.initPlugins();
   const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
   await ns.prepareEnvironment();
-  await ncm.tryApplyConfig(activeConfig);
+  await ncm.tryApplyConfig(activeConfig, true);
   await ncm.saveConfig(activeConfig);
-  log.info("Booting setup complete");
+  log.info("Booting setup complete.");
 }
 
 function run() {

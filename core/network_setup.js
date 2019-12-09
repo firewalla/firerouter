@@ -57,8 +57,8 @@ class NetworkSetup {
     await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001);
   }
 
-  async setup(config) {
-    const errors = await pl.reapply(config);
+  async setup(config, dryRun = false) {
+    const errors = await pl.reapply(config, dryRun);
     return errors;
   }
 }

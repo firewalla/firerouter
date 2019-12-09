@@ -52,10 +52,10 @@ class NetworkConfigManager {
     return [];
   }
 
-  async tryApplyConfig(config) {
+  async tryApplyConfig(config, dryRun = false) {
     const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
 
-    const errors = await ns.setup(config);
+    const errors = await ns.setup(config, dryRun);
     if (errors && errors.length != 0) {
       log.error("Failed to apply network config, rollback to previous setup", errors);
       await ns.setup(currentConfig).catch((err) => {
