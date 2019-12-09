@@ -44,12 +44,37 @@ router.post('/set',
       errors = await ncm.tryApplyConfig(newConfig);
       if (errors && errors.length != 0) {
         log.error("Failed to apply new network config", errors);
-        res.status(401).json({errors: errors});
+        res.status(400).json({errors: errors});
       } else {
         log.info("New config is applied with no error");
         await ncm.saveConfig(newConfig);
         res.status(200).json({errors: errors});
       }
+    }
+  });
+
+router.post('/apply_current_config',
+  jsonParser,
+  async (req, res, next) => {
+    const currentConfig = await ncm.getActiveConfig();
+    if (currentConfig) {
+      let errors = await ncm.validateConfig(currentConfig);
+      if (errors && errors.length != 0) {
+        log.error("Invalid network config", errors);
+        res.json({errors: errors});
+      } else {
+        errors = await ncm.tryApplyConfig(currentConfig);
+        if (errors && errors.length != 0) {
+          log.error("Failed to apply current network config", errors);
+          res.status(400).json({errors: errors});
+        } else {
+          log.info("Current config is applied with no error");
+          await ncm.saveConfig(currentConfig);
+          res.status(200).json({errors: errors});
+        }
+      }
+    } else {
+      res.status(404).send("Network config is not set.");
     }
   });
 
