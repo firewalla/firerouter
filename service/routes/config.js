@@ -44,11 +44,12 @@ router.post('/set',
       errors = await ncm.tryApplyConfig(newConfig);
       if (errors && errors.length != 0) {
         log.error("Failed to apply new network config", errors);
+        res.status(401).json({errors: errors});
       } else {
         log.info("New config is applied with no error");
         await ncm.saveConfig(newConfig);
+        res.status(200).json({errors: errors});
       }
-      res.json({errors: errors});
     }
   });
 
