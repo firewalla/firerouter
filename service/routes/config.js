@@ -19,7 +19,8 @@ const express = require('express');
 const router = express.Router();
 const bodyParser = require('body-parser');
 const log = require('../../util/logger.js')(__filename, 'info')
-const ncm = require('../../core/network_config_mgr');
+const ncm = require('../../core/network_config_mgr.js');
+const ns = require('../../core/network_setup.js');
 
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig();
@@ -52,6 +53,16 @@ router.post('/set',
       }
     }
   });
+
+router.post('/prepare_env',
+  jsonParser,
+  async (req, res, next) => {
+    await ns.prepareEnvironment().then(() => {
+      res.status(200).json({errors: []});
+    }).catch((err) => {
+      res.status(500).json({errors: [err.message]});
+    })
+  })
 
 router.post('/apply_current_config',
   jsonParser,

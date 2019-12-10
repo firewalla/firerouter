@@ -170,7 +170,7 @@ async function initializeInterfaceRoutingTables(intf) {
 }
 
 async function createInterfaceRoutingRules(intf) {
-  await createPolicyRoutingRule("all", intf, `${intf}_local`, 1);
+  await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
 }
