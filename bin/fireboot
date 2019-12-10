@@ -5,6 +5,24 @@ _rc=0
 # step 1 - apply network config
 echo "Applying last successful network config..."
 
+HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
+if [[ $HTTP_STATUS_CODE != "200" ]]; then
+  echo "Failed to prepare environment"
+  _rc=3
+fi
+
+test $_rc -eq  0 || exit $_rc
+
+HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
+if [[ $HTTP_STATUS_CODE != "200" ]]; then
+  echo "Failed to apply current config"
+  _rc=3
+fi
+
+test $_rc -eq  0 || exit $_rc
+
+echo "Successfully apply last network config..."
+
 # step 2 - test network connectivity
 echo "Testing network connectivity..."
 nc -z 1.1.1.1 443 || (echo "err: network is unavailable" && _rc=1)
