@@ -31,6 +31,30 @@ router.get('/active', async (req, res, next) => {
   }
 });
 
+router.get('/wans', async (req, res, next) => {
+  await ncm.getWANs().then((wans) => {
+    res.status(200).json(wans);
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+router.get('/lans', async (req, res, next) => {
+  await ncm.getLANs().then((lans) => {
+    res.status(200).json(lans);
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+router.get('/phy_interfaces', async (req, res, next) => {
+  await ncm.getPhyInterfaceNames().then((intfs) => {
+    res.status(200).json({intfs: intfs});
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  })
+})
+
 const jsonParser = bodyParser.json()
 
 router.post('/set',

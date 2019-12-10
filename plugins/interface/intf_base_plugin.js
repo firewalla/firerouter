@@ -81,6 +81,23 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
   }
 
+  isWAN() {
+    if (!this.networkConfig)
+      return false;
+    if (this.networkConfig.dhcp || (this.networkConfig.ipv4 && this.networkConfig.gateway))
+      return true;
+    return false;
+  }
+
+  isLAN() {
+    if (!this.networkConfig)
+      return false;
+    if (this.networkConfig.ipv4 && (!this.networkConfig.dhcp && !this.networkConfig.gateway))
+      // ip address is set but neither dhcp nor gateway is set, considered as LAN interface
+      return true;
+    return false;
+  }
+
   async createInterface() {
 
   }
@@ -171,7 +188,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout).catch((err) => {
+    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
       this.log.warn(`Failed to get ${key} of ${this.name}`, err);
       return null;
     })
@@ -185,7 +202,7 @@ class InterfaceBasePlugin extends Plugin {
     const duplex = await this._getSysFSClassNetValue("duplex");
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
-    const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout).catch((err) => null);
+    const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
     return {mac, mtu, carrier, duplex, speed, operstate, ip4};
   }
 }

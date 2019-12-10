@@ -66,6 +66,10 @@ function createPluginInstance(category, name, constructor) {
   return instance;
 }
 
+function getPluginInstances(category) {
+  return pluginCategoryMap[category];
+}
+
 function getPluginInstance(category, name) {
   return pluginCategoryMap[category] && pluginCategoryMap[category][name];
 }
@@ -179,5 +183,6 @@ async function reapply(config, dryRun = false) {
 module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
+  getPluginInstances: getPluginInstances,
   reapply: reapply,
 };
