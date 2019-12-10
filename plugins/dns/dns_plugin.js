@@ -1,6 +1,19 @@
-'use strict';
+/*    Copyright 2019 Firewalla Inc
+ *
+ *    This program is free software: you can redistribute it and/or modify
+ *    it under the terms of the GNU Affero General Public License, version 3,
+ *    as published by the Free Software Foundation.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU Affero General Public License for more details.
+ *
+ *    You should have received a copy of the GNU Affero General Public License
+ *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-const log = require('../../util/logger.js')(__filename);
+'use strict';
 
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
@@ -15,15 +28,16 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+let _restartTask = null;
+
 const dnsConfTemplate = r.getFireRouterHome() + "/etc/dnsmasq.dns.conf.template";
 
 class DNSPlugin extends Plugin {
 
   async flush() {
-    log.info("Flushing dns", this.name);
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
-    await exec("sudo systemctl restart firerouter_dns");
+    this._restartService();
   }
 
   _getConfFilePath() {
@@ -71,16 +85,16 @@ class DNSPlugin extends Plugin {
       if (this.networkConfig.useNameserversFromWAN) {
         const routingPlugin = pl.getPluginInstance("routing", this.name) || pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
+          this.subscribeChangeFrom(routingPlugin);
           const wanIntf = routingPlugin.networkConfig && routingPlugin.networkConfig.default && routingPlugin.networkConfig.default.viaIntf;
           if (wanIntf) {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            log.error(`Cannot find WAN interface for ${this.name}`);
+            this.fatal(`Cannot find WAN interface for ${this.name}`);
           }
         } else {
-          log.error(`Cannot find routing plugin for ${this.name}`);
+          this.fatal(`Cannot find routing plugin for ${this.name}`);
         }
-        
       }
     }
   }
@@ -94,11 +108,12 @@ class DNSPlugin extends Plugin {
       if (this.networkConfig.useNameserversFromWAN) {
         const routingPlugin = pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
+          this.subscribeChangeFrom(routingPlugin);
           const wanIntf = routingPlugin.networkConfig && routingPlugin.networkConfig.default && routingPlugin.networkConfig.default.viaIntf;
           if (wanIntf) {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            log.error(`Cannot find WAN interface for ${this.name}`);
+            this.fatal(`Cannot find WAN interface for ${this.name}`);
             return;
           }
         }
@@ -108,13 +123,22 @@ class DNSPlugin extends Plugin {
     await exec(`sudo ln -s ${this._getResolvFilePath()} /etc/resolv.conf`);
   }
 
+  _restartService() {
+    if (!_restartTask) {
+      _restartTask = setTimeout(() => {
+        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns");
+        _restartTask = null;
+      }, 10000);
+    }
+  }
+
   async apply() {
     if (this.name !== "default") {
       await this.prepareEnvironment();
       await this.installDNSScript();
       await this.installSystemService();
       await this.writeDNSConfFile();
-      await exec("sudo systemctl restart firerouter_dns");
+      this._restartService();
     } else {
       await this.applyDefaultResolvConf();
     }

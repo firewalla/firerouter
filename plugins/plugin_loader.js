@@ -1,6 +1,6 @@
-/*    Copyright 2016 Firewalla LLC
+/*    Copyright 2019 Firewalla Inc
  *
- *    This program is free software: you can redistribute it and/or  modify
+ *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
  *    as published by the Free Software Foundation.
  *
@@ -12,6 +12,7 @@
  *    You should have received a copy of the GNU Affero General Public License
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 'use strict';
 
 const log = require('../util/logger.js')(__filename);
@@ -19,7 +20,7 @@ const config = require('../util/config.js').getConfig();
 
 let pluginConfs = [];
 
-const pluginCategoryMap = {};
+let pluginCategoryMap = {};
 
 const _ = require('lodash');
 
@@ -69,11 +70,12 @@ function getPluginInstance(category, name) {
   return pluginCategoryMap[category] && pluginCategoryMap[category][name];
 }
 
-async function reapply(config) {
+async function reapply(config, dryRun = false) {
+  const errors = [];
   const newPluginCategoryMap = {};
 
   const reversedPluginConfs = pluginConfs.reverse();
-  // remove or flush plugins in descending order by init sequence
+  // remove plugins in descending order by init sequence
   for (let pluginConf of reversedPluginConfs) {
     newPluginCategoryMap[pluginConf.category] = newPluginCategoryMap[pluginConf.category] || {};
     if (!pluginConf.c)
@@ -94,22 +96,21 @@ async function reapply(config) {
     }
     if (value) {
       for (let name in value) {
-        log.info("Creating instance", pluginConf.category, name);
         const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
         if (!instance)
           continue;
         instance._mark = 1;
         const oldConfig = instance.networkConfig;
         if (oldConfig && !_.isEqual(oldConfig, value[name])) {
-          // network config is changed, flush plugin instance with old config
-          log.info(`Network config of ${pluginConf.category}-->${name} is changed, flush old config ...`);
-          await instance.flush();
+          log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
+          instance.setChanged(true);
         }
-        instance.configure(value[name]);
+        instance._nextConfig = value[name];
         if (!oldConfig) {
           // initialization of network config, flush instance with new config
-          log.info(`Initial setup of ${pluginConf.category}-->${name}, flushing ...`);
-          await instance.flush();
+          log.info(`Initial setup of ${pluginConf.category}-->${name}`, value[name]);
+          instance.setChanged(true);
+          instance.unsubscribeAllChanges();
         }
         newInstances[name] = instance;
       }
@@ -118,27 +119,61 @@ async function reapply(config) {
     if (instances) {
       const removedInstances = instances.filter(i => i._mark == 0);
       for (let instance of removedInstances) {
-        log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`)
-        await instance.flush();
+        if (!dryRun) {
+          log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
+          await instance.flush();
+        }
+        instance.setChanged(true);
+        instance.unsubscribeAllChanges();
       }
     }
     // merge with new pluginCategoryMap
     newPluginCategoryMap[pluginConf.category] = Object.assign({}, newPluginCategoryMap[pluginConf.category], newInstances);
   }
 
+  // flush all changed plugins in descending order by init sequence
+  for (let pluginConf of reversedPluginConfs) {
+    const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+    if (instances) {
+      for (let instance of instances) {
+        if (!instance.networkConfig)
+          instance.configure(instance._nextConfig);
+        if (instance.isChanged()) {
+          if (!dryRun) {
+            log.info("Flushing old config", pluginConf.category, instance.name);
+            await instance.flush();
+          }
+          instance.unsubscribeAllChanges();
+        }
+        instance.configure(instance._nextConfig);
+      }
+    }
+  }
+
   // apply plugin configs in ascending order by init sequence
   pluginConfs = reversedPluginConfs.reverse();
+  // do not apply config in dry run
+  if (dryRun)
+    return errors;
   for (let pluginConf of pluginConfs) {
     const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
     if (instances) {
       for (let instance of instances) {
-        log.info("Applying config", pluginConf.category, instance.name);
-        await instance.apply().catch((err) => {
-          log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
-        });
+        if (instance.isChanged()) {
+          log.info("Applying new config", pluginConf.category, instance.name);
+          await instance.apply().catch((err) => {
+            log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
+            errors.push(err.message || err);
+          });
+        } else {
+          log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
+        }
+        instance.setChanged(false);
       }
     }
   }
+  pluginCategoryMap = newPluginCategoryMap;
+  return errors;
 }
 
 module.exports = {

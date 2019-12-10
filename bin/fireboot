@@ -1,0 +1,23 @@
+#!/bin/bash
+
+_rc=0
+
+# step 1 - apply network config
+echo "Applying last successful network config..."
+
+# step 2 - test network connectivity
+echo "Testing network connectivity..."
+nc -z 1.1.1.1 443 || (echo "err: network is unavailable" && _rc=1)
+dig github.com || (echo "err: dns is unavailable" && _rc=2)
+
+test $_rc -eq  0 || exit $_rc
+
+# step 3 - start fireupgrade
+echo "Starting Fireupgrade..."
+sudo systemctl start fireupgrade
+
+# step 4 - start fireupgrade
+echo "Starting Firewalla..."
+sudo systemctl start firewalla
+
+exit 0

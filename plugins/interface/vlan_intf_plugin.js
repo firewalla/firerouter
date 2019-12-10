@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla, Inc
+/*    Copyright 2019 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -14,8 +14,6 @@
  */
 
 'use strict';
-
-const log = require('../../util/logger.js')(__filename);
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
@@ -36,7 +34,7 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     const intf = this.networkConfig.intf;
     const vid = this.networkConfig.vid;
     await exec(`sudo vconfig add ${intf} ${vid}`).catch((err) => {
-      log.error(`Failed to create vlan interface ${this.name}`, err.message);
+      this.log.error(`Failed to create vlan interface ${this.name}`, err.message);
     })
   }
 }

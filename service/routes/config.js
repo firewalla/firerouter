@@ -1,6 +1,6 @@
-/*    Copyright 2016 Firewalla LLC
+/*    Copyright 2019 Firewalla Inc
  *
- *    This program is free software: you can redistribute it and/or  modify
+ *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
  *    as published by the Free Software Foundation.
  *
@@ -34,9 +34,22 @@ const jsonParser = bodyParser.json()
 
 router.post('/set',
   jsonParser,
-  (req, res, next) => {
-    log.info(req.body);
-    res.json({});
+  async (req, res, next) => {
+    const newConfig = req.body;
+    let errors = await ncm.validateConfig(newConfig);
+    if (errors && errors.length != 0) {
+      log.error("Invalid network config", errors);
+      res.json({errors: errors});
+    } else {
+      errors = await ncm.tryApplyConfig(newConfig);
+      if (errors && errors.length != 0) {
+        log.error("Failed to apply new network config", errors);
+      } else {
+        log.info("New config is applied with no error");
+        await ncm.saveConfig(newConfig);
+      }
+      res.json({errors: errors});
+    }
   });
 
 module.exports = router;

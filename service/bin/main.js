@@ -1,4 +1,18 @@
-#!/usr/bin/env node
+/*    Copyright 2019 Firewalla Inc
+ *
+ *    This program is free software: you can redistribute it and/or modify
+ *    it under the terms of the GNU Affero General Public License, version 3,
+ *    as published by the Free Software Foundation.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU Affero General Public License for more details.
+ *
+ *    You should have received a copy of the GNU Affero General Public License
+ *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 'use strict'
 
 process.title = "FireRouter"
@@ -13,9 +27,22 @@ log.info("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 const debug = require('debug')('api:server');
 const http = require('http');
-const port = normalizePort(process.env.PORT || '8833');
+const port = normalizePort(process.env.PORT || '8837');
+
+const pl = require('../../plugins/plugin_loader.js');
+const ns = require('../../core/network_setup.js');
+const ncm = require('../../core/network_config_mgr.js');
 
 let server;
+
+async function pre_run() {
+  await pl.initPlugins();
+  const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
+  await ns.prepareEnvironment();
+  await ncm.tryApplyConfig(activeConfig, true);
+  await ncm.saveConfig(activeConfig);
+  log.info("Booting setup complete.");
+}
 
 function run() {
   const app = require('../app');
@@ -37,7 +64,7 @@ function run() {
 
 }
 
-run();
+pre_run().then(() => run());
 
 function normalizePort(val) {
   var port = parseInt(val, 10);

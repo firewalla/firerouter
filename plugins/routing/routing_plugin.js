@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla, Inc
+/*    Copyright 2019 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -15,11 +15,8 @@
 
 'use strict';
 
-const log = require('../../util/logger.js')(__filename);
-
 const Plugin = require('../plugin.js');
 
-const exec = require('child-process-promise').exec;
 const ip = require('ip');
 
 const pl = require('../plugin_loader.js');
@@ -28,12 +25,49 @@ const routing = require('../../util/routing.js');
 class RoutingPlugin extends Plugin {
    
   async flush() {
+    if (!this.networkConfig) {
+      this.log.error(`Network config for ${this.name} is not set`);
+      return;
+    }
 
+    switch (this.name) {
+      case "global": {
+        await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
+        await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
+        await routing.flushRoutingTable(routing.RT_STATIC);
+        break;
+      }
+      default: {
+        for (let type of Object.keys(this.networkConfig)) {
+          const settings = this.networkConfig[type];
+          switch (type) {
+            case "default": {
+              const viaIntf = settings.viaIntf;
+              let iface = this.name;
+              if (iface.includes(":")) {
+                // virtual interface, need to strip suffix
+                iface = this.name.substr(0, this.name.indexOf(":"));
+              }
+              // remove local and default routing table rule for the interface
+              await routing.removePolicyRoutingRule("all", iface, `${viaIntf}_local`).catch((err) => {});
+              await routing.removePolicyRoutingRule("all", iface, `${viaIntf}_default`).catch((err) => {});
+              break;
+            }
+            case "static": {
+              break;
+            }
+            default: {
+              this.log.error(`Unsupported routing type for ${this.name}: ${type}`);
+            }
+          }
+        }
+      }
+    }
   }
 
   async apply() {
     if (!this.networkConfig) {
-      log.error("Network config is not configured")
+      this.fatal(`Network config for ${this.name} is not set`);
       return;
     }
 
@@ -43,18 +77,19 @@ class RoutingPlugin extends Plugin {
           const settings = this.networkConfig[type];
           switch (type) {
             case "default": {
-              settings.type = settings.type || "single";
-              switch (settings.type) {
+              const defaultRoutingType = settings.type || "single";
+              switch (defaultRoutingType) {
                 case "single": {
                   const viaIntf = settings.viaIntf;
                   const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
                   if (viaIntfPlugin) {
+                    this.subscribeChangeFrom(viaIntfPlugin);
                     const state = await viaIntfPlugin.state();
                     if (state && state.ip4) {
                       const cidr = ip.cidrSubnet(state.ip4);
                       await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => {});
                     } else {
-                      log.error("Failed to get ip4 of global default interface " + viaIntf);
+                      this.fatal("Failed to get ip4 of global default interface " + viaIntf);
                     }
 
                     const gw = await routing.getInterfaceGWIP(viaIntf);
@@ -64,10 +99,10 @@ class RoutingPlugin extends Plugin {
                       await routing.removeRouteFromTable("default", null, null, null).catch((err) => {});
                       await routing.addRouteToTable("default", gw, viaIntf, "main").catch((err) => {});
                     } else {
-                      log.error("Failed to get gateway IP of global default interface " + viaIntf);
+                      this.fatal("Failed to get gateway IP of global default interface " + viaIntf);
                     }
                   } else {
-                    log.error(`Cannot find global default interface plugin ${viaIntf}`)
+                    this.fatal(`Cannot find global default interface plugin ${viaIntf}`)
                   }
                   break;
                 }
@@ -84,7 +119,7 @@ class RoutingPlugin extends Plugin {
               break;
             }
             default:
-              log.error(`Unsupported routing type for ${this.name}: ${type}`);
+              this.fatal(`Unsupported routing type for ${this.name}: ${type}`);
           }
         }
         break;
@@ -102,11 +137,12 @@ class RoutingPlugin extends Plugin {
                 iface = this.name.substr(0, this.name.indexOf(":"));
               }
               if (viaIntfPlugin) {
+                this.subscribeChangeFrom(viaIntfPlugin);
                 // local and default routing table accesible to the interface
-                await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_local`, 2001).catch((err) => {});
-                await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_default`, 7001).catch((err) => {});
+                await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_local`, 2001);
+                await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_default`, 7001);
               } else {
-                log.error(`Cannot find global default interface plugin ${viaIntf}`)
+                this.fatal(`Cannot find global default interface plugin ${viaIntf}`)
               }
               break;
             }
@@ -114,7 +150,7 @@ class RoutingPlugin extends Plugin {
               break;
             }
             default:
-              log.error(`Unsupported routing type for ${this.name}: ${type}`);
+              this.log.error(`Unsupported routing type for ${this.name}: ${type}`);
           }
         }
       }

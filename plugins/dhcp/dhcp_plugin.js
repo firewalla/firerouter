@@ -1,6 +1,19 @@
-'use strict';
+/*    Copyright 2019 Firewalla Inc
+ *
+ *    This program is free software: you can redistribute it and/or modify
+ *    it under the terms of the GNU Affero General Public License, version 3,
+ *    as published by the Free Software Foundation.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU Affero General Public License for more details.
+ *
+ *    You should have received a copy of the GNU Affero General Public License
+ *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
-const log = require('../../util/logger.js')(__filename);
+'use strict';
 
 const Plugin = require('../plugin.js');
 
@@ -18,6 +31,8 @@ const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
 const dhcpRuntimeDir = r.getRuntimeFolder() + "/dhcp";
 
+let _restartTask = null;
+
 class DHCPPlugin extends Plugin {
 
   _getConfFilePath() {
@@ -25,10 +40,10 @@ class DHCPPlugin extends Plugin {
   }
 
   async flush() {
-    log.info("Flushing dhcp", this.name);
+    this.log.info("Flushing dhcp", this.name);
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
-    await exec("sudo systemctl restart firerouter_dhcp");
+    this._restartService();
   }
 
   async prepareEnvironment() {
@@ -77,6 +92,15 @@ class DHCPPlugin extends Plugin {
     await fs.writeFileAsync(this._getConfFilePath(), content);
   }
 
+  _restartService() {
+    if (!_restartTask) {
+      _restartTask = setTimeout(() => {
+        exec("sudo systemctl stop firerouter_dhcp; sudo systemctl start firerouter_dhcp");
+        _restartTask = null;
+      }, 10000);
+    }
+  }
+
   async apply() {
     await this.prepareEnvironment();
     await this.installDHCPScript();
@@ -88,7 +112,7 @@ class DHCPPlugin extends Plugin {
     }
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
       this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain);
-    await exec("sudo systemctl restart firerouter_dhcp");
+    this._restartService();
   }
 }
 

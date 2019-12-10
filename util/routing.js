@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla, Inc
+/*    Copyright 2019 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -175,8 +175,18 @@ async function createInterfaceRoutingRules(intf) {
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
 }
 
+async function removeInterfaceRoutingRules(intf) {
+  await removePolicyRoutingRule("all", intf, `${intf}_local`);
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`);
+  await removePolicyRoutingRule("all", intf, `${intf}_default`);
+}
+
 async function createInterfaceGlobalRoutingRules(intf) {
   await createPolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001);
+}
+
+async function removeInterfaceGlobalRoutingRules(intf) {
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT);
 }
 
 async function getInterfaceGWIP(intf) {
@@ -194,7 +204,9 @@ module.exports = {
   flushPolicyRoutingRules: flushPolicyRoutingRules,
   initializeInterfaceRoutingTables: initializeInterfaceRoutingTables,
   createInterfaceRoutingRules: createInterfaceRoutingRules,
+  removeInterfaceRoutingRules: removeInterfaceRoutingRules,
   createInterfaceGlobalRoutingRules: createInterfaceGlobalRoutingRules,
+  removeInterfaceGlobalRoutingRules: removeInterfaceGlobalRoutingRules,
   getInterfaceGWIP: getInterfaceGWIP,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,

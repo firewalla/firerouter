@@ -167,9 +167,11 @@ echo $current_tag > /tmp/REPO_TAG
 # all the rest services will be updated (in case) via firewalla.service
 
 sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
+sudo cp /home/pi/firerouter/scripts/fireboot.service /etc/systemd/system/.
 sudo systemctl daemon-reload
 sudo systemctl reenable firerouter
 sudo systemctl reenable firerouter_upgrade
+sudo systemctl reenable fireboot
 
 case $mode in
     normal)
