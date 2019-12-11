@@ -2,6 +2,8 @@
 
 _rc=0
 
+sleep 10
+
 # step 1 - apply network config
 echo "Applying last successful network config..."
 
