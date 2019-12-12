@@ -21,6 +21,7 @@ const routing = require('../util/routing.js');
 const log = require('../util/logger.js')(__filename);
 const r = require('../util/firerouter.js');
 const _ = require('lodash');
+const util = require('../util/util.js');
 
 const exec = require('child-process-promise').exec;
 
@@ -38,6 +39,13 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    // flush iptables
+    await exec(`sudo iptables -w -t nat -N FR_PREROUTING || true`);
+    await exec(`sudo iptables -w -t nat -N FR_POSTROUTING || true`);
+    await exec(`sudo iptables -w -t nat -F FR_PREROUTING || true`);
+    await exec(`sudo iptables -w -t nat -F FR_POSTROUTING || true`);
+    await exec(util.wrapIptables(`sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING`));
+    await exec(util.wrapIptables(`sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING`));
     // reset ip rules
     await routing.flushPolicyRoutingRules();
     await routing.createPolicyRoutingRule("all", null, "local", 0); 
