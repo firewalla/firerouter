@@ -132,6 +132,7 @@ class InterfaceBasePlugin extends Plugin {
       await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
     } else {
       if (this.networkConfig.ipv4) {
+
         await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
           this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
         })
@@ -203,7 +204,9 @@ class InterfaceBasePlugin extends Plugin {
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
     const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4};
+    const gateway = await routing.getInterfaceGWIP(this.name);
+    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
+    return {mac, mtu, carrier, duplex, speed, operstate, ip4, gateway, dns};
   }
 }
 
