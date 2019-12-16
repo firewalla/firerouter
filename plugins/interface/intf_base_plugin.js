@@ -132,8 +132,7 @@ class InterfaceBasePlugin extends Plugin {
       await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
     } else {
       if (this.networkConfig.ipv4) {
-
-        await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
+        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
           this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
         })
       }
