@@ -37,6 +37,8 @@ class DNSPlugin extends Plugin {
   async flush() {
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
+    await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
+    await exec(`rm -rf ${r.getFirewallaUserConfigFolder()}/dnsmasq/${this.name}`).catch((err) => {});
     this._restartService();
   }
 
