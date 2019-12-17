@@ -107,7 +107,7 @@ async function removePolicyRoutingRule(from, iif, tableName) {
   }
 }
 
-async function addRouteToTable(dest, gateway, intf, tableName) {
+async function addRouteToTable(dest, gateway, intf, tableName, preference) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
@@ -116,6 +116,8 @@ async function addRouteToTable(dest, gateway, intf, tableName) {
   } else {
     cmd = `sudo ip route add ${dest} dev ${intf} table ${tableName}`;
   }
+  if (preference)
+    cmd = `${cmd} preference ${preference}`;
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to add route to table.", result.stderr);
