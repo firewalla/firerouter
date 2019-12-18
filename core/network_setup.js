@@ -95,6 +95,14 @@ class NetworkSetup {
     }
     return lans;
   }
+
+  async getInterface(intf) {
+    const plugin = pl.getPluginInstance("interface", intf);
+    if (!plugin)
+      return null;
+    const state = await plugin.state();
+    return {config: plugin.networkConfig, state: state};
+  }
 }
 
 module.exports = new NetworkSetup();

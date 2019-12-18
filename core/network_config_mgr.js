@@ -36,13 +36,17 @@ class NetworkConfigManager {
   }
 
   async getWANs() {
-    const configs = ns.getWANs();
+    const configs = await ns.getWANs();
     return configs;
   }
 
   async getLANs() {
-    const configs = ns.getLANs();
+    const configs = await ns.getLANs();
     return configs;
+  }
+
+  async getInterface(intf) {
+    return ns.getInterface(intf);
   }
 
   async getActiveConfig() {
