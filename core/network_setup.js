@@ -54,11 +54,13 @@ class NetworkSetup {
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_DEFAULT);
-    await routing.createCustomizedRoutingTable(routing.RT_ROUTABLE);
+    await routing.createCustomizedRoutingTable(routing.RT_WAN_ROUTABLE);
+    await routing.createCustomizedRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.createCustomizedRoutingTable(routing.RT_STATIC);
     await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
-    await routing.flushRoutingTable(routing.RT_ROUTABLE);
+    await routing.flushRoutingTable(routing.RT_WAN_ROUTABLE);
+    await routing.flushRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.flushRoutingTable(routing.RT_STATIC);
 
     await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000);
@@ -94,6 +96,14 @@ class NetworkSetup {
       }
     }
     return lans;
+  }
+
+  async getInterface(intf) {
+    const plugin = pl.getPluginInstance("interface", intf);
+    if (!plugin)
+      return null;
+    const state = await plugin.state();
+    return {config: plugin.networkConfig, state: state};
   }
 }
 

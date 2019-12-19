@@ -22,7 +22,8 @@ const exec = require('child-process-promise').exec;
 const RT_GLOBAL_LOCAL="global_local";
 const RT_GLOBAL_DEFAULT = "global_default";
 const RT_STATIC = "static";
-const RT_ROUTABLE = "routable";
+const RT_WAN_ROUTABLE = "wan_routable";
+const RT_LAN_ROUTABLE = "lan_routable";
 
 async function createCustomizedRoutingTable(tableName) {
   let cmd = "cat /etc/iproute2/rt_tables | grep -v '#' | awk '{print $1,\"\\011\",$2}'";
@@ -212,6 +213,7 @@ module.exports = {
   getInterfaceGWIP: getInterfaceGWIP,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
-  RT_ROUTABLE: RT_ROUTABLE,
+  RT_WAN_ROUTABLE: RT_WAN_ROUTABLE,
+  RT_LAN_ROUTABLE: RT_LAN_ROUTABLE,
   RT_STATIC: RT_STATIC
 }

@@ -57,13 +57,18 @@ class InterfaceBasePlugin extends Plugin {
       await routing.removeInterfaceGlobalRoutingRules(this.name);
 
       if (this.networkConfig.gateway || this.networkConfig.dhcp) {
-        // considered as WAN interface, accessbile to "routable"
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_ROUTABLE).catch((err) => {});
+        // considered as WAN interface, remove access to "routable"
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
       } else {
-        // considered as LAN interface, add to "routable"
+        // considered as LAN interface, remove from "routable"
         if (this.networkConfig.ipv4) {
           const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-          await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
+          await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+          if (this.networkConfig.isolated !== true) {
+            // routable to/from other routable lans
+            await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+            await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+          }
         }
       }
     }
@@ -157,12 +162,17 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.networkConfig.gateway || this.networkConfig.dhcp) {
       // considered as WAN interface, accessbile to "routable"
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_ROUTABLE, 5001).catch((err) => {});
+      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
     } else {
       // considered as LAN interface, add to "routable"
       if (this.networkConfig.ipv4) {
         const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
+        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+        if (this.networkConfig.isolated !== true) {
+          // routable to/from other routable lans
+          await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+          await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => {});
+        }
       }
     }
   }

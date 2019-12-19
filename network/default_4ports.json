@@ -54,7 +54,8 @@
           "eth0.100",
           "eth1.100"
         ],
-        "enabled": true
+        "enabled": true,
+        "isolated": true
       }
     }
   },

@@ -52,7 +52,20 @@ router.get('/phy_interfaces', async (req, res, next) => {
     res.status(200).json({intfs: intfs});
   }).catch((err) => {
     res.status(500).json({errors: [err.message]});
-  })
+  });
+});
+
+router.get('/interface/:intf', async (req, res, next) => {
+  const intf = req.params.intf;
+  await ncm.getInterface(intf).then((result) => {
+    if (result) {
+      res.status(200).json(result);
+    } else {
+      res.status(404).send('');
+    }
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
 })
 
 const jsonParser = bodyParser.json()
