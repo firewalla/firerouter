@@ -25,6 +25,7 @@ const exec = require('child-process-promise').exec;
 const fs = require('fs');
 const Promise = require('bluebird');
 const ip = require('ip');
+const uuid = require('uuid');
 
 Promise.promisifyAll(fs);
 
@@ -72,6 +73,14 @@ class InterfaceBasePlugin extends Plugin {
         }
       }
     }
+  }
+
+  async configure(networkConfig) {
+    await super.configure(networkConfig);
+    if (!networkConfig.meta)
+      networkConfig.meta = {};
+    if (!networkConfig.meta.uuid)
+      networkConfig.meta.uuid = uuid.v4();
   }
 
   _getDHClientPidFilePath() {
