@@ -19,7 +19,8 @@ const express = require('express');
 const router = express.Router();
 const bodyParser = require('body-parser');
 const log = require('../../util/logger.js')(__filename, 'info')
-const ncm = require('../../core/network_config_mgr');
+const ncm = require('../../core/network_config_mgr.js');
+const ns = require('../../core/network_setup.js');
 
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig();
@@ -29,6 +30,43 @@ router.get('/active', async (req, res, next) => {
     res.status(404).send('');
   }
 });
+
+router.get('/wans', async (req, res, next) => {
+  await ncm.getWANs().then((wans) => {
+    res.status(200).json(wans);
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+router.get('/lans', async (req, res, next) => {
+  await ncm.getLANs().then((lans) => {
+    res.status(200).json(lans);
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+router.get('/phy_interfaces', async (req, res, next) => {
+  await ncm.getPhyInterfaceNames().then((intfs) => {
+    res.status(200).json({intfs: intfs});
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+router.get('/interface/:intf', async (req, res, next) => {
+  const intf = req.params.intf;
+  await ncm.getInterface(intf).then((result) => {
+    if (result) {
+      res.status(200).json(result);
+    } else {
+      res.status(404).send('');
+    }
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+})
 
 const jsonParser = bodyParser.json()
 
@@ -44,11 +82,47 @@ router.post('/set',
       errors = await ncm.tryApplyConfig(newConfig);
       if (errors && errors.length != 0) {
         log.error("Failed to apply new network config", errors);
+        res.status(400).json({errors: errors});
       } else {
         log.info("New config is applied with no error");
         await ncm.saveConfig(newConfig);
+        res.status(200).json({errors: errors});
       }
-      res.json({errors: errors});
+    }
+  });
+
+router.post('/prepare_env',
+  jsonParser,
+  async (req, res, next) => {
+    await ns.prepareEnvironment().then(() => {
+      res.status(200).json({errors: []});
+    }).catch((err) => {
+      res.status(500).json({errors: [err.message]});
+    })
+  })
+
+router.post('/apply_current_config',
+  jsonParser,
+  async (req, res, next) => {
+    const currentConfig = await ncm.getActiveConfig();
+    if (currentConfig) {
+      let errors = await ncm.validateConfig(currentConfig);
+      if (errors && errors.length != 0) {
+        log.error("Invalid network config", errors);
+        res.json({errors: errors});
+      } else {
+        errors = await ncm.tryApplyConfig(currentConfig);
+        if (errors && errors.length != 0) {
+          log.error("Failed to apply current network config", errors);
+          res.status(400).json({errors: errors});
+        } else {
+          log.info("Current config is applied with no error");
+          await ncm.saveConfig(currentConfig);
+          res.status(200).json({errors: errors});
+        }
+      }
+    } else {
+      res.status(404).send("Network config is not set.");
     }
   });
 

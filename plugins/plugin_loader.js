@@ -66,8 +66,26 @@ function createPluginInstance(category, name, constructor) {
   return instance;
 }
 
+function getPluginInstances(category) {
+  return pluginCategoryMap[category];
+}
+
 function getPluginInstance(category, name) {
   return pluginCategoryMap[category] && pluginCategoryMap[category][name];
+}
+
+function _isConfigEqual(c1, c2) {
+  if (!c1 || !c2)
+    return false;
+  const c1Copy = JSON.parse(JSON.stringify(c1));
+  const c2Copy = JSON.parse(JSON.stringify(c2));
+
+  if (c1Copy.meta)
+    delete c1Copy["meta"];
+  if (c2Copy.meta)
+    delete c2Copy["meta"];
+  
+  return _.isEqual(c1Copy, c2Copy);
 }
 
 async function reapply(config, dryRun = false) {
@@ -179,5 +197,6 @@ async function reapply(config, dryRun = false) {
 module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
+  getPluginInstances: getPluginInstances,
   reapply: reapply,
 };

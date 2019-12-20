@@ -79,7 +79,8 @@ class RoutingPlugin extends Plugin {
             case "default": {
               const defaultRoutingType = settings.type || "single";
               switch (defaultRoutingType) {
-                case "single": {
+                case "single":
+                case "primary_standby": {
                   const viaIntf = settings.viaIntf;
                   const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
                   if (viaIntfPlugin) {
@@ -102,8 +103,34 @@ class RoutingPlugin extends Plugin {
                       this.fatal("Failed to get gateway IP of global default interface " + viaIntf);
                     }
                   } else {
-                    this.fatal(`Cannot find global default interface plugin ${viaIntf}`)
+                    this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
                   }
+
+                  if (defaultRoutingType !== "primary_standby")
+                    break;
+                  // TODO: Add auto recovery for primary default route
+                  const viaIntf2 = settings.viaIntf2;
+                  const viaIntf2Plugin = pl.getPluginInstance("interface", viaIntf2);
+                  if (viaIntf2Plugin) {
+                    this.subscribeChangeFrom(viaIntf2Plugin);
+                    const state = await viaIntf2Plugin.state();
+                    if (state && state.ip4) {
+                      const cidr = ip.cidrSubnet(state.ip4);
+                      await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, viaIntf2, routing.RT_GLOBAL_LOCAL, 100).catch((err) => { });
+                    } else {
+                      this.fatal("Failed to get ip4 of global default interface " + viaIntf2);
+                    }
+
+                    const gw = await routing.getInterfaceGWIP(viaIntf2);
+                    if (gw) {
+                      await routing.addRouteToTable("default", gw, viaIntf2, routing.RT_GLOBAL_DEFAULT, 100).catch((err) => { });
+                      await routing.addRouteToTable("default", gw, viaIntf2, "main", 100).catch((err) => { });
+                    } else {
+                      this.fatal("Failed to get gateway IP of global default interface " + viaIntf);
+                    }
+                  } else {
+                    this.fatal(`Cannot find global default interface plugin ${viaIntf2}`);
+                  }   
                   break;
                 }
                 case "primary_standby": {

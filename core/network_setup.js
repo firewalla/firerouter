@@ -21,6 +21,7 @@ const routing = require('../util/routing.js');
 const log = require('../util/logger.js')(__filename);
 const r = require('../util/firerouter.js');
 const _ = require('lodash');
+const util = require('../util/util.js');
 
 const exec = require('child-process-promise').exec;
 
@@ -38,6 +39,13 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    // flush iptables
+    await exec(`sudo iptables -w -t nat -N FR_PREROUTING || true`);
+    await exec(`sudo iptables -w -t nat -N FR_POSTROUTING || true`);
+    await exec(`sudo iptables -w -t nat -F FR_PREROUTING || true`);
+    await exec(`sudo iptables -w -t nat -F FR_POSTROUTING || true`);
+    await exec(util.wrapIptables(`sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING`));
+    await exec(util.wrapIptables(`sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING`));
     // reset ip rules
     await routing.flushPolicyRoutingRules();
     await routing.createPolicyRoutingRule("all", null, "local", 0); 
@@ -46,11 +54,13 @@ class NetworkSetup {
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_DEFAULT);
-    await routing.createCustomizedRoutingTable(routing.RT_ROUTABLE);
+    await routing.createCustomizedRoutingTable(routing.RT_WAN_ROUTABLE);
+    await routing.createCustomizedRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.createCustomizedRoutingTable(routing.RT_STATIC);
     await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
-    await routing.flushRoutingTable(routing.RT_ROUTABLE);
+    await routing.flushRoutingTable(routing.RT_WAN_ROUTABLE);
+    await routing.flushRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.flushRoutingTable(routing.RT_STATIC);
 
     await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000);
@@ -60,6 +70,40 @@ class NetworkSetup {
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
     return errors;
+  }
+
+  async getWANs() {
+    const allInterfacePlugins = pl.getPluginInstances("interface") || {};
+    const wans = {};
+    for (let name in allInterfacePlugins) {
+      const plugin = allInterfacePlugins[name];
+      if (plugin && plugin.isWAN()) {
+        const state = await plugin.state();
+        wans[name] = {config: plugin.networkConfig, state: state};
+      }
+    }
+    return wans;
+  }
+
+  async getLANs() {
+    const allInterfacePlugins = pl.getPluginInstances("interface") || {};
+    const lans = {};
+    for (let name in allInterfacePlugins) {
+      const plugin = allInterfacePlugins[name];
+      if (plugin && plugin.isLAN()) {
+        const state = await plugin.state();
+        lans[name] = {config: plugin.networkConfig, state: state};
+      }
+    }
+    return lans;
+  }
+
+  async getInterface(intf) {
+    const plugin = pl.getPluginInstance("interface", intf);
+    if (!plugin)
+      return null;
+    const state = await plugin.state();
+    return {config: plugin.networkConfig, state: state};
   }
 }
 

@@ -19,6 +19,7 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getPrimaryDBRedisClient();
 const ns = require('./network_setup.js');
+const exec = require('child-process-promise').exec;
 
 class NetworkConfigManager {
   constructor() {
@@ -27,6 +28,25 @@ class NetworkConfigManager {
     }
 
     return instance;
+  }
+
+  async getPhyInterfaceNames() {
+    const intfs = await exec("ls -l /sys/class/net/ | tail -n +2 | grep -v virtual | awk '{print $9}'").then((result) => result.stdout.split("\n").filter(line => line.length > 0));
+    return intfs;
+  }
+
+  async getWANs() {
+    const configs = await ns.getWANs();
+    return configs;
+  }
+
+  async getLANs() {
+    const configs = await ns.getLANs();
+    return configs;
+  }
+
+  async getInterface(intf) {
+    return ns.getInterface(intf);
   }
 
   async getActiveConfig() {

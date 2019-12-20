@@ -25,6 +25,7 @@ const exec = require('child-process-promise').exec;
 const fs = require('fs');
 const Promise = require('bluebird');
 const ip = require('ip');
+const uuid = require('uuid');
 
 Promise.promisifyAll(fs);
 
@@ -57,16 +58,29 @@ class InterfaceBasePlugin extends Plugin {
       await routing.removeInterfaceGlobalRoutingRules(this.name);
 
       if (this.networkConfig.gateway || this.networkConfig.dhcp) {
-        // considered as WAN interface, accessbile to "routable"
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_ROUTABLE).catch((err) => {});
+        // considered as WAN interface, remove access to "routable"
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
       } else {
-        // considered as LAN interface, add to "routable"
+        // considered as LAN interface, remove from "routable"
         if (this.networkConfig.ipv4) {
           const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-          await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
+          await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+          if (this.networkConfig.isolated !== true) {
+            // routable to/from other routable lans
+            await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+            await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+          }
         }
       }
     }
+  }
+
+  async configure(networkConfig) {
+    await super.configure(networkConfig);
+    if (!networkConfig.meta)
+      networkConfig.meta = {};
+    if (!networkConfig.meta.uuid)
+      networkConfig.meta.uuid = uuid.v4();
   }
 
   _getDHClientPidFilePath() {
@@ -79,6 +93,23 @@ class InterfaceBasePlugin extends Plugin {
 
   _getResolvConfFilePath() {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
+  }
+
+  isWAN() {
+    if (!this.networkConfig)
+      return false;
+    if (this.networkConfig.dhcp || (this.networkConfig.ipv4 && this.networkConfig.gateway))
+      return true;
+    return false;
+  }
+
+  isLAN() {
+    if (!this.networkConfig)
+      return false;
+    if (this.networkConfig.ipv4 && (!this.networkConfig.dhcp && !this.networkConfig.gateway))
+      // ip address is set but neither dhcp nor gateway is set, considered as LAN interface
+      return true;
+    return false;
   }
 
   async createInterface() {
@@ -115,7 +146,7 @@ class InterfaceBasePlugin extends Plugin {
       await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
     } else {
       if (this.networkConfig.ipv4) {
-        await exec(`sudo ip addr add ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
+        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
           this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
         })
       }
@@ -140,12 +171,17 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.networkConfig.gateway || this.networkConfig.dhcp) {
       // considered as WAN interface, accessbile to "routable"
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_ROUTABLE, 5001).catch((err) => {});
+      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
     } else {
       // considered as LAN interface, add to "routable"
       if (this.networkConfig.ipv4) {
         const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_ROUTABLE).catch((err) => {});
+        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+        if (this.networkConfig.isolated !== true) {
+          // routable to/from other routable lans
+          await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+          await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => {});
+        }
       }
     }
   }
@@ -171,7 +207,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout).catch((err) => {
+    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
       this.log.warn(`Failed to get ${key} of ${this.name}`, err);
       return null;
     })
@@ -185,8 +221,10 @@ class InterfaceBasePlugin extends Plugin {
     const duplex = await this._getSysFSClassNetValue("duplex");
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
-    const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout).catch((err) => null);
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4};
+    const ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
+    const gateway = await routing.getInterfaceGWIP(this.name);
+    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
+    return {mac, mtu, carrier, duplex, speed, operstate, ip4, gateway, dns};
   }
 }
 

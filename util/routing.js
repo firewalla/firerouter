@@ -22,7 +22,8 @@ const exec = require('child-process-promise').exec;
 const RT_GLOBAL_LOCAL="global_local";
 const RT_GLOBAL_DEFAULT = "global_default";
 const RT_STATIC = "static";
-const RT_ROUTABLE = "routable";
+const RT_WAN_ROUTABLE = "wan_routable";
+const RT_LAN_ROUTABLE = "lan_routable";
 
 async function createCustomizedRoutingTable(tableName) {
   let cmd = "cat /etc/iproute2/rt_tables | grep -v '#' | awk '{print $1,\"\\011\",$2}'";
@@ -107,7 +108,7 @@ async function removePolicyRoutingRule(from, iif, tableName) {
   }
 }
 
-async function addRouteToTable(dest, gateway, intf, tableName) {
+async function addRouteToTable(dest, gateway, intf, tableName, preference) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
@@ -116,6 +117,8 @@ async function addRouteToTable(dest, gateway, intf, tableName) {
   } else {
     cmd = `sudo ip route add ${dest} dev ${intf} table ${tableName}`;
   }
+  if (preference)
+    cmd = `${cmd} preference ${preference}`;
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to add route to table.", result.stderr);
@@ -170,7 +173,7 @@ async function initializeInterfaceRoutingTables(intf) {
 }
 
 async function createInterfaceRoutingRules(intf) {
-  await createPolicyRoutingRule("all", intf, `${intf}_local`, 1);
+  await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
 }
@@ -210,6 +213,7 @@ module.exports = {
   getInterfaceGWIP: getInterfaceGWIP,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
-  RT_ROUTABLE: RT_ROUTABLE,
+  RT_WAN_ROUTABLE: RT_WAN_ROUTABLE,
+  RT_LAN_ROUTABLE: RT_LAN_ROUTABLE,
   RT_STATIC: RT_STATIC
 }
