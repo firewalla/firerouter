@@ -3,6 +3,7 @@
 _rc=0
 
 # step 1 - awaiting firerouter API available
+redis-cli set "fireboot:status" "init"
 echo "Awaiting FireRouter API available ..."
 sleep 5
 timeout=3
@@ -26,6 +27,7 @@ test $_rc -eq  0 || exit $_rc
 echo "FireRouter API is available"
 
 # step 2 - apply network config
+redis-cli set "fireboot:status" "apply_network"
 echo "Applying last successful network config..."
 
 HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
@@ -47,18 +49,25 @@ test $_rc -eq  0 || exit $_rc
 echo "Successfully apply last network config..."
 
 # step 3 - test network connectivity
+redis-cli set "fireboot:status" "test_network"
 echo "Testing network connectivity..."
 nc -z 1.1.1.1 443 || (echo "err: network is unavailable" && _rc=3)
 dig github.com || (echo "err: dns is unavailable" && _rc=4)
 
 test $_rc -eq  0 || exit $_rc
 
+# TBD upgrade firerouter itself
+
 # step 4 - start fireupgrade
+redis-cli set "fireboot:status" "fireupgrade"
 echo "Starting Fireupgrade..."
 sudo systemctl start fireupgrade
 
-# step 5 - start fireupgrade
+# step 5 - start firewalla
+redis-cli set "fireboot:status" "firewalla"
 echo "Starting Firewalla..."
 sudo systemctl start firewalla
+
+redis-cli set "fireboot:status" "firewalla_service_done"
 
 exit 0
