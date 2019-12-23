@@ -119,7 +119,7 @@ async function reapply(config, dryRun = false) {
           continue;
         instance._mark = 1;
         const oldConfig = instance.networkConfig;
-        if (oldConfig && !_.isEqual(oldConfig, value[name])) {
+        if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
           log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
           instance.setChanged(true);
         }
