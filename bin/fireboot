@@ -3,7 +3,7 @@
 _rc=0
 
 # step 1 - awaiting firerouter API available
-redis-cli set "fireboot:status" "init"
+redis-cli set "fireboot:status" "apply_network"
 echo "Awaiting FireRouter API available ..."
 sleep 5
 timeout=3
