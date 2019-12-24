@@ -18,9 +18,7 @@
 let instance = null;
 const pl = require('../plugins/plugin_loader.js');
 const routing = require('../util/routing.js');
-const log = require('../util/logger.js')(__filename);
 const r = require('../util/firerouter.js');
-const _ = require('lodash');
 const util = require('../util/util.js');
 
 const exec = require('child-process-promise').exec;
