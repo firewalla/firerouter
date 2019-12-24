@@ -77,7 +77,7 @@ redis-cli set "fireboot:status" "fireupgrade"
 echo "Starting Fireupgrade ..."
 sudo systemctl start fireupgrade
 
-# step 5 - start fireupgrade
+# step 5 - start firewalla
 redis-cli set "fireboot:status" "firewalla"
 echo "Starting Firewalla ..."
 sudo systemctl start firewalla
