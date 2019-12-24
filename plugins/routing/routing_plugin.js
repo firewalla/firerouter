@@ -126,14 +126,11 @@ class RoutingPlugin extends Plugin {
                       await routing.addRouteToTable("default", gw, viaIntf2, routing.RT_GLOBAL_DEFAULT, 100).catch((err) => { });
                       await routing.addRouteToTable("default", gw, viaIntf2, "main", 100).catch((err) => { });
                     } else {
-                      this.fatal("Failed to get gateway IP of global default interface " + viaIntf);
+                      this.fatal("Failed to get gateway IP of global default interface " + viaIntf2);
                     }
                   } else {
                     this.fatal(`Cannot find global default interface plugin ${viaIntf2}`);
                   }   
-                  break;
-                }
-                case "primary_standby": {
                   break;
                 }
                 case "load_balance": {
