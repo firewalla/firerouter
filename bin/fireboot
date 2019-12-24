@@ -28,10 +28,15 @@ init_network_config() {
   redis-cli set "fireboot:status" "apply_network"
   echo "Applying last successful network config ..."
 
-  HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
-  if [[ $HTTP_STATUS_CODE != "200" ]]; then
-    echo "Failed to prepare environment"
-    _rc=2
+  if [[ ! -f /dev/shm/firerouter.prepared ]]; then
+    echo "Preparing network environment ..."
+    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
+    if [[ $HTTP_STATUS_CODE != "200" ]]; then
+      echo "Failed to prepare environment"
+      _rc=2
+    else
+      touch /dev/shm/firerouter.prepared
+    fi
   fi
 
   test $_rc -eq  0 || exit $_rc
@@ -56,8 +61,6 @@ init_network_config() {
 }
 
 # step 1 - init network config
-echo "Restarting FireRouter ..."
-sudo systemctl restart firerouter
 init_network_config
 
 # step 2 - upgrade firerouter
@@ -66,11 +69,12 @@ echo "Upgrading FireRouter ..."
 
 
 # step 3 - restart firerouter and init network config again
-echo "Restarting FireRouter ..."
-sudo systemctl restart firerouter
-init_network_config
-
-# TBD upgrade firerouter itself
+if [[ -f /dev/shm/firerouter.upgraded ]]; then
+  echo "Restarting FireRouter ..."
+  sudo systemctl restart firerouter
+  init_network_config
+  rm /dev/shm/firerouter.upgraded
+fi
 
 # step 4 - start fireupgrade
 redis-cli set "fireboot:status" "fireupgrade"
