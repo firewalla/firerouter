@@ -64,5 +64,13 @@
       },
       "lease": 86400
     }
+  },
+  "ssh": {
+    "eth3": {
+      "enabled": false
+    },
+    "br0": {
+      "enabled": true
+    }
   }
 }
