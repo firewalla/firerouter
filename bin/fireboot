@@ -54,7 +54,7 @@ init_network_config() {
   redis-cli set "fireboot:status" "test_network"
   echo "Testing network connectivity ..."
   nc -z 1.1.1.1 443 || (echo "err: network is unavailable" && _rc=3)
-  dig github.com || (echo "err: dns is unavailable" && _rc=4)
+  nslookup -timeout=10 github.com || (echo "err: dns is unavailable" && _rc=4)
 
   test $_rc -eq  0 || exit $_rc
   echo "Network connectivity test succeeded"
@@ -66,6 +66,7 @@ init_network_config
 # step 2 - upgrade firerouter
 redis-cli set "fireboot:status" "firerouter_upgrade"
 echo "Upgrading FireRouter ..."
+/home/pi/firerouter/scripts/firerouter_upgrade.sh
 
 
 # step 3 - restart firerouter and init network config again
