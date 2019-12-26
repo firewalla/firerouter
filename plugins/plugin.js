@@ -26,6 +26,10 @@ class Plugin {
     return this;
   }
 
+  static async preparePlugin() {
+
+  }
+
   init(pluginConfig) {
     this.pluginConfig = pluginConfig;
     this.log.info(`Initializing Plugin ${this.constructor.name}...`);

@@ -40,6 +40,7 @@ function initPlugins() {
         pluginCategoryMap[pluginConf.category] = {};
       const pluginClass = require(filePath);
       pluginConf.c = pluginClass;
+      pluginClass.preparePlugin();
     } catch (err) {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }

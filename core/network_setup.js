@@ -37,6 +37,9 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    // cleanup legacy config files
+    await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
+    await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
     // flush iptables
     await exec(`sudo iptables -w -t nat -N FR_PREROUTING || true`);
     await exec(`sudo iptables -w -t nat -N FR_POSTROUTING || true`);
