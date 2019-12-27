@@ -1,39 +1,18 @@
 #!/bin/bash
 
-#
-#    Copyright 2017 Firewalla LLC
-#
-#    This program is free software: you can redistribute it and/or  modify
-#    it under the terms of the GNU Affero General Public License, version 3,
-#    as published by the Free Software Foundation.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-
-# This script should only handle upgrade, nothing else
+# This script should only handle FireRouter upgrade, nothing else
 #
 # WARNING:  EXTRA CARE NEEDED FOR THIS SCRIPT!  ANYTHING BROKEN HERE
 # WILL PREVENT UPGRADES!
+
+: ${FIREROUTER_HOME:=/home/pi/firerouter}
+MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
+
 
 # timeout_check - timeout control given process or last background process
 # returns:
 #   0 - process exits before timeout
 #   1 - process killed due to timeout
-
-: ${FIREROUTER_HOME:=/home/pi/firerouter}
-MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
-
-# ensure that run directory already exists
-mkdir -p /home/pi/.firewalla/run
-
-mode=${1:-'normal'}
-
 timeout_check() {
     pid=${1:-$!}
     timeout=${2:-120}
@@ -91,12 +70,12 @@ fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync
 
-GITHUB_STATUS_API=https://api.github.com
+NETWORK_CHECK_URL=https://one.one.one.one
 
 logger `date`
 rc=1
 for i in `seq 1 10`; do
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" $GITHUB_STATUS_API`
+    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" $NETWORK_CHECK_URL`
     if [[ $HTTP_STATUS_CODE == "200" ]]; then
       rc=0
       break
@@ -107,42 +86,36 @@ done
 
 if [[ $rc -ne 0 ]]
 then
-    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Starting RECOVER NETWORK "+`date`
-    external_script='sudo  CHECK_FIX_NETWORK_REBOOT=no CHECK_FIX_NETWORK_RETRY=no /home/pi/firerouter/scripts/check_fix_network.sh'
-    if [ -s /home/pi/scripts/check_fix_network.sh ]
-    then
-        external_script='sudo  CHECK_FIX_NETWORK_REBOOT=no CHECK_FIX_NETWORK_RETRY=no /home/pi/scripts/check_fix_network.sh'
-    else
-        external_script='sudo  CHECK_FIX_NETWORK_REBOOT=no CHECK_FIX_NETWORK_RETRY=no /home/pi/firerouter/scripts/check_fix_network.sh'
-    fi
-    $external_script &>/dev/null &
-    timeout_check || /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Starting RECOVER TIMEOUT"+`date`
-    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Ending RECOVER NETWORK "+`date`
+    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Failed No Network "+`date`
+    rm /dev/shm/firerouter.upgraded
+    touch /dev/shm/firerouter.upgrade.failed
+    exit 1
 fi
-
-
-/usr/bin/logger "FIREROUTER.UPGRADE.SYNCDONE  "+`date`
 
 
 cd /home/pi/firerouter
 sudo chown -R pi /home/pi/firerouter/.git
 branch=$(git rev-parse --abbrev-ref HEAD)
+$MGIT fetch
+
+current_hash=$(git rev-parse HEAD)
+latest_hash=$(git rev-parse origin/$branch)
+
+if [ "$current_hash" == "$latest_hash" ]; then
+   /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
+   rm /dev/shm/firerouter.upgraded
+   exit 0
+fi 
 
 # continue to try upgrade even github api is not successfully.
 # very likely to fail
 
 echo "upgrade on branch $branch"
 
-commit_before=$(git rev-parse HEAD)
-current_tag=$(git describe --tags)
-
-echo $commit_before > /tmp/REPO_HEAD
-echo $current_tag > /tmp/REPO_TAG
-echo $branch > /tmp/REPO_BRANCH
-
 if [[ -e "/home/pi/.router/config/.no_auto_upgrade" ]]; then
   /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO UPGRADE"
   echo '======= SKIP UPGRADING BECAUSE OF FLAG /home/pi/.router/config/.no_auto_upgrade ======='
+  rm /dev/shm/firerouter.upgraded
   exit 0
 fi
 
@@ -152,13 +125,9 @@ GIT_COMMAND="(sudo -u pi $MGIT fetch origin $branch && sudo -u pi $MGIT reset --
 eval $GIT_COMMAND ||
   (sleep 3; eval $GIT_COMMAND) ||
   (sleep 3; eval $GIT_COMMAND) ||
-  (sleep 3; eval $GIT_COMMAND) || (date >> ~/.fireupgrade.failed; exit 1)
+  (sleep 3; eval $GIT_COMMAND) || (date >> ~/.firerouter.upgrade.failed; exit 1)
 
-commit_after=$(git rev-parse HEAD)
-current_tag=$(git describe --tags)
-
-echo $commit_after > /tmp/REPO_HEAD
-echo $current_tag > /tmp/REPO_TAG
+touch /dev/shm/firerouter.upgraded
 
 
 /home/pi/firerouter/scripts/firelog -t debug -m  "FIREROUTER.UPGRADE Done $branch"
@@ -170,17 +139,4 @@ sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
 sudo cp /home/pi/firerouter/scripts/fireboot.service /etc/systemd/system/.
 sudo systemctl daemon-reload
 sudo systemctl reenable firerouter
-sudo systemctl reenable firerouter_upgrade
 sudo systemctl reenable fireboot
-
-case $mode in
-    normal)
-        /home/pi/firerouter/scripts/firerouter_upgrade_normal.sh
-        ;;
-    hard)
-        /home/pi/firerouter/scripts/firerouter_upgrade_hard.sh
-        ;;
-    soft)
-        /home/pi/firerouter/scripts/firerouter_upgrade_soft.sh
-        ;;
-esac

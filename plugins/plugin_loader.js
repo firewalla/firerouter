@@ -40,6 +40,7 @@ function initPlugins() {
         pluginCategoryMap[pluginConf.category] = {};
       const pluginClass = require(filePath);
       pluginConf.c = pluginClass;
+      pluginClass.preparePlugin();
     } catch (err) {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }
@@ -119,7 +120,7 @@ async function reapply(config, dryRun = false) {
           continue;
         instance._mark = 1;
         const oldConfig = instance.networkConfig;
-        if (oldConfig && !_.isEqual(oldConfig, value[name])) {
+        if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
           log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
           instance.setChanged(true);
         }

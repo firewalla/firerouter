@@ -41,6 +41,12 @@
       "config_path": "dhcp",
       "category": "dhcp",
       "init_seq": 7
+    },
+    {
+      "file_path": "./sshd/sshd_plugin.js",
+      "config_path": "sshd",
+      "category": "sshd",
+      "init_seq": 8
     }
   ]
 }

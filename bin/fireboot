@@ -1,71 +1,92 @@
 #!/bin/bash
 
-_rc=0
+init_network_config() {
+  _rc=0
+  redis-cli set "fireboot:status" "apply_network"
+  echo "Awaiting FireRouter API available ..."
+  sleep 3
+  timeout=3
+  api_ready=0
+  while [[ timeout -gt 0 && api_ready -eq 0 ]]
+  do
+    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
+    if [[ $HTTP_STATUS_CODE != 200 ]]; then
+      sleep 10
+    else
+      api_ready=1
+    fi
+    ((timeout-=1))
+  done
 
-# step 1 - awaiting firerouter API available
-redis-cli set "fireboot:status" "init"
-echo "Awaiting FireRouter API available ..."
-sleep 5
-timeout=3
-api_ready=0
-while [[ timeout -gt 0 && api_ready -eq 0 ]]
-do
-  HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
-  if [[ $HTTP_STATUS_CODE != 200 ]]; then
-    sleep 10
-  else
-    api_ready=1
+  if [[ $api_ready -eq 0 ]]; then
+    _rc=1
   fi
-  ((timeout-=1))
-done
 
-if [[ $api_ready -eq 0 ]]; then
-  _rc=1
+  test $_rc -eq  0 || exit $_rc
+  echo "FireRouter API is available"
+
+  redis-cli set "fireboot:status" "apply_network"
+  echo "Applying last successful network config ..."
+
+  if [[ ! -f /dev/shm/firerouter.prepared ]]; then
+    echo "Preparing network environment ..."
+    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
+    if [[ $HTTP_STATUS_CODE != "200" ]]; then
+      echo "Failed to prepare environment"
+      _rc=2
+    else
+      touch /dev/shm/firerouter.prepared
+    fi
+  fi
+
+  test $_rc -eq  0 || exit $_rc
+
+  HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
+  if [[ $HTTP_STATUS_CODE != "200" ]]; then
+    echo "Failed to apply current config"
+    _rc=2
+  fi
+
+  test $_rc -eq  0 || exit $_rc
+
+  echo "Successfully apply last network config"
+
+  redis-cli set "fireboot:status" "test_network"
+  echo "Testing network connectivity ..."
+  nc -z 1.1.1.1 443 || (echo "err: network is unavailable" && _rc=3)
+  nslookup -timeout=10 github.com || (echo "err: dns is unavailable" && _rc=4)
+
+  test $_rc -eq  0 || exit $_rc
+  echo "Network connectivity test succeeded"
+}
+
+# step 1 - init network config
+init_network_config
+
+# step 2 - upgrade firerouter
+redis-cli set "fireboot:status" "firerouter_upgrade"
+echo "Upgrading FireRouter ..."
+/home/pi/firerouter/scripts/firerouter_upgrade.sh
+
+
+# step 3 - restart firerouter and init network config again
+if [[ -f /dev/shm/firerouter.upgraded ]]; then
+  echo "Restarting FireRouter ..."
+  sudo systemctl restart firerouter
+  init_network_config
+  rm /dev/shm/firerouter.upgraded
+  echo "Restarting FireReset ..."
+  sudo systemctl restart firereset
 fi
-
-test $_rc -eq  0 || exit $_rc
-echo "FireRouter API is available"
-
-# step 2 - apply network config
-redis-cli set "fireboot:status" "apply_network"
-echo "Applying last successful network config..."
-
-HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
-if [[ $HTTP_STATUS_CODE != "200" ]]; then
-  echo "Failed to prepare environment"
-  _rc=2
-fi
-
-test $_rc -eq  0 || exit $_rc
-
-HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
-if [[ $HTTP_STATUS_CODE != "200" ]]; then
-  echo "Failed to apply current config"
-  _rc=2
-fi
-
-test $_rc -eq  0 || exit $_rc
-
-echo "Successfully apply last network config..."
-
-# step 3 - test network connectivity
-redis-cli set "fireboot:status" "test_network"
-echo "Testing network connectivity..."
-nc -z 1.1.1.1 443 || (echo "err: network is unavailable" && _rc=3)
-dig github.com || (echo "err: dns is unavailable" && _rc=4)
-
-test $_rc -eq  0 || exit $_rc
-
-# TBD upgrade firerouter itself
 
 # step 4 - start fireupgrade
 redis-cli set "fireboot:status" "fireupgrade"
-echo "Starting Fireupgrade..."
+echo "Starting Fireupgrade ..."
 sudo systemctl start fireupgrade
 
 # step 5 - start firewalla
 redis-cli set "fireboot:status" "firewalla"
-echo "Starting Firewalla..."
+echo "Starting Firewalla ..."
 sudo systemctl start firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"

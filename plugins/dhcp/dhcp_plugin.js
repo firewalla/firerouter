@@ -35,24 +35,20 @@ let _restartTask = null;
 
 class DHCPPlugin extends Plugin {
 
-  _getConfFilePath() {
-    return `${dhcpConfDir}/${this.name}.conf`;
+  static async preparePlugin() {
+    await super.preparePlugin();
+    await this.createDirectories();
+    await this.installSystemService();
+    await this.installDHCPScript();
   }
 
-  async flush() {
-    this.log.info("Flushing dhcp", this.name);
-    const confPath = this._getConfFilePath();
-    await fs.unlinkAsync(confPath).catch((err) => {});
-    this._restartService();
-  }
-
-  async prepareEnvironment() {
+  static async createDirectories() {
     await exec(`mkdir -p ${dhcpConfDir}`);
     await exec(`mkdir -p ${dhcpHostsDir}`);
     await exec(`mkdir -p ${dhcpRuntimeDir}`);
   }
 
-  async installSystemService() {
+  static async installSystemService() {
     let content = await fs.readFileAsync(dhcpServiceFileTemplate, {encoding: 'utf8'});
     content = content.replace("%WORKING_DIRECTORY%", r.getFireRouterHome());
     content = content.replace("%DHCP_DIRECTORY%", r.getTempFolder());
@@ -62,12 +58,23 @@ class DHCPPlugin extends Plugin {
     await exec("sudo systemctl daemon-reload");
   }
 
-  async installDHCPScript() {
+  static async installDHCPScript() {
     let content = await fs.readFileAsync(dhcpScriptTemplate, {encoding: 'utf8'});
     content = content.replace("%FIREROUTER_HOME%", r.getFireRouterHome());
     content = content.replace("%FIREROUTER_HOME%", r.getFireRouterHome());
     const targetFile = r.getTempFolder() + "/dhcp.sh";
     await fs.writeFileAsync(targetFile, content);
+  }
+
+  _getConfFilePath() {
+    return `${dhcpConfDir}/${this.name}.conf`;
+  }
+
+  async flush() {
+    this.log.info("Flushing dhcp", this.name);
+    const confPath = this._getConfFilePath();
+    await fs.unlinkAsync(confPath).catch((err) => {});
+    this._restartService();
   }
 
   async writeDHCPConfFile(iface, tags, from, to, subnetMask, leaseTime, gateway, nameservers, searchDomains) {
@@ -102,9 +109,6 @@ class DHCPPlugin extends Plugin {
   }
 
   async apply() {
-    await this.prepareEnvironment();
-    await this.installDHCPScript();
-    await this.installSystemService();
     let iface = this.name;
     if (iface.includes(":")) {
       // virtual interface, need to strip suffix
