@@ -64,13 +64,14 @@ init_network_config() {
 init_network_config
 
 # step 2 - upgrade firerouter
-redis-cli set "fireboot:status" "firerouter_upgrade"
+redis-cli set "fireboot:status" "firerouter_check_upgrade"
 echo "Upgrading FireRouter ..."
 /home/pi/firerouter/scripts/firerouter_upgrade.sh
 
 
 # step 3 - restart firerouter and init network config again
 if [[ -f /dev/shm/firerouter.upgraded ]]; then
+  redis-cli set "fireboot:status" "firerouter_upgrade"
   echo "Restarting FireRouter ..."
   sudo systemctl restart firerouter
   init_network_config
