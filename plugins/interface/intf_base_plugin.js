@@ -33,19 +33,23 @@ const routing = require('../../util/routing.js');
 
 class InterfaceBasePlugin extends Plugin {
 
+  async flushIP() {
+    await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
+      this.log.error(`Failed to flush ip address of ${this.name}`, err);
+    });
+
+    if (this.networkConfig.dhcp) {
+      await exec(`cat ${this._getDHClientPidFilePath()}`).then((result) => exec(`sudo kill -9 ${result.stdout.trim()}`)).catch((err) => {});
+    }
+  }
+
   async flush() {
     if (!this.networkConfig) {
       this.log.error(`Network config for ${this.name} is not set`);
       return;
     }
     if (this.networkConfig.enabled) {
-      await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
-        this.log.error(`Failed to flush ip address of ${this.name}`, err);
-      });
-
-      if (this.networkConfig.dhcp) {
-        await exec(`cat ${this._getDHClientPidFilePath()}`).then((result) => exec(`sudo kill -9 ${result.stdout.trim()}`)).catch((err) => {});
-      }
+      await this.flushIP();
       // remove resolve file in runtime folder
       await fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name)).catch((err) => {});
         
@@ -57,7 +61,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.removeInterfaceRoutingRules(this.name);
       await routing.removeInterfaceGlobalRoutingRules(this.name);
 
-      if (this.networkConfig.gateway || this.networkConfig.dhcp) {
+      if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
       } else {
@@ -126,7 +130,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async prepareEnvironment() {
     // create routing tables and add rules for interface
-    if (this.networkConfig.ipv4 || this.networkConfig.dhcp) {
+    if (this.isWAN() || this.isLAN()) {
       await routing.initializeInterfaceRoutingTables(this.name);
       await routing.createInterfaceRoutingRules(this.name);
       await routing.createInterfaceGlobalRoutingRules(this.name);
@@ -169,7 +173,7 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
     }
-    if (this.networkConfig.gateway || this.networkConfig.dhcp) {
+    if (this.isWAN()) {
       // considered as WAN interface, accessbile to "routable"
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
     } else {

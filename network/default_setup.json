@@ -65,7 +65,7 @@
       "lease": 86400
     }
   },
-  "ssh": {
+  "sshd": {
     "eth3": {
       "enabled": false
     },
