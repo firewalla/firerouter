@@ -30,13 +30,15 @@ const http = require('http');
 const port = normalizePort(process.env.PORT || '8837');
 
 const pl = require('../../plugins/plugin_loader.js');
-const ns = require('../../core/network_setup.js');
+const sl = require('../../sensors/sensor_loader.js');
 const ncm = require('../../core/network_config_mgr.js');
 
 let server;
 
 async function pre_run() {
+
   await pl.initPlugins();
+  await sl.initSensors();
   const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
   await ncm.tryApplyConfig(activeConfig, true);
   await ncm.saveConfig(activeConfig);

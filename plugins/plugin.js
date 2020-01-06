@@ -15,8 +15,6 @@
 
 'use strict';
 
-const log = require('../util/logger.js')(__filename);
-
 class Plugin {
   constructor(name) {
     this.name = name;
@@ -86,17 +84,32 @@ class Plugin {
     this.changePublishers = [];
   }
 
-  setChanged(changed) {
-    this._changed = changed;
-    if (this._changed === true) {
+  propagateConfigChanged(changed) {
+    this.onConfigChanged(changed);
+    if (changed === true) {
       for (let instance of this.changeSubscribers) {
-        instance.setChanged(true);
+        instance.propagateConfigChanged(true);
       }
     }
   }
 
-  isChanged() {
-    return this._changed === true;
+  onConfigChanged(changed) {
+    this._reapplyNeeded = changed;
+  }
+
+  propagateEvent(event) {
+    this.onEvent(event);
+    for (let instance of this.changeSubscribers) {
+      instance.propagateEvent(event);
+    }
+  }
+
+  onEvent(e) {
+
+  }
+
+  isReapplyNeeded() {
+    return this._reapplyNeeded === true;
   }
 
   fatal(msg) {

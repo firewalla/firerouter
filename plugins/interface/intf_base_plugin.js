@@ -27,6 +27,8 @@ const Promise = require('bluebird');
 const ip = require('ip');
 const uuid = require('uuid');
 
+const event = require('../../core/event.js');
+
 Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
@@ -229,6 +231,20 @@ class InterfaceBasePlugin extends Plugin {
     const gateway = await routing.getInterfaceGWIP(this.name);
     const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
     return {mac, mtu, carrier, duplex, speed, operstate, ip4, gateway, dns};
+  }
+
+  onEvent(e) {
+    this.log.info("Received event", e);
+    const eventType = event.getEventType(e);
+    switch (eventType) {
+      case event.EVENT_IF_UP: {
+        if (this.isWAN()) {
+          // WAN interface plugged, need to reapply WAN interface config
+        }
+        break;
+      }
+      default:
+    }
   }
 }
 
