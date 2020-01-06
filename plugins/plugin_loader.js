@@ -122,13 +122,13 @@ async function reapply(config, dryRun = false) {
         const oldConfig = instance.networkConfig;
         if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
           log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
-          instance.setChanged(true);
+          instance.propagateConfigChanged(true);
         }
         instance._nextConfig = value[name];
         if (!oldConfig) {
           // initialization of network config, flush instance with new config
           log.info(`Initial setup of ${pluginConf.category}-->${name}`, value[name]);
-          instance.setChanged(true);
+          instance.propagateConfigChanged(true);
           instance.unsubscribeAllChanges();
         }
         newInstances[name] = instance;
@@ -142,7 +142,7 @@ async function reapply(config, dryRun = false) {
           log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
           await instance.flush();
         }
-        instance.setChanged(true);
+        instance.propagateConfigChanged(true);
         instance.unsubscribeAllChanges();
       }
     }
@@ -157,7 +157,7 @@ async function reapply(config, dryRun = false) {
       for (let instance of instances) {
         if (!instance.networkConfig)
           instance.configure(instance._nextConfig);
-        if (instance.isChanged()) {
+        if (instance.isReapplyNeeded()) {
           if (!dryRun) {
             log.info("Flushing old config", pluginConf.category, instance.name);
             await instance.flush();
@@ -178,7 +178,7 @@ async function reapply(config, dryRun = false) {
     const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
     if (instances) {
       for (let instance of instances) {
-        if (instance.isChanged()) {
+        if (instance.isReapplyNeeded()) {
           log.info("Applying new config", pluginConf.category, instance.name);
           await instance.apply().catch((err) => {
             log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
@@ -187,7 +187,7 @@ async function reapply(config, dryRun = false) {
         } else {
           log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
         }
-        instance.setChanged(false);
+        instance.propagateConfigChanged(false);
       }
     }
   }

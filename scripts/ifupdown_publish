@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+case "$2" in
+up)
+	redis-cli -n 1 publish "ifup" "$1"
+	;;
+down)
+	redis-cli -n 1 publish "ifdown" "$1"
+	;;
+esac

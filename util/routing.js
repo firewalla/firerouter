@@ -72,7 +72,8 @@ async function createPolicyRoutingRule(from, iif, tableName, priority) {
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  if (result.stdout.includes(rule)) {
+  result = result.stdout.replace("[detached] ", "");
+  if (result.includes(rule)) {
     log.info("Same policy routing rule already exists: ", rule);
     return;
   }
@@ -91,11 +92,12 @@ async function removePolicyRoutingRule(from, iif, tableName) {
   from = from || "all";
   let cmd = "ip rule list";
   let result = await exec(cmd);
+  result = result.stdout.replace("[detached] ", "");
   let rule = `from ${from} `;
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  if (!result.stdout.includes(rule)) {
+  if (!result.includes(rule)) {
     log.info("Policy routing rule does not exist: ", rule);
     return;
   }

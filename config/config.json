@@ -13,40 +13,54 @@
       "init_seq": 2
     },
     {
+      "file_path": "./interface/pppoe_intf_plugin.js",
+      "config_path": "interface.pppoe",
+      "category": "interface",
+      "init_seq": 3
+    },
+    {
       "file_path": "./interface/bridge_intf_plugin.js",
       "config_path": "interface.bridge",
       "category": "interface",
-      "init_seq": 3
+      "init_seq": 4
     },
     {
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
-      "init_seq": 4
+      "init_seq": 5
     },
     {
       "file_path": "./nat/nat_plugin.js",
       "config_path": "nat",
       "category": "nat",
-      "init_seq": 5
+      "init_seq": 6
     },
     {
       "file_path": "./dns/dns_plugin.js",
       "config_path": "dns",
       "category": "dns",
-      "init_seq": 6
+      "init_seq":7
     },
     {
       "file_path": "./dhcp/dhcp_plugin.js",
       "config_path": "dhcp",
       "category": "dhcp",
-      "init_seq": 7
+      "init_seq": 8
     },
     {
       "file_path": "./sshd/sshd_plugin.js",
       "config_path": "sshd",
       "category": "sshd",
-      "init_seq": 8
+      "init_seq": 9
+    }
+  ],
+  "sensors": [
+    {
+      "file_path": "./ifplug_sensor.js",
+      "config": {
+        "up_delay": 5
+      }
     }
   ]
 }

@@ -18,6 +18,7 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
+const pl = require('../plugin_loader.js');
 
 class VLANInterfacePlugin extends InterfaceBasePlugin {
   
@@ -35,7 +36,13 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     const vid = this.networkConfig.vid;
     await exec(`sudo vconfig add ${intf} ${vid}`).catch((err) => {
       this.log.error(`Failed to create vlan interface ${this.name}`, err.message);
-    })
+    });
+    const intfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);
+    if (intfPlugin) {
+      this.subscribeChangeFrom(intfPlugin);
+    } else {
+      this.fatal(`Lower interface plugin not found ${this.networkConfig.intf}`);
+    }
   }
 }
 
