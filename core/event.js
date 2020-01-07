@@ -31,5 +31,6 @@ module.exports = {
   getEventType: getEventType,
   getEventPayload: getEventPayload,
   EVENT_IF_UP: "ifup",
-  EVENT_IF_DOWN: "ifdown"
+  EVENT_IF_DOWN: "ifdown",
+  EVENT_IP_CHANGE: "ipchange"
 };

@@ -16,6 +16,7 @@
 'use strict';
 
 const Plugin = require('../plugin.js');
+const pl = require('../plugin_loader.js');
 const _ = require('lodash');
 
 const r = require('../../util/firerouter');
@@ -141,7 +142,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async applyIpDnsSettings() {
     if (this.networkConfig.dhcp) {
-      await exec(`sudo dhclient -pf ${this._getDHClientPidFilePath()} -lf ${this._getDHClientLeaseFilePath()} -i ${this.name} -e rt_tables="${this.name}_local main" -e default_rt_tables="${this.name}_default main"`).catch((err) => {
+      await exec(`sudo dhclient -pf ${this._getDHClientPidFilePath()} -lf ${this._getDHClientLeaseFilePath()} -nw -i ${this.name} -e rt_tables="${this.name}_local main" -e default_rt_tables="${this.name}_default main"`).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
 
@@ -240,6 +241,8 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_UP: {
         if (this.isWAN()) {
           // WAN interface plugged, need to reapply WAN interface config
+          this._reapplyNeeded = true;
+          pl.scheduleReapply();
         }
         break;
       }
