@@ -13,3 +13,5 @@ sudo ip r add default via $PEER_IP dev $INTF table $DEFAULT_RT_TABLE
 
 echo "nameserver $DNS1" > /etc/ppp/$INTF.resolv.conf
 echo "nameserver $DNS2" >> /etc/ppp/$INTF.resolv.conf
+
+redis-cli -n 1 publish "pppoe.ip_change" "$INTF"

@@ -32,6 +32,7 @@ class IPChangeSensor extends Sensor {
   async run() {
     sclient.on("message", (channel, message) => {
       switch (channel) {
+        case "pppoe.ip_change":
         case "dhclient.ip_change": {
           const iface = message;
           const intfPlugin = pl.getPluginInstance("interface", iface);
