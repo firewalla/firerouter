@@ -17,6 +17,7 @@
 
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
+const event = require('../../core/event.js');
 
 const dnsServiceFileTemplate = __dirname + "/firerouter_dns.template.service";
 const dnsScriptTemplate = __dirname + "/dns.template.sh";
@@ -151,6 +152,19 @@ class DNSPlugin extends Plugin {
       this._restartService();
     } else {
       await this.applyDefaultResolvConf();
+    }
+  }
+
+  onEvent(e) {
+    this.log.info("Received event", e);
+    const eventType = event.getEventType(e);
+    switch (eventType) {
+      case event.EVENT_IP_CHANGE: {
+        this._reapplyNeeded = true;
+        pl.scheduleReapply();
+        break;
+      }
+      default:
     }
   }
 }

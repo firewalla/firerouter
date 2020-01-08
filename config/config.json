@@ -61,6 +61,12 @@
       "config": {
         "up_delay": 5
       }
+    },
+    {
+      "file_path": "./ipchange_sensor.js",
+      "config": {
+        "delay": 5
+      }
     }
   ]
 }

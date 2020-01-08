@@ -21,6 +21,7 @@ const ip = require('ip');
 
 const pl = require('../plugin_loader.js');
 const routing = require('../../util/routing.js');
+const event = require('../../core/event.js');
 
 class RoutingPlugin extends Plugin {
    
@@ -90,7 +91,7 @@ class RoutingPlugin extends Plugin {
                       const cidr = ip.cidrSubnet(state.ip4);
                       await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => {});
                     } else {
-                      this.fatal("Failed to get ip4 of global default interface " + viaIntf);
+                      this.log.error("Failed to get ip4 of global default interface " + viaIntf);
                     }
 
                     const gw = await routing.getInterfaceGWIP(viaIntf);
@@ -100,7 +101,7 @@ class RoutingPlugin extends Plugin {
                       await routing.removeRouteFromTable("default", null, null, null).catch((err) => {});
                       await routing.addRouteToTable("default", gw, viaIntf, "main").catch((err) => {});
                     } else {
-                      this.fatal("Failed to get gateway IP of global default interface " + viaIntf);
+                      this.log.error("Failed to get gateway IP of global default interface " + viaIntf);
                     }
                   } else {
                     this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
@@ -118,7 +119,7 @@ class RoutingPlugin extends Plugin {
                       const cidr = ip.cidrSubnet(state.ip4);
                       await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, viaIntf2, routing.RT_GLOBAL_LOCAL, 100).catch((err) => { });
                     } else {
-                      this.fatal("Failed to get ip4 of global default interface " + viaIntf2);
+                      this.log.error("Failed to get ip4 of global default interface " + viaIntf2);
                     }
 
                     const gw = await routing.getInterfaceGWIP(viaIntf2);
@@ -126,7 +127,7 @@ class RoutingPlugin extends Plugin {
                       await routing.addRouteToTable("default", gw, viaIntf2, routing.RT_GLOBAL_DEFAULT, 100).catch((err) => { });
                       await routing.addRouteToTable("default", gw, viaIntf2, "main", 100).catch((err) => { });
                     } else {
-                      this.fatal("Failed to get gateway IP of global default interface " + viaIntf2);
+                      this.log.error("Failed to get gateway IP of global default interface " + viaIntf2);
                     }
                   } else {
                     this.fatal(`Cannot find global default interface plugin ${viaIntf2}`);
@@ -143,7 +144,7 @@ class RoutingPlugin extends Plugin {
               break;
             }
             default:
-              this.fatal(`Unsupported routing type for ${this.name}: ${type}`);
+              this.log.error(`Unsupported routing type for ${this.name}: ${type}`);
           }
         }
         break;
@@ -178,6 +179,19 @@ class RoutingPlugin extends Plugin {
           }
         }
       }
+    }
+  }
+
+  onEvent(e) {
+    this.log.info("Received event", e);
+    const eventType = event.getEventType(e);
+    switch (eventType) {
+      case event.EVENT_IP_CHANGE: {
+        this._reapplyNeeded = true;
+        pl.scheduleReapply();
+        break;
+      }
+      default:
     }
   }
 }

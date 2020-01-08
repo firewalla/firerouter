@@ -17,9 +17,9 @@
 
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
-const util = require('../../util/util.js');
 const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter');
+const event = require('../../core/event.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -58,10 +58,10 @@ class SSHDPlugin extends Plugin {
         const ipv4Addr = state.ip4.split("/")[0];
         await fs.writeFileAsync(confPath, `ListenAddress ${ipv4Addr}`, {encoding: 'utf8'});
       } else {
-        this.fatal("Failed to get ip4 of interface " + iface);
+        this.log.error("Failed to get ip4 of interface " + iface);
       }
     } else {
-      this.fatal("Cannot find interface plugin " + iface);
+      this.log.error("Cannot find interface plugin " + iface);
     }
   }
 
@@ -73,6 +73,19 @@ class SSHDPlugin extends Plugin {
       const confPath = this._getConfFilePath();
       await fs.unlinkAsync(confPath).catch((err) => {});
       await this.reloadSSHD();
+    }
+  }
+
+  onEvent(e) {
+    this.log.info("Received event", e);
+    const eventType = event.getEventType(e);
+    switch (eventType) {
+      case event.EVENT_IP_CHANGE: {
+        this._reapplyNeeded = true;
+        pl.scheduleReapply();
+        break;
+      }
+      default:
     }
   }
 }
