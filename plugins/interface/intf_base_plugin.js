@@ -42,7 +42,14 @@ class InterfaceBasePlugin extends Plugin {
     });
 
     if (this.networkConfig.dhcp) {
-      await exec(`cat ${this._getDHClientPidFilePath()}`).then((result) => exec(`sudo kill -9 ${result.stdout.trim()}`)).catch((err) => {});
+      const pid = await fs.readFileAsync(this._getDHClientLeaseFilePath(), {encoding: "utf8"}).catch((err) => null);
+      if (pid) {
+        await fs.readFileAsync(`/proc/${pid}/comm`, {encoding: "utf8"}).then((name) => {
+          if (name === "dhclient") {
+            return exec(`sudo kill -9 ${result.stdout.trim()}`);
+          }
+        }).catch((err) => {});
+      }
     }
   }
 

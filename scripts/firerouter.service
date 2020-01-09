@@ -7,7 +7,7 @@ User=pi
 Restart=always
 RestartSec=1
 WorkingDirectory=/home/pi/firerouter/service
-ExecStart=/home/pi/firerouter/bin/node bin/main.js
+ExecStart=/bin/bash -c '/home/pi/firerouter/bin/node bin/main.js >> /home/pi/.forever/router.log 2>&1'
 
 [Install]
 WantedBy=multi-user.target
