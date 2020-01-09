@@ -30,7 +30,7 @@ const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 
-function initPlugins() {
+async function initPlugins() {
   if(_.isEmpty(config.plugins)) {
     return;
   }
@@ -46,7 +46,9 @@ function initPlugins() {
         pluginCategoryMap[pluginConf.category] = {};
       const pluginClass = require(filePath);
       pluginConf.c = pluginClass;
-      pluginClass.preparePlugin();
+      await pluginClass.preparePlugin().catch((err) => {
+        log.error(`Failed to prepare plugin ${pluginClass.name}`, err);
+      });
     } catch (err) {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }

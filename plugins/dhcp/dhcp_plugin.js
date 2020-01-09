@@ -36,7 +36,6 @@ let _restartTask = null;
 class DHCPPlugin extends Plugin {
 
   static async preparePlugin() {
-    await super.preparePlugin();
     await this.createDirectories();
     await this.installSystemService();
     await this.installDHCPScript();

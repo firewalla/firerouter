@@ -36,7 +36,6 @@ const dnsConfTemplate = r.getFireRouterHome() + "/etc/dnsmasq.dns.conf.template"
 class DNSPlugin extends Plugin {
 
   static async preparePlugin() {
-    await super.preparePlugin();
     await this.createDirectories();
     await this.installDNSScript();
     await this.installSystemService();

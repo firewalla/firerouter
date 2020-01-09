@@ -29,7 +29,6 @@ class SSHDPlugin extends Plugin {
 
   static async preparePlugin() {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/sshd`)
-    await super.preparePlugin();
   }
 
   async flush() {

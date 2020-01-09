@@ -21,6 +21,10 @@ const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
 
 class VLANInterfacePlugin extends InterfaceBasePlugin {
+
+  static async preparePlugin() {
+    await exec(`sudo modprobe 8021q`);
+  }
   
   async flush() {
     await super.flush();
