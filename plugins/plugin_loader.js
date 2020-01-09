@@ -25,6 +25,10 @@ let pluginCategoryMap = {};
 let scheduledReapplyTask = null;
 
 const _ = require('lodash');
+const Promise = require('bluebird');
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
+const LOCK_REAPPLY = "LOCK_REAPPLY";
 
 function initPlugins() {
   if(_.isEmpty(config.plugins)) {
@@ -92,117 +96,129 @@ function _isConfigEqual(c1, c2) {
 }
 
 async function reapply(config, dryRun = false) {
-  const errors = [];
-  let newPluginCategoryMap = {};
-
-  const reversedPluginConfs = pluginConfs.reverse();
-  // if config is not set, simply reapply effective config
-  if (config) {
-    // remove plugins in descending order by init sequence
-    for (let pluginConf of reversedPluginConfs) {
-      newPluginCategoryMap[pluginConf.category] = newPluginCategoryMap[pluginConf.category] || {};
-      if (!pluginConf.c)
-        continue;
-      const instances = Object.values(pluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
-      if (instances) {
-        for (let instance of instances) {
-          instance._mark = 0;
-        }
-      } else pluginCategoryMap[pluginConf.category] = {};
-
-      const newInstances = {};
-      const keys = pluginConf.config_path.split(".");
-      let value = config;
-      for (let key of keys) {
-        if (value)
-          value = value[key];
-      }
-      if (value) {
-        for (let name in value) {
-          const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
-          if (!instance)
+  return new Promise((resolve, reject) => {
+    lock.acquire(LOCK_REAPPLY, async function(done) {
+      const errors = [];
+      let newPluginCategoryMap = {};
+    
+      const reversedPluginConfs = pluginConfs.reverse();
+      // if config is not set, simply reapply effective config
+      if (config) {
+        // remove plugins in descending order by init sequence
+        for (let pluginConf of reversedPluginConfs) {
+          newPluginCategoryMap[pluginConf.category] = newPluginCategoryMap[pluginConf.category] || {};
+          if (!pluginConf.c)
             continue;
-          instance._mark = 1;
-          const oldConfig = instance.networkConfig;
-          if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
-            log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
-            instance.propagateConfigChanged(true);
+          const instances = Object.values(pluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+          if (instances) {
+            for (let instance of instances) {
+              instance._mark = 0;
+            }
+          } else pluginCategoryMap[pluginConf.category] = {};
+    
+          const newInstances = {};
+          const keys = pluginConf.config_path.split(".");
+          let value = config;
+          for (let key of keys) {
+            if (value)
+              value = value[key];
           }
-          instance._nextConfig = value[name];
-          if (!oldConfig) {
-            // initialization of network config, flush instance with new config
-            log.info(`Initial setup of ${pluginConf.category}-->${name}`, value[name]);
-            instance.propagateConfigChanged(true);
-            instance.unsubscribeAllChanges();
+          if (value) {
+            for (let name in value) {
+              const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
+              if (!instance)
+                continue;
+              instance._mark = 1;
+              const oldConfig = instance.networkConfig;
+              if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
+                log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
+                instance.propagateConfigChanged(true);
+              }
+              instance._nextConfig = value[name];
+              if (!oldConfig) {
+                // initialization of network config, flush instance with new config
+                log.info(`Initial setup of ${pluginConf.category}-->${name}`, value[name]);
+                instance.propagateConfigChanged(true);
+                instance.unsubscribeAllChanges();
+              }
+              newInstances[name] = instance;
+            }
           }
-          newInstances[name] = instance;
+    
+          if (instances) {
+            const removedInstances = instances.filter(i => i._mark == 0);
+            for (let instance of removedInstances) {
+              if (!dryRun) {
+                log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
+                await instance.flush();
+              }
+              instance.propagateConfigChanged(true);
+              instance.unsubscribeAllChanges();
+            }
+          }
+          // merge with new pluginCategoryMap
+          newPluginCategoryMap[pluginConf.category] = Object.assign({}, newPluginCategoryMap[pluginConf.category], newInstances);
+        }
+      } else {
+        newPluginCategoryMap = pluginCategoryMap;
+      }
+    
+      // flush all changed plugins in descending order by init sequence
+      for (let pluginConf of reversedPluginConfs) {
+        const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+        if (instances) {
+          for (let instance of instances) {
+            if (!instance.networkConfig)
+              instance.configure(instance._nextConfig);
+            if (instance.isReapplyNeeded()) {
+              if (!dryRun) {
+                log.info("Flushing old config", pluginConf.category, instance.name);
+                await instance.flush();
+              }
+              instance.unsubscribeAllChanges();
+            }
+            if (config) {
+              // do not change config if config is not set
+              instance.configure(instance._nextConfig);
+            }
+          }
         }
       }
-
-      if (instances) {
-        const removedInstances = instances.filter(i => i._mark == 0);
-        for (let instance of removedInstances) {
-          if (!dryRun) {
-            log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
-            await instance.flush();
+    
+      // apply plugin configs in ascending order by init sequence
+      pluginConfs = reversedPluginConfs.reverse();
+      // do not apply config in dry run
+      if (dryRun) {
+        done(null, errors);
+        return;
+      }
+      for (let pluginConf of pluginConfs) {
+        const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+        if (instances) {
+          for (let instance of instances) {
+            if (instance.isReapplyNeeded()) {
+              log.info("Applying new config", pluginConf.category, instance.name);
+              await instance.apply().catch((err) => {
+                log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
+                errors.push(err.message || err);
+              });
+            } else {
+              log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
+            }
+            instance.propagateConfigChanged(false);
           }
-          instance.propagateConfigChanged(true);
-          instance.unsubscribeAllChanges();
         }
       }
-      // merge with new pluginCategoryMap
-      newPluginCategoryMap[pluginConf.category] = Object.assign({}, newPluginCategoryMap[pluginConf.category], newInstances);
-    }
-  } else {
-    newPluginCategoryMap = pluginCategoryMap;
-  }
-
-  // flush all changed plugins in descending order by init sequence
-  for (let pluginConf of reversedPluginConfs) {
-    const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
-    if (instances) {
-      for (let instance of instances) {
-        if (!instance.networkConfig)
-          instance.configure(instance._nextConfig);
-        if (instance.isReapplyNeeded()) {
-          if (!dryRun) {
-            log.info("Flushing old config", pluginConf.category, instance.name);
-            await instance.flush();
-          }
-          instance.unsubscribeAllChanges();
-        }
-        if (config) {
-          // do not change config if config is not set
-          instance.configure(instance._nextConfig);
-        }
-      }
-    }
-  }
-
-  // apply plugin configs in ascending order by init sequence
-  pluginConfs = reversedPluginConfs.reverse();
-  // do not apply config in dry run
-  if (dryRun)
-    return errors;
-  for (let pluginConf of pluginConfs) {
-    const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
-    if (instances) {
-      for (let instance of instances) {
-        if (instance.isReapplyNeeded()) {
-          log.info("Applying new config", pluginConf.category, instance.name);
-          await instance.apply().catch((err) => {
-            log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
-            errors.push(err.message || err);
-          });
-        } else {
-          log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
-        }
-        instance.propagateConfigChanged(false);
-      }
-    }
-  }
-  pluginCategoryMap = newPluginCategoryMap;
-  return errors;
+      pluginCategoryMap = newPluginCategoryMap;
+      done(null, errors);
+      return;
+    }, function(err, ret) {
+      if (err)
+        reject(err);
+      else
+        resolve(ret);
+    });
+  });
 }
 
 function scheduleReapply() {
