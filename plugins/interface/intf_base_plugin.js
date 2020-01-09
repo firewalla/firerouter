@@ -67,6 +67,8 @@ class InterfaceBasePlugin extends Plugin {
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+        // restore reverse path filtering settings
+        await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=1`).catch((err) => {});
       } else {
         // considered as LAN interface, remove from "routable"
         if (this.networkConfig.ipv4) {
