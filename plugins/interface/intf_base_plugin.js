@@ -138,6 +138,11 @@ class InterfaceBasePlugin extends Plugin {
       await routing.createInterfaceRoutingRules(this.name);
       await routing.createInterfaceGlobalRoutingRules(this.name);
     }
+
+    if (this.isWAN()) {
+      // loosen reverse path filtering settings, this is necessary for dual WAN
+      await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=2`);
+    }
   }
 
   async applyIpDnsSettings() {
