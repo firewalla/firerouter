@@ -93,7 +93,7 @@ function _isConfigEqual(c1, c2) {
 
 async function reapply(config, dryRun = false) {
   const errors = [];
-  const newPluginCategoryMap = {};
+  let newPluginCategoryMap = {};
 
   const reversedPluginConfs = pluginConfs.reverse();
   // if config is not set, simply reapply effective config
