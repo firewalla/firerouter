@@ -43,7 +43,7 @@
     }
   },
   "nat": {
-    "br0_eth3": {
+    "br0_eth0": {
       "in": "br0",
       "out": "eth0"
     }
@@ -66,7 +66,7 @@
     }
   },
   "sshd": {
-    "eth3": {
+    "eth0": {
       "enabled": false
     },
     "br0": {

@@ -32,6 +32,7 @@ const port = normalizePort(process.env.PORT || '8837');
 const pl = require('../../plugins/plugin_loader.js');
 const sl = require('../../sensors/sensor_loader.js');
 const ncm = require('../../core/network_config_mgr.js');
+const r = require('../../util/firerouter.js');
 
 let server;
 
@@ -56,10 +57,14 @@ function run() {
   server = http.createServer(app);
 
   /**
-   * Listen on provided port, on all network interfaces.
+   * Listen on provided port, on localhost only unless it is development branch.
    */
 
-  server.listen(port);
+  if (r.isProductionOrBetaOrAlpha()) {
+    server.listen(port, 'localhost');
+  } else {
+    server.listen(port);
+  }
   server.on('error', onError);
   server.on('listening', onListening);
 
