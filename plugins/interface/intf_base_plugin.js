@@ -42,7 +42,7 @@ class InterfaceBasePlugin extends Plugin {
     });
 
     if (this.networkConfig.dhcp) {
-      const pid = await fs.readFileAsync(this._getDHClientLeaseFilePath(), {encoding: "utf8"}).catch((err) => null);
+      const pid = await fs.readFileAsync(this._getDHClientPidFilePath(), {encoding: "utf8"}).catch((err) => null);
       if (pid) {
         await fs.readFileAsync(`/proc/${pid}/comm`, {encoding: "utf8"}).then((name) => {
           if (name === "dhclient") {

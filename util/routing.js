@@ -128,6 +128,30 @@ async function addRouteToTable(dest, gateway, intf, tableName, preference) {
   }
 }
 
+async function addMultiPathRouteToTable(dest, tableName,  ...multipathDesc) {
+  let cmd = null;
+  dest = dest || "default";
+  cmd =  `sudo ip route add ${dest}`;
+  tableName = tableName || "main";
+  cmd = `${cmd} table ${tableName}`;
+  for (let desc of multipathDesc) {
+    const nextHop = desc.nextHop;
+    const dev = desc.dev;
+    const weight = desc.weight;
+    if (!nextHop || !weight)
+      continue;
+    cmd = `${cmd} nexthop via ${nextHop}`;
+    if (dev)
+      cmd = `${cmd} dev ${dev}`;
+    cmd = `${cmd} weight ${weight}`;
+  }
+  let result = await exec(cmd);
+  if (result.stderr !== "") {
+    log.error("Failed to add multipath route to table.", result.stderr);
+    throw result.stderr
+  }
+}
+
 async function removeRouteFromTable(dest, gateway, intf, tableName) {
   let cmd = null;
   dest = dest || "default";
@@ -205,6 +229,7 @@ module.exports = {
   removePolicyRoutingRule: removePolicyRoutingRule,
   addRouteToTable: addRouteToTable,
   removeRouteFromTable: removeRouteFromTable,
+  addMultiPathRouteToTable: addMultiPathRouteToTable,
   flushRoutingTable: flushRoutingTable,
   flushPolicyRoutingRules: flushPolicyRoutingRules,
   initializeInterfaceRoutingTables: initializeInterfaceRoutingTables,
