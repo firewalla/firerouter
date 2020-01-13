@@ -36,6 +36,9 @@ class RoutingPlugin extends Plugin {
         await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
         await routing.flushRoutingTable(routing.RT_STATIC);
+        // execute twice to ensure dual wan is removed
+        await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
+        await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
         break;
       }
       default: {
@@ -135,6 +138,33 @@ class RoutingPlugin extends Plugin {
                   break;
                 }
                 case "load_balance": {
+                  const nextHops = settings.nextHops;
+                  const multiPathDesc = [];
+                  for (let nextHop of nextHops) {
+                    const viaIntf = nextHop.viaIntf;
+                    const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
+                    if (viaIntfPlugin) {
+                      this.subscribeChangeFrom(viaIntfPlugin);
+                      const state = await viaIntfPlugin.state();
+                      if (state && state.ip4) {
+                        const cidr = ip.cidrSubnet(state.ip4);
+                        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
+                      } else {
+                        this.log.error("Failed to get ip4 of global default interface " + viaIntf);
+                      }
+
+                      const gw = await routing.getInterfaceGWIP(viaIntf);
+                      if (gw) {
+                        multiPathDesc.push({nextHop: gw, dev: viaIntf, weight: nextHop.weight});
+                      } else {
+                        this.log.error("Failed to get gateway IP of global default interface " + viaIntf);
+                      }
+                    } else {
+                      this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
+                    }
+                  }
+                  await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, ...multiPathDesc).catch((err) => {});
+                  await routing.addMultiPathRouteToTable("default", "main", ...multiPathDesc).catch((err) => {});
                   break;
                 }
               }
