@@ -11,12 +11,20 @@
         "enabled": true
       },
       "eth0": {
+        "meta": {
+          "name": "WAN",
+          "type": "wan"
+        },
         "enabled": true,
         "dhcp": true
       }
     },
     "bridge": {
       "br0": {
+        "meta": {
+          "name": "LAN",
+          "type": "lan"
+        },
         "ipv4": "10.10.0.1/24",
         "intf": [
           "eth3",

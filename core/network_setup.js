@@ -99,6 +99,19 @@ class NetworkSetup {
     return lans;
   }
 
+  async getInterfaces() {
+    const allInterfacePlugins = pl.getPluginInstances("interface") || {};
+    const interfaces = {};
+    for (let name in allInterfacePlugins) {
+      const plugin = allInterfacePlugins[name];
+      if (plugin) {
+        const state = await plugin.state();
+        interfaces[name] = {config: plugin.networkConfig, state: state};
+      }
+    }
+    return interfaces;
+  }
+
   async getInterface(intf) {
     const plugin = pl.getPluginInstance("interface", intf);
     if (!plugin)

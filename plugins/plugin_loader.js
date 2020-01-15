@@ -227,7 +227,7 @@ function scheduleReapply() {
   if (!scheduledReapplyTask) {
     scheduledReapplyTask = setTimeout(() => {
       reapply(null, false);
-    }, 15000);
+    }, 10000);
   } else {
     scheduledReapplyTask.refresh();
   }

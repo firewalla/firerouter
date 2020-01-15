@@ -45,6 +45,11 @@ class NetworkConfigManager {
     return configs;
   }
 
+  async getInterfaces() {
+    const configs = await ns.getInterfaces();
+    return configs;
+  }
+
   async getInterface(intf) {
     return ns.getInterface(intf);
   }
