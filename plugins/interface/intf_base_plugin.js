@@ -114,6 +114,10 @@ class InterfaceBasePlugin extends Plugin {
   isWAN() {
     if (!this.networkConfig)
       return false;
+    // user defined type in meta supersedes default determination logic
+    if (this.networkConfig.meta && this.networkConfig.meta.type === "wan") {
+      return true;
+    }
     if (this.networkConfig.dhcp || (this.networkConfig.ipv4 && this.networkConfig.gateway))
       return true;
     return false;
@@ -122,6 +126,10 @@ class InterfaceBasePlugin extends Plugin {
   isLAN() {
     if (!this.networkConfig)
       return false;
+    // user defined type in meta supersedes default determination logic
+    if (this.networkConfig.meta && this.networkConfig.meta.type === "lan") {
+      return true;
+    }
     if (this.networkConfig.ipv4 && (!this.networkConfig.dhcp && !this.networkConfig.gateway))
       // ip address is set but neither dhcp nor gateway is set, considered as LAN interface
       return true;

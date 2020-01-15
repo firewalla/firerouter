@@ -8,6 +8,9 @@
         "enabled": true
       },
       "eth2": {
+        "meta": {
+          "type": "wan"
+        },
         "enabled": true,
         "ipv4": "192.168.1.111/24",
         "gateway": "192.168.1.2",
@@ -17,6 +20,9 @@
         ]
       },
       "eth3": {
+        "meta": {
+          "type": "wan"
+        },
         "enabled": true,
         "dhcp": true
       }
@@ -35,6 +41,9 @@
     },
     "bridge": {
       "br0": {
+        "meta": {
+          "type": "lan"
+        },
         "ipv4": "10.10.0.1/24",
         "intf": [
           "eth0"
@@ -42,6 +51,9 @@
         "enabled": true
       },
       "br1": {
+        "meta": {
+          "type": "lan"
+        },
         "ipv4": "10.0.1.1/24",
         "intf": [
           "eth1"
@@ -49,6 +61,9 @@
         "enabled": true
       },
       "vbr100": {
+        "meta": {
+          "type": "lan"
+        },
         "ipv4": "10.100.0.1/24",
         "intf": [
           "eth0.100",
@@ -132,6 +147,17 @@
         "to": "10.100.0.250"
       },
       "lease": 86400
+    }
+  },
+  "sshd": {
+    "br0": {
+      "enabled": true
+    },
+    "br1": {
+      "enabled": true
+    },
+    "vbr100": {
+      "enabled": false
     }
   }
 }
