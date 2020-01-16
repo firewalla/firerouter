@@ -29,7 +29,7 @@ const pppoeTemplateFilePath = `${r.getFireRouterHome()}/etc/ppp.conf.template`
 class PPPoEInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    const pppIpUpScriptPath = `${r.getFireRouterHome()}/scripts/ppp_ip_up.sh`;
+    const pppIpUpScriptPath = `${r.getFireRouterHome()}/scripts/ppp_ip_up`;
     await exec(`sudo rm /etc/ppp/ip-up.d/*`).catch((err) => {});
     await exec(`sudo cp ${pppIpUpScriptPath} /etc/ppp/ip-up.d/`).catch((err) => {});
     await exec(`mkdir -p ${r.getUserConfigFolder()}/pppoe`).catch((err) => {});
