@@ -53,6 +53,7 @@ class IPChangeSensor extends Sensor {
     });
 
     sclient.subscribe("dhclient.ip_change");
+    sclient.subscribe("pppoe.ip_change");
   }
 }
 
