@@ -152,6 +152,8 @@ class InterfaceBasePlugin extends Plugin {
     // create routing tables and add rules for interface
     if (this.isWAN() || this.isLAN()) {
       await routing.initializeInterfaceRoutingTables(this.name);
+      if (!this.networkConfig.enabled)
+        return;
       await routing.createInterfaceRoutingRules(this.name);
       await routing.createInterfaceGlobalRoutingRules(this.name);
     }
@@ -225,10 +227,10 @@ class InterfaceBasePlugin extends Plugin {
 
     await this.interfaceUpDown();
 
+    await this.prepareEnvironment();
+
     if (!this.networkConfig.enabled)
       return;
-
-    await this.prepareEnvironment();
 
     await this.applyIpDnsSettings();
 
