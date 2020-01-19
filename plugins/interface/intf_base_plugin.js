@@ -160,13 +160,13 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
-      await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=2`);
+      await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=2`).catch((err) => {});
     }
   }
 
   async applyIpDnsSettings() {
     if (this.networkConfig.dhcp) {
-      await exec(`sudo dhclient -pf ${this._getDHClientPidFilePath()} -lf ${this._getDHClientLeaseFilePath()} -nw -i ${this.name} -e rt_tables="${this.name}_local main" -e default_rt_tables="${this.name}_default main"`).catch((err) => {
+      await exec(`sudo dhclient -pf ${this._getDHClientPidFilePath()} -lf ${this._getDHClientLeaseFilePath()} -nw -i ${this.name} -e rt_tables="main ${this.name}_local" -e default_rt_tables="main ${this.name}_default"`).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
 
@@ -225,9 +225,9 @@ class InterfaceBasePlugin extends Plugin {
 
     await this.createInterface();
 
-    await this.interfaceUpDown();
-
     await this.prepareEnvironment();
+
+    await this.interfaceUpDown();
 
     if (!this.networkConfig.enabled)
       return;

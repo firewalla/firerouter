@@ -54,7 +54,10 @@ async function createCustomizedRoutingTable(tableName) {
   if (id == 10000) {
     throw "Insufficient space to create routing table";
   }
-  cmd = `sudo bash -c 'echo -e ${id}\\\\t${tableName} >> /etc/iproute2/rt_tables'`;
+  cmd = `sudo bash -c 'flock /tmp/rt_tables.lock -c "echo -e ${id}\\\t${tableName} >> /etc/iproute2/rt_tables; \
+    cat /etc/iproute2/rt_tables | sort | uniq > /etc/iproute2/rt_tables.new; \
+    cp /etc/iproute2/rt_tables.new /etc/iproute2/rt_tables; \
+    rm /etc/iproute2/rt_tables.new"'`;
   log.info("Append new routing table: ", cmd);
   result = await exec(cmd);
   if (result.stderr !== "") {
@@ -72,7 +75,7 @@ async function createPolicyRoutingRule(from, iif, tableName, priority) {
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  result = result.stdout.replace("[detached] ", "");
+  result = result.stdout.replace(/\[detached\] /g, "");
   if (result.includes(rule)) {
     log.info("Same policy routing rule already exists: ", rule);
     return;
@@ -92,7 +95,7 @@ async function removePolicyRoutingRule(from, iif, tableName) {
   from = from || "all";
   let cmd = "ip rule list";
   let result = await exec(cmd);
-  result = result.stdout.replace("[detached] ", "");
+  result = result.stdout.replace(/\[detached\] /g, "");
   let rule = `from ${from} `;
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;

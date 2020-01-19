@@ -25,4 +25,5 @@ lcp-echo-failure 10
 lcp-echo-adaptive
 unit 0
 linkname #LINKNAME#
+ifname #LINKNAME#
 nodefaultroute
