@@ -78,7 +78,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       .replace("#INTF#", intf)
       .replace("#MRU#", mru)
       .replace("#MTU#", mtu)
-      .replace("#LINKNAME#", linkname);
+      .replace(/#LINKNAME#/g, linkname);
     const intfPlugin = pl.getPluginInstance("interface", intf);
     if (intfPlugin) {
       this.subscribeChangeFrom(intfPlugin);
