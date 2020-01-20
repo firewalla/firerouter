@@ -18,7 +18,7 @@
 const express = require('express');
 const router = express.Router();
 const bodyParser = require('body-parser');
-const log = require('../../util/logger.js')(__filename, 'info')
+const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
 const ns = require('../../core/network_setup.js');
 
