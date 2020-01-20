@@ -17,7 +17,7 @@
 const log = require("./logger.js")(__filename)
 
 const cp = require('child_process');
-
+const exec = require('child-process-promise').exec;
 const util = require('util');
 
 // TODO: Read this from config file
@@ -38,14 +38,14 @@ function getFireRouterHome() {
 
 function getBranch() {
   if(_branch == null) {
-    _branch = require('child_process').execSync("git rev-parse --abbrev-ref HEAD", {encoding: 'utf8'}).replace(/\n/g, "")
+    _branch = cp.execSync("git rev-parse --abbrev-ref HEAD", {encoding: 'utf8'}).replace(/\n/g, "")
   }
   return _branch
 }
 
 function getLastCommitDate() {
   if(_lastCommitDate == null) {
-    _lastCommitDate = Number(require('child_process').execSync("git show -s --format=%ct HEAD", {encoding: 'utf8'}).replace("\n", ""))
+    _lastCommitDate = Number(cp.execSync("git show -s --format=%ct HEAD", {encoding: 'utf8'}).replace("\n", ""))
   }
   return _lastCommitDate
 }
@@ -156,7 +156,7 @@ function getVersion() {
     let versionElements = [];
 
     try {
-      versionElements = require('child_process').execSync(cmd).toString('utf-8')
+      versionElements = cp.execSync(cmd).toString('utf-8')
         .replace(/\n$/, '').split("-");
     } catch (err) {
       log.error("Failed to get git version tags", err);
@@ -179,7 +179,7 @@ function getLatestCommitHash() {
     const cmd = "git rev-parse HEAD"
 
     try {
-      latestCommitHash = require('child_process').execSync(cmd).toString('utf-8')
+      latestCommitHash = cp.execSync(cmd).toString('utf-8')
         .replace(/\n$/, '').substring(0, 8);
     } catch (err) {
       log.error("Failed to get latest commit hash", err);
@@ -191,6 +191,17 @@ function getLatestCommitHash() {
 
 function getProcessName() {
   return process.title;
+}
+
+async function switchBranch(targetBranch) {
+  await exec(`${getFireRouterHome()}/scripts/switch_branch.sh ${targetBranch}`);
+  scheduleRestartFireBoot();
+}
+
+function scheduleRestartFireBoot(delay = 10) {
+  setTimeout(() => {
+    exec(`sudo systemctl restart fireboot`);
+  }, delay * 1000);
 }
 
 module.exports = {
@@ -216,5 +227,6 @@ module.exports = {
   getLatestCommitHash:getLatestCommitHash,
   getFireRouterHome:getFireRouterHome,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
-  getInterfaceResolvConfPath: getInterfaceResolvConfPath
+  getInterfaceResolvConfPath: getInterfaceResolvConfPath,
+  switchBranch: switchBranch
 };
