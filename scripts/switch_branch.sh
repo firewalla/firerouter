@@ -2,7 +2,7 @@
 
 set -e
 
-: ${FIREROUTER_HOME:=/home/pi/firewalla}
+: ${FIREROUTER_HOME:=/home/pi/firerouter}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
 CMD=$(basename $0)
 
@@ -14,9 +14,14 @@ example:
     # switch to master
     $CMD master
 
-    # switch to pre_release
+    # switch to release
+    $CMD release_6_0
+
+    # switch to beta
     $CMD beta_6_0
 
+    # switch to alpha
+    $CMD beta_7_0
 EOU
 }
 
@@ -31,7 +36,7 @@ switch_branch() {
     if [[ "$cur_branch" == "$tgt_branch" ]]; then
       exit 0
     fi
-    # walla repo
+    # firerouter repo
     ( cd $FIREROUTER_HOME
     git config remote.origin.fetch "+refs/heads/$tgt_branch:refs/remotes/origin/$tgt_branch"
     $MGIT fetch origin $tgt_branch

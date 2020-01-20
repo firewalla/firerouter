@@ -40,9 +40,9 @@ function enableSubPath(path, lib) {
   subpath_v1.use("/" + path, r);
 }
 
-// encipher api is enabled even for production enviornment
 enableSubPath('config');
 enableSubPath('interface');
+enableSubPath('system');
 
 const subpath_docs = express();
 subpath_v1.use("/docs", subpath_docs);
