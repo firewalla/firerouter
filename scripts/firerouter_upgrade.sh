@@ -141,3 +141,4 @@ sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
 sudo systemctl daemon-reload
 sudo systemctl reenable firerouter
 sudo systemctl reenable fireboot
+sudo systemctl reenable firereset
