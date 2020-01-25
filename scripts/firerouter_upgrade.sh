@@ -87,7 +87,7 @@ done
 if [[ $rc -ne 0 ]]
 then
     /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Failed No Network "+`date`
-    rm /dev/shm/firerouter.upgraded
+    rm -f /dev/shm/firerouter.upgraded
     touch /dev/shm/firerouter.upgrade.failed
     exit 1
 fi
@@ -103,7 +103,7 @@ latest_hash=$(git rev-parse origin/$branch)
 
 if [ "$current_hash" == "$latest_hash" ]; then
    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
-   rm /dev/shm/firerouter.upgraded
+   rm -f /dev/shm/firerouter.upgraded
    exit 0
 fi 
 
@@ -115,7 +115,7 @@ echo "upgrade on branch $branch"
 if [[ -e "/home/pi/.router/config/.no_auto_upgrade" ]]; then
   /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO UPGRADE"
   echo '======= SKIP UPGRADING BECAUSE OF FLAG /home/pi/.router/config/.no_auto_upgrade ======='
-  rm /dev/shm/firerouter.upgraded
+  rm -f /dev/shm/firerouter.upgraded
   exit 0
 fi
 
