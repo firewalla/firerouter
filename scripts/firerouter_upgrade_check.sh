@@ -5,6 +5,8 @@
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
+source ${FIREROUTER_HOME}/bin/common
+
 # Run upgrade
 ${FIREROUTER_HOME}/scripts/firerouter_upgrade.sh
 
