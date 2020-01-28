@@ -1,71 +1,8 @@
 #!/bin/bash
 
-init_network_config() {
-  _rc=0
-  redis-cli set "fireboot:status" "apply_network"
-  echo "Awaiting FireRouter API available ..."
-  sleep 3
-  timeout=3
-  api_ready=0
-  while [[ timeout -gt 0 && api_ready -eq 0 ]]
-  do
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
-    if [[ $HTTP_STATUS_CODE != 200 ]]; then
-      sleep 10
-    else
-      api_ready=1
-    fi
-    ((timeout-=1))
-  done
+: ${FIREROUTER_HOME:=/home/pi/firerouter}
 
-  if [[ $api_ready -eq 0 ]]; then
-    _rc=1
-  fi
-
-  test $_rc -eq  0 || exit $_rc
-  echo "FireRouter API is available"
-
-  redis-cli set "fireboot:status" "apply_network"
-  echo "Applying last successful network config ..."
-
-  if [[ ! -f /dev/shm/firerouter.prepared ]]; then
-    echo "Preparing network environment ..."
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
-    if [[ $HTTP_STATUS_CODE != "200" ]]; then
-      echo "Failed to prepare environment"
-      _rc=2
-    else
-      touch /dev/shm/firerouter.prepared
-    fi
-  fi
-
-  test $_rc -eq  0 || exit $_rc
-
-  HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
-  if [[ $HTTP_STATUS_CODE != "200" ]]; then
-    echo "Failed to apply current config"
-    _rc=2
-  fi
-
-  test $_rc -eq  0 || exit $_rc
-
-  echo "Successfully apply last network config"
-
-  redis-cli set "fireboot:status" "test_network"
-  echo "Testing network connectivity ..."
-
-  retry=10
-  while [[ $retry -gt 0 ]]; do
-    sleep 5;
-    (( retry-- ))
-    nc -z 1.1.1.1 443 || (echo "Network is unavailable" && _rc=3; continue;)
-    nslookup -timeout=10 github.com || (echo "DNS is unavailable" && _rc=4; continue;)
-    _rc=0
-    break;
-  done
-  test $_rc -eq 0 || exit $_rc
-  echo "Network connectivity test succeeded"
-}
+source ${FIREROUTER_HOME}/bin/common
 
 # step 1 - init network config
 init_network_config
@@ -82,7 +19,7 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   echo "Restarting FireRouter ..."
   sudo systemctl restart firerouter
   init_network_config
-  rm /dev/shm/firerouter.upgraded
+  rm -f /dev/shm/firerouter.upgraded
   echo "Restarting FireReset ..."
   sudo systemctl restart firereset
 fi

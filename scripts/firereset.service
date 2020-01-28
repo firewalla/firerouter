@@ -1,0 +1,13 @@
+[Unit]
+Description=FireReset
+After=network.target
+
+[Service]
+User=root
+Restart=always
+RestartSec=5
+WorkingDirectory=/home/pi/firerouter
+ExecStart=/bin/bash -c "/home/pi/firerouter/bin/firereset >> /home/pi/.forever/firereset.log 2>&1"
+
+[Install]
+WantedBy=multi-user.target

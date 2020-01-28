@@ -17,6 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
+const routing = require('../../util/routing.js');
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -54,8 +55,9 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     const speed = await this._getSysFSClassNetValue("speed");
     */
     const operstate = await this._getSysFSClassNetValue("operstate");
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
-    return {mac, mtu, carrier, operstate, ip4};
+    return {mac, mtu, carrier, operstate, ip4, rtid};
   }
 }
 
