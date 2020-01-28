@@ -45,6 +45,7 @@ class DHCPPlugin extends Plugin {
     await exec(`mkdir -p ${dhcpConfDir}`);
     await exec(`mkdir -p ${dhcpHostsDir}`);
     await exec(`mkdir -p ${dhcpRuntimeDir}`);
+    await exec(`mkdir -p ${r.getTempFolder()}`)
   }
 
   static async installSystemService() {

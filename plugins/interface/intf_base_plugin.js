@@ -76,6 +76,9 @@ class InterfaceBasePlugin extends Plugin {
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
         // restore reverse path filtering settings
         await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=1`).catch((err) => {});
+        // remove fwmark defautl route ip rule
+        const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`);
       } else {
         // considered as LAN interface, remove from "routable"
         if (this.networkConfig.ipv4) {
@@ -161,6 +164,9 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
       await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=2`).catch((err) => {});
+      // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
+      const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
     }
   }
 
@@ -239,7 +245,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async _getSysFSClassNetValue(key) {
     const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
-      this.log.warn(`Failed to get ${key} of ${this.name}`, err);
+      this.log.warn(`Failed to get ${key} of ${this.name}`, err.message);
       return null;
     })
     return value;
@@ -252,12 +258,13 @@ class InterfaceBasePlugin extends Plugin {
     const duplex = await this._getSysFSClassNetValue("duplex");
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
     const gateway = await routing.getInterfaceGWIP(this.name);
     const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4, gateway, dns};
+    return {mac, mtu, carrier, duplex, speed, operstate, ip4, gateway, dns, rtid};
   }
 
   onEvent(e) {

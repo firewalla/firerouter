@@ -18,6 +18,7 @@
 const log = require('./logger.js')(__filename);
 
 const exec = require('child-process-promise').exec;
+const _ = require('lodash');
 
 const RT_GLOBAL_LOCAL="global_local";
 const RT_GLOBAL_DEFAULT = "global_default";
@@ -67,11 +68,21 @@ async function createCustomizedRoutingTable(tableName) {
   return id;
 }
 
-async function createPolicyRoutingRule(from, iif, tableName, priority) {
+async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark) {
   from = from || "all";
-  let cmd = "ip rule list";
+  let cmd = "ip rule list"; 
   let result = await exec(cmd);
   let rule = `from ${from} `;
+  if (fwmark) {
+    if (_.isString(fwmark) && fwmark.includes("/")) {
+      const mark = Number(fwmark.split("/")[0]).toString(16);
+      const mask = Number(fwmark.split("/")[1]).toString(16);
+      rule = `${rule}fwmark 0x${mark}/0x${mask} `;
+    } else {
+      const mark = Number(fwmark).toString(16);
+      rule = `${rule}fwmark 0x${mark} `;
+    }
+  }
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
@@ -91,12 +102,22 @@ async function createPolicyRoutingRule(from, iif, tableName, priority) {
   }
 }
 
-async function removePolicyRoutingRule(from, iif, tableName) {
+async function removePolicyRoutingRule(from, iif, tableName, fwmark) {
   from = from || "all";
   let cmd = "ip rule list";
   let result = await exec(cmd);
   result = result.stdout.replace(/\[detached\] /g, "");
   let rule = `from ${from} `;
+  if (fwmark) {
+    if (_.isString(fwmark) && fwmark.includes("/")) {
+      const mark = Number(fwmark.split("/")[0]).toString(16);
+      const mask = Number(fwmark.split("/")[1]).toString(16);
+      rule = `${rule}fwmark 0x${mark}/0x${mask} `;
+    } else {
+      const mark = Number(fwmark).toString(16);
+      rule = `${rule}fwmark 0x${mark} `;
+    }
+  }
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
