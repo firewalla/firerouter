@@ -100,6 +100,11 @@ class InterfaceBasePlugin extends Plugin {
       networkConfig.meta = {};
     if (!networkConfig.meta.uuid)
       networkConfig.meta.uuid = uuid.v4();
+    this.phyName = this.name;
+    if (this.name.endsWith(":0")) {
+      // alias interface, strip suffix in physical dev name 
+      this.phyName = this.name.substring(0, this.name.length - 2);
+    }
   }
 
   _getDHClientPidFilePath() {
@@ -262,9 +267,12 @@ class InterfaceBasePlugin extends Plugin {
     let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
+    let ip6 = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
+    if (ip6)
+      ip6 = ip6.split("\n").filter(l => l.length > 0);
     const gateway = await routing.getInterfaceGWIP(this.name);
     const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4, gateway, dns, rtid};
+    return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, dns, rtid};
   }
 
   onEvent(e) {

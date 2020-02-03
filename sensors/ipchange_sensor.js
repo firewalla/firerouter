@@ -45,6 +45,11 @@ class IPChangeSensor extends Sensor {
             } else {
               intfPlugin.propagateEvent(e);
             }
+            const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+            if (uuid) {
+              // publish to redis db used by Firewalla
+              exec(`redis-cli publish "firerouter.iface.ip_change" "${uuid}"`);
+            }
           }
           break;
         }
