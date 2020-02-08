@@ -40,17 +40,8 @@ class InterfaceBasePlugin extends Plugin {
     await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
       this.log.error(`Failed to flush ip address of ${this.name}`, err);
     });
-
-    if (this.networkConfig.dhcp) {
-      const pid = await fs.readFileAsync(this._getDHClientPidFilePath(), {encoding: "utf8"}).catch((err) => null);
-      if (pid) {
-        await fs.readFileAsync(`/proc/${pid}/comm`, {encoding: "utf8"}).then((name) => {
-          if (name === "dhclient") {
-            return exec(`sudo kill -9 ${result.stdout.trim()}`);
-          }
-        }).catch((err) => {});
-      }
-    }
+    // make sure to stop dhclient no matter if dhcp is enabled
+    await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
   }
 
   async flush() {
@@ -105,14 +96,6 @@ class InterfaceBasePlugin extends Plugin {
       // alias interface, strip suffix in physical dev name 
       this.phyName = this.name.substring(0, this.name.length - 2);
     }
-  }
-
-  _getDHClientPidFilePath() {
-    return `/run/dhclient.${this.name}.pid`;
-  }
-
-  _getDHClientLeaseFilePath() {
-    return `/var/lib/dhcp/dhclient.${this.name}.leases`;
   }
 
   _getResolvConfFilePath() {
@@ -177,7 +160,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async applyIpDnsSettings() {
     if (this.networkConfig.dhcp) {
-      await exec(`sudo dhclient -pf ${this._getDHClientPidFilePath()} -lf ${this._getDHClientLeaseFilePath()} -nw -i ${this.name} -e rt_tables="main ${this.name}_local" -e default_rt_tables="main ${this.name}_default"`).catch((err) => {
+      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
 

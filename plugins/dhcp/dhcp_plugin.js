@@ -22,7 +22,7 @@ const dhcpScriptTemplate = __dirname + "/dhcp.template.sh";
 
 const exec = require('child-process-promise').exec;
 
-const r = require('../../util/firerouter');
+const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
