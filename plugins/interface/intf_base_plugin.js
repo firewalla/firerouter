@@ -40,17 +40,8 @@ class InterfaceBasePlugin extends Plugin {
     await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
       this.log.error(`Failed to flush ip address of ${this.name}`, err);
     });
-
-    if (this.networkConfig.dhcp) {
-      const pid = await fs.readFileAsync(this._getDHClientPidFilePath(), {encoding: "utf8"}).catch((err) => null);
-      if (pid) {
-        await fs.readFileAsync(`/proc/${pid}/comm`, {encoding: "utf8"}).then((name) => {
-          if (name === "dhclient") {
-            return exec(`sudo kill -9 ${result.stdout.trim()}`);
-          }
-        }).catch((err) => {});
-      }
-    }
+    // make sure to stop dhclient no matter if dhcp is enabled
+    await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
   }
 
   async flush() {
@@ -105,14 +96,6 @@ class InterfaceBasePlugin extends Plugin {
       // alias interface, strip suffix in physical dev name 
       this.phyName = this.name.substring(0, this.name.length - 2);
     }
-  }
-
-  _getDHClientPidFilePath() {
-    return `/run/dhclient.${this.name}.pid`;
-  }
-
-  _getDHClientLeaseFilePath() {
-    return `/var/lib/dhcp/dhclient.${this.name}.leases`;
   }
 
   _getResolvConfFilePath() {
@@ -177,7 +160,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async applyIpDnsSettings() {
     if (this.networkConfig.dhcp) {
-      await exec(`sudo dhclient -pf ${this._getDHClientPidFilePath()} -lf ${this._getDHClientLeaseFilePath()} -nw -i ${this.name} -e rt_tables="main ${this.name}_local" -e default_rt_tables="main ${this.name}_default"`).catch((err) => {
+      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
 
@@ -264,13 +247,13 @@ class InterfaceBasePlugin extends Plugin {
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-    let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
+    let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
-    let ip6 = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
+    let ip6 = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
-    const gateway = await routing.getInterfaceGWIP(this.name);
+    const gateway = await routing.getInterfaceGWIP(this.name) || null;
     const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
     return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, dns, rtid};
   }
