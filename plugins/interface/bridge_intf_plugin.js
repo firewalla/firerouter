@@ -17,7 +17,6 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
-const routing = require('../../util/routing.js');
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -44,20 +43,6 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
       this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
     });
-  }
-
-  async state() {
-    const mac = await this._getSysFSClassNetValue("address");
-    const mtu = await this._getSysFSClassNetValue("mtu");
-    const carrier = await this._getSysFSClassNetValue("carrier");
-    /* duplex and speed of bridge interface is not readable
-    const duplex = await this._getSysFSClassNetValue("duplex");
-    const speed = await this._getSysFSClassNetValue("speed");
-    */
-    const operstate = await this._getSysFSClassNetValue("operstate");
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-    const ip4 = await exec(`ip addr show dev ${this.name} | grep 'inet ' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null);
-    return {mac, mtu, carrier, operstate, ip4, rtid};
   }
 }
 
