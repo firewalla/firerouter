@@ -94,6 +94,12 @@ function _isConfigEqual(c1, c2) {
     delete c1Copy["meta"];
   if (c2Copy.meta)
     delete c2Copy["meta"];
+
+  // considered as changed if uuid is changed
+  if (c1.meta && c1.meta.uuid)
+    c1Copy.meta = {uuid: c1.meta.uuid};
+  if (c2.meta && c2.meta.uuid)
+    c2Copy.meta = {uuid: c2.meta.uuid};
   
   return _.isEqual(c1Copy, c2Copy);
 }
