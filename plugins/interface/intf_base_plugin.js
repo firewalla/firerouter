@@ -254,7 +254,7 @@ class InterfaceBasePlugin extends Plugin {
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     const gateway = await routing.getInterfaceGWIP(this.name) || null;
-    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").map(line => line.replace("nameserver ", ""))).catch((err) => null);
+    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
     return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, dns, rtid};
   }
 
