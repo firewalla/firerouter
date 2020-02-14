@@ -16,7 +16,6 @@
 
 const Sensor = require("./sensor.js");
 const r = require('../util/firerouter.js');
-const ipChangePublishScript = `${r.getFireRouterHome()}/scripts/ip_change_publish`;
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
@@ -24,10 +23,6 @@ const event = require('../core/event.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 
 class IPChangeSensor extends Sensor {
-  
-  static async prepare() {
-    await exec(`sudo cp ${ipChangePublishScript} /etc/dhcp/dhclient-exit-hooks.d/`).catch((err) => {});
-  }
 
   async run() {
     sclient.on("message", (channel, message) => {
@@ -44,6 +39,11 @@ class IPChangeSensor extends Sensor {
               }, this.config.delay * 1000);
             } else {
               intfPlugin.propagateEvent(e);
+            }
+            const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+            if (uuid) {
+              // publish to redis db used by Firewalla
+              exec(`redis-cli publish "firerouter.iface.ip_change" "${uuid}"`);
             }
           }
           break;

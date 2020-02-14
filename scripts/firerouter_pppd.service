@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter PPPoE Client
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/usr/sbin/pppd file "/home/pi/.router/config/pppoe/%i.conf"
+RemainAfterExit=true

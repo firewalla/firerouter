@@ -14,7 +14,7 @@ log-facility=/dev/null
 strict-order
 
 # per-interface configurations
-conf-dir=/home/pi/.firewalla/config/dnsmasq/%INTERFACE%
+conf-dir=/home/pi/.firewalla/config/dnsmasq/%INTERFACE_UUID%
 # global configurations
 conf-dir=/home/pi/.firewalla/config/dnsmasq/
 
