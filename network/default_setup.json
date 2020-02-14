@@ -59,6 +59,9 @@
     },
     "br0": {
       "useNameserversFromWAN": true
+    },
+    "tun_fwvpn": {
+      "useNameserversFromWAN": true
     }
   },
   "nat": {
