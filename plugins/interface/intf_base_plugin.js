@@ -78,9 +78,9 @@ class InterfaceBasePlugin extends Plugin {
           if (this.networkConfig.isolated !== true) {
             // routable to/from other routable lans
             await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
-            await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
           }
         }
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
       }
     }
   }
@@ -205,9 +205,10 @@ class InterfaceBasePlugin extends Plugin {
         if (this.networkConfig.isolated !== true) {
           // routable to/from other routable lans
           await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
-          await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => {});
         }
       }
+      if (this.networkConfig.isolated !== true)
+        await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => {});
     }
   }
 
@@ -233,7 +234,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async _getSysFSClassNetValue(key) {
     const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
-      this.log.warn(`Failed to get ${key} of ${this.name}`, err.message);
+      this.log.debug(`Failed to get ${key} of ${this.name}`, err.message);
       return null;
     })
     return value;
