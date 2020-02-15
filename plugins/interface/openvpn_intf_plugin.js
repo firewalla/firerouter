@@ -56,27 +56,25 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     if (this.networkConfig.type === "server") {
       const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
       if (up) {
-        const subnet = await fs.readFileAsync(`/home/pi/.firewalla/run/ovpn_server/${this.networkConfig.instance || "server"}.subnet`, {encoding: "utf8"})
+        const subnet = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.subnet`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.error(`Failed to read .subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
-        const peer = await fs.readFileAsync(`/home/pi/.firewalla/run/ovpn_server/${this.networkConfig.instance || "server"}.gateway`, {encoding: "utf8"})
+        const peer = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.gateway`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read gateway file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.error(`Failed to read .gateway file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
-        if (subnet) {
-          await routing.addRouteToTable(`${subnet}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+        if (subnet && peer) {
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
           if (this.networkConfig.isolated !== true) {
             // routable to/from other routable lans
-            await routing.addRouteToTable(`${subnet}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+            await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
           }
-          if (peer) {
-            await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_local`).catch((err) => {});
-          }
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_local`).catch((err) => {});
         }
       }
     }
@@ -104,13 +102,18 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
     if (up) {
       if (this.networkConfig.type === "server") {
-        const ip4 = await fs.readFileAsync(`/home/pi/.firewalla/run/ovpn_server/${this.networkConfig.instance || "server"}.local`, {encoding: "utf8"})
+        const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
-        state.ip4 = ip4;
+        if (localIp) {
+          const addr = localIp.split('/')[0];
+          const mask = localIp.split('/')[1] || "255.255.255.255";
+          const subnet = ip.subnet(addr, mask);
+          state.ip4 = `${addr}/${subnet.subnetMaskLength}`;
+        }
       }
     }
     if (!state.mac)
