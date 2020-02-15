@@ -41,7 +41,7 @@ async function createCustomizedRoutingTable(tableName) {
     const name = line[1];
     usedTid.push(tid);
     if (name === tableName) {
-      log.info("Table with same name already exists: " + tid);
+      log.debug("Table with same name already exists: " + tid);
       return Number(tid);
     }
   }
@@ -88,7 +88,7 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark) {
   rule = `${rule}lookup ${tableName}`;
   result = result.stdout.replace(/\[detached\] /g, "");
   if (result.includes(rule)) {
-    log.info("Same policy routing rule already exists: ", rule);
+    log.debug("Same policy routing rule already exists: ", rule);
     return;
   }
   if (priority)
@@ -122,7 +122,7 @@ async function removePolicyRoutingRule(from, iif, tableName, fwmark) {
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
   if (!result.includes(rule)) {
-    log.info("Policy routing rule does not exist: ", rule);
+    log.debug("Policy routing rule does not exist: ", rule);
     return;
   }
   cmd = `sudo ip rule del ${rule}`;
