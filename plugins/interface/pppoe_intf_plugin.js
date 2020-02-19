@@ -34,7 +34,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ppp_ip_up /etc/ppp/ip-up.d/`).catch((err) => {});
     await exec(`mkdir -p ${r.getUserConfigFolder()}/pppoe`).catch((err) => {});
     // copy firerouter_pppd.service
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd.service /etc/systemd/system/`);
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
     await exec("sudo systemctl daemon-reload");
   }
 
