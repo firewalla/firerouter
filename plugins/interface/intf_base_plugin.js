@@ -42,11 +42,9 @@ class InterfaceBasePlugin extends Plugin {
     });
     // make sure to stop dhclient no matter if dhcp is enabled
     await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
-    // disable accept_ra anyway and flush IPv6 addresses
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.accept_ra=0`).catch((err) => {});
+    // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
+    await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
     await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
-    if (this._raRefreshTask)
-      clearInterval(this._raRefreshTask);
   }
 
   async flush() {
@@ -194,10 +192,21 @@ class InterfaceBasePlugin extends Plugin {
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       }
     }
+
+    if (this.networkConfig.dhcp6) {
+      if (this.networkConfig.dhcp6.prefixDelagation) {
+        // TODO add prefix delegation options in dhcpcd configurations
+      }
+      // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
+      await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
+        this.fatal(`Failed to enable dhcpv6 client on interfacer ${this.name}: ${err.message}`);
+      });
+      // do not process dns nameservers from DHCPv6 for now
+    }
   }
 
   async changeRoutingTables() {
-    // if dhcp is set, dhclient should take care of local and default routing table
+    // if dhcp/dhcp6 is set, dhclient/dhcpcd6 should take care of local and default routing table
     if (this.networkConfig.ipv4) {
       const addr = new Address4(this.networkConfig.ipv4);
       const networkAddr = addr.startAddress();

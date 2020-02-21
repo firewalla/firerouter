@@ -28,7 +28,8 @@ class IPChangeSensor extends Sensor {
     sclient.on("message", (channel, message) => {
       switch (channel) {
         case "pppoe.ip_change":
-        case "dhclient.ip_change": {
+        case "dhclient.ip_change":
+        case "dhcpcd6.ip_change": {
           const iface = message;
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
@@ -54,6 +55,7 @@ class IPChangeSensor extends Sensor {
 
     sclient.subscribe("dhclient.ip_change");
     sclient.subscribe("pppoe.ip_change");
+    sclient.subscribe("dhcpcd6.ip_change");
   }
 }
 
