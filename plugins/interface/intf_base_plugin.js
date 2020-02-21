@@ -25,7 +25,7 @@ const exec = require('child-process-promise').exec;
 
 const fs = require('fs');
 const Promise = require('bluebird');
-const ip = require('ip');
+const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
 
 const event = require('../../core/event.js');
@@ -42,6 +42,11 @@ class InterfaceBasePlugin extends Plugin {
     });
     // make sure to stop dhclient no matter if dhcp is enabled
     await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+    // disable accept_ra anyway and flush IPv6 addresses
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.accept_ra=0`).catch((err) => {});
+    await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+    if (this._raRefreshTask)
+      clearInterval(this._raRefreshTask);
   }
 
   async flush() {
@@ -65,22 +70,27 @@ class InterfaceBasePlugin extends Plugin {
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, null, 6).catch((err) => {});
         // restore reverse path filtering settings
         await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`);
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`, 6);
       } else {
         // considered as LAN interface, remove from "routable"
         if (this.networkConfig.ipv4) {
-          const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-          await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+          const addr = new Address4(this.networkConfig.ipv4);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
           if (this.networkConfig.isolated !== true) {
             // routable to/from other routable lans
-            await routing.removeRouteFromTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+            await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
           }
         }
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
       }
     }
   }
@@ -155,6 +165,7 @@ class InterfaceBasePlugin extends Plugin {
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
+      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6);
     }
   }
 
@@ -188,8 +199,10 @@ class InterfaceBasePlugin extends Plugin {
   async changeRoutingTables() {
     // if dhcp is set, dhclient should take care of local and default routing table
     if (this.networkConfig.ipv4) {
-      const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-      await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, `${this.name}_local`).catch((err) => {});
+      const addr = new Address4(this.networkConfig.ipv4);
+      const networkAddr = addr.startAddress();
+      const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+      await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`).catch((err) => {});
     }
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
@@ -197,18 +210,22 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       // considered as WAN interface, accessbile to "routable"
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
+      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
     } else {
       // considered as LAN interface, add to "routable"
       if (this.networkConfig.ipv4) {
-        const cidr = ip.cidrSubnet(this.networkConfig.ipv4);
-        await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+        const addr = new Address4(this.networkConfig.ipv4);
+        const networkAddr = addr.startAddress();
+        const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+        await routing.addRouteToTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
         if (this.networkConfig.isolated !== true) {
           // routable to/from other routable lans
-          await routing.addRouteToTable(`${cidr.networkAddress}/${cidr.subnetMaskLength}`, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+          await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
         }
       }
       if (this.networkConfig.isolated !== true)
         await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => {});
+        await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => {});
     }
   }
 
