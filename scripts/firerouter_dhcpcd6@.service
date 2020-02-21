@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter DHCPv6 Client
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/sbin/dhcpcd -6 %i -e rt_tables="main %i_local" -e default_rt_tables="main %i_default"
+RemainAfterExit=true

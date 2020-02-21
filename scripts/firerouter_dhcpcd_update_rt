@@ -1,0 +1,69 @@
+#!/bin/bash
+
+metric=${ifmetric:-'1024'}
+mtu=${ifmtu:-'1500'}
+
+if [ -z "$rt_tables" ]; then
+    rt_tables="main"
+fi
+
+if [ -z "$default_rt_tables" ]; then
+    default_rt_tables="main"
+fi
+
+ip_changed=""
+
+case $reason in
+
+  ROUTERADVERT)
+    new_addrs="";
+    addr_id=1
+    while [ $addr_id -lt 10 ]; do
+      var_name="nd1_addr$addr_id"
+      eval "addr=\$$var_name"
+      if [ -n "$addr" ]; then
+        new_addrs="$new_addrs$addr,"
+        for rt_table in $rt_tables; do
+          sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table
+          logger "sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table"
+        done
+      else
+        break;
+      fi
+      addr_id=$((addr_id + 1))
+    done
+
+    if [ -n "$nd1_from" ]; then
+      for default_rt_table in $default_rt_tables; do
+        sudo ip -6 r add default via $nd1_from dev $interface metric $metric mtu $mtu table $default_rt_table
+      done
+    fi
+    old_addrs=`cat /tmp/dhcpcd.ip6.$interface || echo ""`
+    if [ "$new_addrs" != "$old_addrs" ]; then
+      echo $new_addrs > /tmp/dhcpcd.ip6.$interface
+      ip_changed="1"
+    fi
+    ;;
+  BOUND6|REBOOT6)
+    ip_changed="1"
+    ;;
+  RENEW6|REBIND6)
+    # compare old address with new address
+    addr_id=1
+    while [ $addr_id -lt 10 ]; do
+      old_var_name="old_dhcp6_ia_na1_ia_addr$addr_id"
+      eval "old_addr=\$$old_var_name"
+      new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
+      eval "new_addr=\$$new_var_name"
+      if [ $old_addr != $new_addr ]; then
+        ip_changed="1"
+        break;
+      fi
+      addr_id=$((addr_id + 1))
+    done
+    ;;
+esac
+
+if [ -n "$ip_changed" ]; then
+  redis-cli -n 1 publish "dhcpcd6.ip_change" "$interface"
+fi
