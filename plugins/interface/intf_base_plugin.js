@@ -197,6 +197,8 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp6.prefixDelagation) {
         // TODO add prefix delegation options in dhcpcd configurations
       }
+      // add link local route to interface local routing table
+      await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interfacer ${this.name}: ${err.message}`);
