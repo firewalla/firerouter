@@ -66,6 +66,11 @@ class NetworkSetup {
     await routing.flushRoutingTable(routing.RT_WAN_ROUTABLE);
     await routing.flushRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.flushRoutingTable(routing.RT_STATIC);
+    // create base policy routing rules
+    await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000);
+    await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001);
+    await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000, null, 6);
+    await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001, null, 6);
   }
 
   async setup(config, dryRun = false) {
