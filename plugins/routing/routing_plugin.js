@@ -23,13 +23,6 @@ const event = require('../../core/event.js');
 const {Address4, Address6} = require('ip-address');
 
 class RoutingPlugin extends Plugin {
-
-  static async preparePlugin() {
-    await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000);
-    await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001);
-    await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000, null, 6);
-    await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001, null, 6);
-  }
    
   async flush() {
     if (!this.networkConfig) {
