@@ -191,7 +191,9 @@ class DNSPlugin extends Plugin {
   _restartService() {
     if (!_restartTask) {
       _restartTask = setTimeout(() => {
-        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns");
+        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns").catch((err) => {
+          this.log.warn("Failed to restart firerouter_dns", err.message);
+        });
         _restartTask = null;
       }, 5000);
     }

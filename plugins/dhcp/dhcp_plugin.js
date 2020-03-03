@@ -102,9 +102,11 @@ class DHCPPlugin extends Plugin {
   _restartService() {
     if (!_restartTask) {
       _restartTask = setTimeout(() => {
-        exec("sudo systemctl stop firerouter_dhcp; sudo systemctl start firerouter_dhcp");
+        exec("sudo systemctl stop firerouter_dhcp; sudo systemctl start firerouter_dhcp").catch((err) => {
+          this.log.warn("Failed to restart firerouter_dhcp", err.message);
+        });
         _restartTask = null;
-      }, 10000);
+      }, 5000);
     }
   }
 
