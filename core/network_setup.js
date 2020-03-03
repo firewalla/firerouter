@@ -1,3 +1,4 @@
+
 /*    Copyright 2019 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
@@ -40,37 +41,14 @@ class NetworkSetup {
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
-    // flush iptables
-    await exec(`sudo iptables -w -t nat -N FR_PREROUTING || true`);
-    await exec(`sudo iptables -w -t nat -N FR_POSTROUTING || true`);
-    await exec(`sudo iptables -w -t nat -F FR_PREROUTING || true`);
-    await exec(`sudo iptables -w -t nat -F FR_POSTROUTING || true`);
-    await exec(util.wrapIptables(`sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING`));
-    await exec(util.wrapIptables(`sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING`));
-    // reset ip rules
-    await routing.flushPolicyRoutingRules();
-    await routing.createPolicyRoutingRule("all", null, "local", 0); 
-    await routing.createPolicyRoutingRule("all", null, "main", 32766);
-    await routing.createPolicyRoutingRule("all", null, "default", 32767);
-    await routing.createPolicyRoutingRule("all", null, "local", 0, null, 6); 
-    await routing.createPolicyRoutingRule("all", null, "main", 32766, null, 6);
-    await routing.createPolicyRoutingRule("all", null, "default", 32767, null, 6);
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_DEFAULT);
     await routing.createCustomizedRoutingTable(routing.RT_WAN_ROUTABLE);
     await routing.createCustomizedRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.createCustomizedRoutingTable(routing.RT_STATIC);
-    await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
-    await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
-    await routing.flushRoutingTable(routing.RT_WAN_ROUTABLE);
-    await routing.flushRoutingTable(routing.RT_LAN_ROUTABLE);
-    await routing.flushRoutingTable(routing.RT_STATIC);
-    // create base policy routing rules
-    await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000);
-    await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001);
-    await routing.createPolicyRoutingRule("all", null, routing.RT_GLOBAL_LOCAL, 3000, null, 6);
-    await routing.createPolicyRoutingRule("all", null, routing.RT_STATIC, 4001, null, 6);
+    // prepare network environment
+    await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
   }
 
   async setup(config, dryRun = false) {

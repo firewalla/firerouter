@@ -75,21 +75,20 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`, 6);
-      } else {
-        // considered as LAN interface, remove from "routable"
-        if (this.networkConfig.ipv4) {
-          const addr = new Address4(this.networkConfig.ipv4);
-          const networkAddr = addr.startAddress();
-          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
-          if (this.networkConfig.isolated !== true) {
-            // routable to/from other routable lans
-            await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
-          }
-        }
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
       }
+      // remove from lan_roubable anyway
+      if (this.networkConfig.ipv4) {
+        const addr = new Address4(this.networkConfig.ipv4);
+        const networkAddr = addr.startAddress();
+        const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+        await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => { });
+        if (this.networkConfig.isolated !== true) {
+          // routable to/from other routable lans
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+        }
+      }
+      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => { });
     }
   }
 
@@ -222,7 +221,8 @@ class InterfaceBasePlugin extends Plugin {
       // considered as WAN interface, accessbile to "routable"
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
-    } else {
+    }
+    if (this.isLAN()) {
       // considered as LAN interface, add to "routable"
       if (this.networkConfig.ipv4) {
         const addr = new Address4(this.networkConfig.ipv4);
