@@ -66,3 +66,10 @@ init_network_config() {
   test $_rc -eq 0 || exit $_rc
   echo "Network connectivity test succeeded"
 }
+
+update_timezone() {
+  FW_TIMEZONE=$(redis-cli hget sys:config timezone)
+  if [[ "x$FW_TIMEZONE" != "x" ]]; then
+    sudo timedatectl set-timezone $FW_TIMEZONE
+  fi
+}
