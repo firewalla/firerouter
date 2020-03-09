@@ -6,6 +6,8 @@ redis-cli del "fireboot:status"
 
 source ${FIREROUTER_HOME}/bin/common
 
+update_timezone
+
 # step 1 - init network config
 init_network_config
 
