@@ -5,6 +5,10 @@ sudo iptables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo iptables -w -t nat -F FR_PREROUTING
 sudo iptables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING
 
+sudo iptables -w -t nat -N FR_UPNP &> /dev/null
+sudo iptables -w -t nat -F FR_UPNP
+sudo iptables -w -t nat -A FR_PREROUTING -j FR_UPNP
+
 sudo iptables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo iptables -w -t nat -F FR_POSTROUTING
 sudo iptables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING
@@ -18,6 +22,10 @@ sudo iptables -w -C FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS -
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
 sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
+
+sudo ip6tables -w -t nat -N FR_UPNP &> /dev/null
+sudo ip6tables -w -t nat -F FR_UPNP
+sudo ip6tables -w -t nat -A FR_PREROUTING -j FR_UPNP
 
 sudo ip6tables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_POSTROUTING

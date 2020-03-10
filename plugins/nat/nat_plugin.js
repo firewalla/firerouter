@@ -17,7 +17,7 @@
 
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
-const util = require('../../util/util');
+const util = require('../../util/util.js');
 const pl = require('../plugin_loader.js');
 
 class NatPlugin extends Plugin {

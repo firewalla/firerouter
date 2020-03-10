@@ -59,6 +59,12 @@
       "config_path": "sshd",
       "category": "sshd",
       "init_seq": 9
+    },
+    {
+      "file_path": "./upnp/upnp_plugin.js",
+      "config_path": "upnp",
+      "category": "upnp",
+      "init_seq": 9
     }
   ],
   "sensors": [
