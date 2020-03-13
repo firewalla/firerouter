@@ -22,7 +22,7 @@ init_network_config() {
     _rc=1
   fi
 
-  test $_rc -eq  0 || exit $_rc
+  test $_rc -eq  0 || return $_rc
   echo "FireRouter API is available"
 
   redis-cli set "fireboot:status" "apply_network"
@@ -39,7 +39,7 @@ init_network_config() {
     fi
   fi
 
-  test $_rc -eq  0 || exit $_rc
+  test $_rc -eq  0 || return $_rc
 
   HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
   if [[ $HTTP_STATUS_CODE != "200" ]]; then
@@ -47,7 +47,7 @@ init_network_config() {
     _rc=2
   fi
 
-  test $_rc -eq  0 || exit $_rc
+  test $_rc -eq  0 || return $_rc
 
   echo "Successfully apply last network config"
 
@@ -63,7 +63,7 @@ init_network_config() {
     _rc=0
     break;
   done
-  test $_rc -eq 0 || exit $_rc
+  test $_rc -eq 0 || return $_rc
   echo "Network connectivity test succeeded"
 }
 
