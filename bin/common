@@ -58,7 +58,6 @@ init_network_config() {
   while [[ $retry -gt 0 ]]; do
     sleep 3;
     (( retry-- ))
-    echo $retry
 
     if ! nc -z 1.1.1.1 443; then
         echo "Network is unavailable"
