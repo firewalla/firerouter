@@ -25,7 +25,6 @@ case $reason in
         new_addrs="$new_addrs$addr,"
         for rt_table in $rt_tables; do
           sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table
-          logger "sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table"
         done
       else
         break;
