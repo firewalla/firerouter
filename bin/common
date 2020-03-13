@@ -59,7 +59,7 @@ init_network_config() {
     sleep 3;
     (( retry-- ))
 
-    if ! nc -z 1.1.1.1 443; then
+    if ! nc -w 5 -z 1.1.1.1 443; then
         echo "Network is unavailable"
         _rc=3
         continue
