@@ -54,12 +54,23 @@ init_network_config() {
   redis-cli set "fireboot:status" "test_network"
   echo "Testing network connectivity ..."
 
-  retry=10
+  retry=5
   while [[ $retry -gt 0 ]]; do
-    sleep 5;
+    sleep 3;
     (( retry-- ))
-    nc -z 1.1.1.1 443 || (echo "Network is unavailable" && _rc=3; continue;)
-    nslookup -timeout=10 github.com || (echo "DNS is unavailable" && _rc=4; continue;)
+    echo $retry
+
+    if ! nc -z 1.1.1.1 443; then
+        echo "Network is unavailable"
+        _rc=3
+        continue
+    fi
+
+    if ! nslookup -timeout=5 github.com; then
+         echo "DNS is unavailable"
+         _rc=4
+         continue
+    fi
     _rc=0
     break;
   done
