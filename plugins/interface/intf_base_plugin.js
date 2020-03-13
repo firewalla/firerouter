@@ -234,9 +234,10 @@ class InterfaceBasePlugin extends Plugin {
           await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
         }
       }
-      if (this.networkConfig.isolated !== true)
+      if (this.networkConfig.isolated !== true) {
         await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => {});
         await routing.createPolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => {});
+      }
     }
   }
 
