@@ -9,9 +9,12 @@ source ${FIREROUTER_HOME}/bin/common
 update_timezone
 
 # step 1 - init network config
-if ! init_network_config; then
+rc=0
+init_network_config; rc=$?
+if [[ ! $rc -eq 0 ]]; then
   redis-cli set "fireboot:status" "network_down"
-  exit 1
+  redis-cli set "fireboot:network_down:code" $rc
+  exit $rc
 fi
 
 # step 2 - upgrade firerouter
