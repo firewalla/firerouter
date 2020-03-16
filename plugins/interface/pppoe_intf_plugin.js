@@ -90,7 +90,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
   async interfaceUpDown() {
     if (this.networkConfig.enabled) {
       await exec(`sudo systemctl restart firerouter_pppd@${this.name}`).catch((err) => {
-        this.fatal(`Failed to enable pppd on interface ${this.name}: ${err.message}`);
+        this.log.error(`Failed to enable pppd on interface ${this.name}: ${err.message}`);
       });
     } else {
       await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
