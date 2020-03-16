@@ -40,6 +40,15 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await exec("sudo systemctl daemon-reload");
   }
 
+  async prepareEnvironment() {
+    await super.prepareEnvironment();
+    if (this.networkConfig.enabled) {
+      const txRingBuffer = this.networkConfig.txBuffer || 4096;
+      const rxRingBuffer = this.networkConfig.rxBuffer || 4096;
+      await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
+    }
+  }
+
 }
 
 module.exports = PhyInterfacePlugin;
