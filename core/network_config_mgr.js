@@ -20,6 +20,7 @@ const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getPrimaryDBRedisClient();
 const ns = require('./network_setup.js');
 const exec = require('child-process-promise').exec;
+const {Address4, Address6} = require('ip-address');
 
 class NetworkConfigManager {
   constructor() {
@@ -74,6 +75,29 @@ class NetworkConfigManager {
   }
 
   async validateConfig(config) {
+    if (!config)
+      return ["config is not defined"];
+    if (!config.interface)
+      return ["interface is not defined"];
+    const ifaceIp4PrefixMap = {};
+    for (const ifaceType in config.interface) {
+      const ifaces = config.interface[ifaceType];
+      for (const name in ifaces) {
+        const iface = ifaces[name];
+        if (iface.ipv4) {
+          const addr = new Address4(iface.ipv4);
+          if (!addr.isValid())
+            return [`ipv4 of ${name} is not valid ${iface.ipv4}`];
+          // check ipv4 subnet conflict
+          for (const i in ifaceIp4PrefixMap) {
+            const addr2 = ifaceIp4PrefixMap[i];
+            if (addr.isInSubnet(addr2) || addr2.isInSubnet(addr))
+              return [`ipv4 of ${name} conflicts with ipv4 of ${i}`];
+          }
+          ifaceIp4PrefixMap[name] = addr;
+        }
+      }
+    }
     return [];
   }
 
