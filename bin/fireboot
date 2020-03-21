@@ -1,6 +1,7 @@
 #!/bin/bash
 
 redis-cli del "fireboot:status"
+redis-cli del "fireboot:network_down:code"
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
@@ -9,7 +10,13 @@ source ${FIREROUTER_HOME}/bin/common
 update_timezone
 
 # step 1 - init network config
-init_network_config
+rc=0
+init_network_config; rc=$?
+if [[ ! $rc -eq 0 ]]; then
+  redis-cli set "fireboot:status" "network_down"
+  redis-cli set "fireboot:network_down:code" $rc
+  exit $rc
+fi
 
 # step 2 - upgrade firerouter
 redis-cli set "fireboot:status" "firerouter_check_upgrade"
