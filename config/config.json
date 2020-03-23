@@ -65,6 +65,12 @@
       "config_path": "upnp",
       "category": "upnp",
       "init_seq": 9
+    },
+    {
+      "file_path": "./nat_passthrough/nat_passthrough_plugin.js",
+      "config_path": "nat_passthrough",
+      "category": "nat_passthrough",
+      "init_seq": 9
     }
   ],
   "sensors": [

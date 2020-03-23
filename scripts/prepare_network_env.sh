@@ -13,11 +13,23 @@ sudo iptables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo iptables -w -t nat -F FR_POSTROUTING
 sudo iptables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING
 
+sudo iptables -w -t nat -N FR_PASSTHROUGH &> /dev/null
+sudo iptables -w -t nat -F FR_PASSTHROUGH &> /dev/null
+sudo iptables -w -t nat -A FR_POSTROUTING -j FR_PASSTHROUGH
+
+sudo iptables -w -t nat -N FR_SNAT &> /dev/null
+sudo iptables -w -t nat -F FR_SNAT &> /dev/null
+sudo iptables -w -t nat -A FR_POSTROUTING -j FR_SNAT
+
 sudo iptables -w -N FR_FORWARD &> /dev/null
 sudo iptables -w -F FR_FORWARD
-sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -I FORWARD -j FR_FORWARD
+sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
 # adjust TCP MSS for specific ethernet encapsulation, e.g., PPPoE
-sudo iptables -w -C FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu &>/dev/null || sudo iptables -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+sudo iptables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+# chain for NAT passthrough
+sudo iptables -w -N FR_PASSTHROUGH &> /dev/null
+sudo iptables -w -F FR_PASSTHROUGH
+sudo iptables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
@@ -31,11 +43,23 @@ sudo ip6tables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_POSTROUTING
 sudo ip6tables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo ip6tables -w -t nat -I POSTROUTING -j FR_POSTROUTING
 
+sudo ip6tables -w -t nat -N FR_PASSTHROUGH &> /dev/null
+sudo ip6tables -w -t nat -F FR_PASSTHROUGH &> /dev/null
+sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_PASSTHROUGH
+
+sudo ip6tables -w -t nat -N FR_SNAT &> /dev/null
+sudo ip6tables -w -t nat -F FR_SNAT &> /dev/null
+sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_SNAT
+
 sudo ip6tables -w -N FR_FORWARD &> /dev/null
 sudo ip6tables -w -F FR_FORWARD
 sudo ip6tables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo ip6tables -w -I FORWARD -j FR_FORWARD
 # adjust TCP MSS for specific ethernet encapsulation, e.g., PPPoE
-sudo ip6tables -w -C FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu &>/dev/null || sudo ip6tables -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+sudo ip6tables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+# chain for NAT passthrough
+sudo ip6tables -w -N FR_PASSTHROUGH &> /dev/null
+sudo ip6tables -w -F FR_PASSTHROUGH
+sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
 
 # ------ flush routing tables
