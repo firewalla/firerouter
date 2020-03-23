@@ -31,15 +31,20 @@ class NATPassthroughPlugin extends Plugin {
         await exec("sudo rmmod nf_conntrack_pptp").catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
+        await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
+        await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
         break;
       }
       case "l2tp": {
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p udp -m udp --dport 1701 -j DROP")}`).catch((err) => {});
+        await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p udp -m udp --dport 1701 -j DROP")}`).catch((err) => {});
         break;
       }
       case "ipsec": {
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p udp -m udp --dport 4500 -j DROP")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p udp -m udp --dport 500 -j DROP")}`).catch((err) => {});
+        await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p udp -m udp --dport 4500 -j DROP")}`).catch((err) => {});
+        await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p udp -m udp --dport 500 -j DROP")}`).catch((err) => {});
         break;
       }
       case "h323": {
@@ -64,19 +69,25 @@ class NATPassthroughPlugin extends Plugin {
           await exec("sudo modprobe ip_nat_pptp").catch((err) => {}); // this will load nf_nat_pptp and nf_conntrack_pptp
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
         } else {
           await exec("sudo rmmod nf_nat_pptp").catch((err) => {});
           await exec("sudo rmmod nf_conntrack_pptp").catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
         }
         break;
       }
       case "l2tp": {
         if (enabled) {
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p udp -m udp --dport 1701 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p udp -m udp --dport 1701 -j DROP")}`).catch((err) => {});
         } else {
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p udp -m udp --dport 1701 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p udp -m udp --dport 1701 -j DROP")}`).catch((err) => {});
         }
         break;
       }
@@ -84,9 +95,13 @@ class NATPassthroughPlugin extends Plugin {
         if (enabled) {
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p udp -m udp --dport 4500 -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p udp -m udp --dport 500 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p udp -m udp --dport 4500 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p udp -m udp --dport 500 -j DROP")}`).catch((err) => {});
         } else {
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p udp -m udp --dport 4500 -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p udp -m udp --dport 500 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p udp -m udp --dport 4500 -j DROP")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p udp -m udp --dport 500 -j DROP")}`).catch((err) => {});
         }
         break;
       }
