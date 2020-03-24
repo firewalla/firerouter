@@ -40,7 +40,7 @@ class NatPlugin extends Plugin {
     if (iifPlugin) {
       const state = await iifPlugin.state();
       if (state && state.ip4) {
-        await exec(util.wrapIptables(`sudo iptables -t nat -D FR_POSTROUTING -s ${state.ip4} -o ${oif} -j MASQUERADE`));
+        await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_SNAT -s ${state.ip4} -o ${oif} -j MASQUERADE`));
       } else {
         this.log.error("Failed to get ip4 of incoming interface " + iif);
       }
@@ -66,7 +66,7 @@ class NatPlugin extends Plugin {
       this.subscribeChangeFrom(iifPlugin);
       const state = await iifPlugin.state();
       if (state && state.ip4) {
-        await exec(util.wrapIptables(`sudo iptables -t nat -A FR_POSTROUTING -s ${state.ip4} -o ${oif} -j MASQUERADE`));
+        await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_SNAT -s ${state.ip4} -o ${oif} -j MASQUERADE`));
       } else {
         this.fatal("Failed to get ip4 of incoming interface " + iif);
       }
