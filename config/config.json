@@ -55,6 +55,12 @@
       "init_seq": 8
     },
     {
+      "file_path": "./dhcp/dhcp6_plugin.js",
+      "config_path": "dhcp6",
+      "category": "dhcp6",
+      "init_seq": 8
+    },
+    {
       "file_path": "./sshd/sshd_plugin.js",
       "config_path": "sshd",
       "category": "sshd",
