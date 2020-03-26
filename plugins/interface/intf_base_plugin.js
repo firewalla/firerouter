@@ -45,6 +45,9 @@ class InterfaceBasePlugin extends Plugin {
     // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
     await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
     await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+    // regenerate ipv6 link local address based on EUI64
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.disable_ipv6=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.disable_ipv6=0`).catch((err) => {});
   }
 
   async flush() {
@@ -85,6 +88,15 @@ class InterfaceBasePlugin extends Plugin {
         if (this.networkConfig.isolated !== true) {
           // routable to/from other routable lans
           await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+        }
+      }
+      if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
+        const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
+        for (const addr6 of ipv6Addrs) {
+          const addr = new Address6(addr6);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
         }
       }
       await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
@@ -181,7 +193,7 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.ipv4) {
         await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
           this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
-        })
+        });
       }
       if (this.networkConfig.nameservers) {
         const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
@@ -202,7 +214,19 @@ class InterfaceBasePlugin extends Plugin {
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interfacer ${this.name}: ${err.message}`);
       });
-      // do not process dns nameservers from DHCPv6 for now
+      // TODO: do not support dns nameservers from DHCPv6 currently
+    } else {
+      if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
+        // add link local route to interface local routing table
+        await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+        const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
+        for (const addr6 of ipv6Addrs) {
+          await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
+            this.fatal(`Failed to set ipv6 addr ${addr6} for interface ${this.name}: ${err.message}`);
+          });
+        }
+      }
+      // TODO: do not support static dns nameservers for IPv6 currently
     }
   }
 
@@ -214,16 +238,28 @@ class InterfaceBasePlugin extends Plugin {
       const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
       await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`).catch((err) => {});
     }
+    if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
+      const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
+      for (const addr6 of ipv6Addrs) {
+        const addr = new Address6(addr6);
+        const networkAddr = addr.startAddress();
+        const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+        await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+      }
+    }
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
     }
+    if (this.networkConfig.gateway6) {
+      await routing.addRouteToTable("default", this.networkConfig.gateway6, this.name, `${this.name}_default`, null, 6).catch((err) => {});
+    }
     if (this.isWAN()) {
-      // considered as WAN interface, accessbile to "routable"
+      // considered as WAN interface, accessbile to "wan_routable"
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
       await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
     }
     if (this.isLAN()) {
-      // considered as LAN interface, add to "routable"
+      // considered as LAN interface, add to "lan_routable" and "wan_routable"
       if (this.networkConfig.ipv4) {
         const addr = new Address4(this.networkConfig.ipv4);
         const networkAddr = addr.startAddress();
@@ -232,6 +268,15 @@ class InterfaceBasePlugin extends Plugin {
         if (this.networkConfig.isolated !== true) {
           // routable to/from other routable lans
           await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+        }
+      }
+      if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
+        const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
+        for (const addr6 of ipv6Addrs) {
+          const addr = new Address6(addr6);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
         }
       }
       if (this.networkConfig.isolated !== true) {
