@@ -53,6 +53,7 @@ class DHCP6Plugin extends DHCPPlugin {
         // simply use slaac to configure client IPv6 address
         content.push(`dhcp-range=tag:${iface},${extraTags}::,constructor:${this.name},slaac,${leaseTime}`);
         content.push('enable-ra');
+        content.push(`ra-param=${iface},15,3600`);
         break;
       }
       case "stateful": {
@@ -62,6 +63,7 @@ class DHCP6Plugin extends DHCPPlugin {
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be at least 64`);
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
+        content.push(`ra-param=${iface},15,3600`);
         break;
       }
       default:
