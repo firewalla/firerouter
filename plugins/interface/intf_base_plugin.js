@@ -82,18 +82,22 @@ class InterfaceBasePlugin extends Plugin {
       // remove from lan_roubable anyway
       if (this.networkConfig.ipv4) {
         const addr = new Address4(this.networkConfig.ipv4);
-        const networkAddr = addr.startAddress();
-        const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-        await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => { });
-        if (this.networkConfig.isolated !== true) {
-          // routable to/from other routable lans
-          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+        if (addr.isValid()) {
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => { });
+          if (this.networkConfig.isolated !== true) {
+            // routable to/from other routable lans
+            await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+          }
         }
       }
       if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           const addr = new Address6(addr6);
+          if (!addr.isValid())
+            continue;
           const networkAddr = addr.startAddress();
           const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
           await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
@@ -234,6 +238,8 @@ class InterfaceBasePlugin extends Plugin {
     // if dhcp/dhcp6 is set, dhclient/dhcpcd6 should take care of local and default routing table
     if (this.networkConfig.ipv4) {
       const addr = new Address4(this.networkConfig.ipv4);
+      if (!addr.isValid())
+        this.fatal(`Invalid ipv4 address ${this.networkConfig.ipv4} for ${this.name}`);
       const networkAddr = addr.startAddress();
       const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
       await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`).catch((err) => {});
@@ -242,6 +248,8 @@ class InterfaceBasePlugin extends Plugin {
       const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
       for (const addr6 of ipv6Addrs) {
         const addr = new Address6(addr6);
+        if (!addr.isValid())
+          this.fatal(`Invalid ipv6 address ${addr6} for ${this.name}`);
         const networkAddr = addr.startAddress();
         const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
         await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
@@ -262,6 +270,8 @@ class InterfaceBasePlugin extends Plugin {
       // considered as LAN interface, add to "lan_routable" and "wan_routable"
       if (this.networkConfig.ipv4) {
         const addr = new Address4(this.networkConfig.ipv4);
+        if (!addr.isValid())
+          this.fatal(`Invalid ipv4 address ${this.networkConfig.ipv4} for ${this.name}`);
         const networkAddr = addr.startAddress();
         const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
         await routing.addRouteToTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
@@ -274,6 +284,8 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           const addr = new Address6(addr6);
+          if (!addr.isValid())
+            this.fatal(`Invalid ipv6 address ${addr6} for ${this.name}`);
           const networkAddr = addr.startAddress();
           const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
           await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
