@@ -13,8 +13,6 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-'use strict';
-
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
@@ -24,26 +22,25 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
-
-class SSHDPlugin extends Plugin {
+class MDNSReflectorPlugin extends Plugin {
 
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/sshd`);
+    await exec(`mkdir -p ${r.getUserConfigFolder()}/mdns_reflector`);
   }
 
   async flush() {
-    this.log.info("Flushing SSHD", this.name);
+    this.log.info("Flushing MDNSReflector", this.name);
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
-    await this.reloadSSHD().catch((err) => {});
+    await this.reloadMDNSReflector().catch((err) => {});
   }
 
-  async reloadSSHD() {
-    await exec(`${__dirname}/reload_sshd.sh`);
+  async reloadMDNSReflector() {
+    await exec(`${__dirname}/reload_mdns_reflector.sh`);
   }
 
   _getConfFilePath() {
-    return `${r.getUserConfigFolder()}/sshd/sshd_config.${this.name}`;
+    return `${r.getUserConfigFolder()}/mdns_reflector/mdns_reflector.${this.name}`;
   }
 
   async generateConfFile() {
@@ -52,13 +49,8 @@ class SSHDPlugin extends Plugin {
     const ifacePlugin = pl.getPluginInstance("interface", iface);
     if (ifacePlugin) {
       this.subscribeChangeFrom(ifacePlugin);
-      const state = await ifacePlugin.state();
-      if (state && state.ip4) {
-        const ipv4Addr = state.ip4.split("/")[0];
-        await fs.writeFileAsync(confPath, `ListenAddress ${ipv4Addr}`, {encoding: 'utf8'});
-      } else {
-        this.log.error("Failed to get ip4 of interface " + iface);
-      }
+      // create a dummy file which indicates mDNS reflector is enabled on this interface
+      await fs.writeFileAsync(confPath, iface, {encoding: 'utf8'});
     } else {
       this.log.error("Cannot find interface plugin " + iface);
     }
@@ -67,11 +59,11 @@ class SSHDPlugin extends Plugin {
   async apply() {
     if (this.networkConfig.enabled) {
       await this.generateConfFile();
-      await this.reloadSSHD();
+      await this.reloadMDNSReflector();
     } else {
       const confPath = this._getConfFilePath();
       await fs.unlinkAsync(confPath).catch((err) => {});
-      await this.reloadSSHD();
+      await this.reloadMDNSReflector();
     }
   }
 
@@ -89,4 +81,4 @@ class SSHDPlugin extends Plugin {
   }
 }
 
-module.exports = SSHDPlugin;
+module.exports = MDNSReflectorPlugin;
