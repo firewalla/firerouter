@@ -77,6 +77,12 @@
       "config_path": "nat_passthrough",
       "category": "nat_passthrough",
       "init_seq": 9
+    },
+    {
+      "file_path": "./mdns_reflector/mdns_reflector_plugin.js",
+      "config_path": "mdns_reflector",
+      "category": "mdns_reflector",
+      "init_seq": 9
     }
   ],
   "sensors": [
