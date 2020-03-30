@@ -61,6 +61,7 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "static": {
+              await routing.flushRoutingTable(`${this.name}_static`).catch((err) => {});
               break;
             }
             default: {
@@ -235,6 +236,22 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "static": {
+              const routes = settings.routes || [];
+              for (const route of routes) {
+                const {dest, gw, dev, af} = route;
+                if (!dest && !dev) {
+                  this.log.error(`dest and dev should be specified for global static route`);
+                  continue;
+                }
+                let iface = dev;
+                if (iface.includes(":")) {
+                  // virtual interface, need to strip suffix
+                  iface = dev.substr(0, dev.indexOf(":"));
+                }
+                await routing.addRouteToTable(dest, gw, iface, routing.RT_STATIC, null, af).catch((err) => {
+                  this.log.error(`Failed to add static global route`, route, err.message);
+                });
+              }
               break;
             }
             default:
@@ -268,6 +285,22 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "static": {
+              const routes = settings.routes || [];
+              for (const route of routes) {
+                const {dest, gw, dev, af} = route;
+                if (!dest && !dev) {
+                  this.log.error(`dest and dev should be specified for static route of ${this.name}`);
+                  continue;
+                }
+                let iface = dev;
+                if (iface.includes(":")) {
+                  // virtual interface, need to strip suffix
+                  iface = dev.substr(0, dev.indexOf(":"));
+                }
+                await routing.addRouteToTable(dest, gw, iface, `${this.name}_static`, null, af).catch((err) => {
+                  this.log.error(`Failed to add static route for ${this.name}`, route, err.message);
+                });
+              }
               break;
             }
             default:
