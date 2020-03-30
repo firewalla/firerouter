@@ -23,17 +23,13 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
   async flush() {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {
-        this.log.error(`Failed to bring down interface ${this.name}`, err.message);
-      });
-      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {
-        this.log.error(`Failed to delete bridge ${this.name}`, err.message);
-      });
+      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
+      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {});
     }
   }
 
   async createInterface() {
-    for(const intf of this.networkConfig.intf) {
+    for (const intf of this.networkConfig.intf) {
       await exec(`sudo ip addr flush dev ${intf}`);
     }
 
