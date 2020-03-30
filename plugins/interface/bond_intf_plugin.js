@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2020 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -18,13 +18,17 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 
-class BridgeInterfacePlugin extends InterfaceBasePlugin {
+class BondInterfacePlugin extends InterfaceBasePlugin {
+
+  static async preparePlugin() {
+    await exec("sudo modprobe bonding");
+  }
 
   async flush() {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
-      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {});
+      await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
     }
   }
 
@@ -33,16 +37,12 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       await exec(`sudo ip addr flush dev ${intf}`);
     }
 
-    await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
-      this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
-    });
-    await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
-      this.log.error(`Failed to enable stp on bridge interface ${this.name}`, err.message);
-    })
-    await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
-      this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
-    });
+    // supported mode list: balance-rr, active-backup, balance-xor, broadcast, 802.3ad, balance-tlb, balance-alb
+    // default to balance-rr
+    const mode = this.networkConfig.mode || "balance-rr";
+    await exec(`sudo ip link add ${this.name} type bond mode ${mode}`);
+    await exec(`sudo ifenslave ${this.name} ${this.networkConfig.intf.join(" ")}`);
   }
 }
 
-module.exports = BridgeInterfacePlugin;
+module.exports = BondInterfacePlugin;

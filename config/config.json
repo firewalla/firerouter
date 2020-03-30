@@ -25,6 +25,12 @@
       "init_seq": 4
     },
     {
+      "file_path": "./interface/bond_intf_plugin.js",
+      "config_path": "interface.bond",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
       "file_path": "./interface/openvpn_intf_plugin.js",
       "config_path": "interface.openvpn",
       "category": "interface",
