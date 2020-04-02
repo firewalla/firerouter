@@ -1,5 +1,8 @@
 #!/bin/bash
 
+metric=${ifmetric:-'1024'}
+reject_route_metric=$((metric - 1))
+
 if [ -z "$rt_tables" ]; then
     rt_tables="main"
 fi
@@ -24,6 +27,9 @@ case $reason in
       new_prefix_val="$new_prefix/$new_prefix_length"
       if [ $new_prefix_val != "/" ]; then
         pds="$pds$new_prefix_val\n"
+        for default_rt_table in $default_rt_tables; do
+          sudo ip -6 r add unreachable $new_prefix_val dev lo metric $reject_route_metric table $default_rt_table
+        done
       fi
       pd_id=$((pd_id + 1))
     done
@@ -48,6 +54,9 @@ case $reason in
       fi
       if [ "$new_prefix_val" != "/" ]; then
         pds="$pds$new_prefix_val\n"
+        for default_rt_table in $default_rt_tables; do
+          sudo ip -6 r add unreachable $new_prefix_val dev lo metric $reject_route_metric table $default_rt_table
+        done
       fi
       pd_id=$((pd_id + 1))
     done

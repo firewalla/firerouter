@@ -45,6 +45,19 @@ case $reason in
     ;;
   BOUND6|REBOOT6|REBIND6)
     ip_changed="1"
+    addr_id=1
+    while [ $addr_id -lt 10 ]; do
+      old_var_name="old_dhcp6_ia_na1_ia_addr$addr_id"
+      eval "old_addr=\$$old_var_name"
+      new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
+      eval "new_addr=\$$new_var_name"
+      if [ -n "$new_addr" ]; then
+        for rt_table in $rt_tables; do
+          sudo ip -6 r add $new_addr dev $interface metric $metric mtu $mtu table $rt_table
+        done
+      fi
+      addr_id=$((addr_id + 1))
+    done
     ;;
   RENEW6)
     # compare old address with new address
@@ -56,7 +69,6 @@ case $reason in
       eval "new_addr=\$$new_var_name"
       if [ "$old_addr" != "$new_addr" ]; then
         ip_changed="1"
-        break;
       fi
       if [ -n "$new_addr" ]; then
         for rt_table in $rt_tables; do
