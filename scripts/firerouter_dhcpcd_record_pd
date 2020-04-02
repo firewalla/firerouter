@@ -1,0 +1,60 @@
+#!/bin/bash
+
+if [ -z "$rt_tables" ]; then
+    rt_tables="main"
+fi
+
+if [ -z "$default_rt_tables" ]; then
+    default_rt_tables="main"
+fi
+
+pd_changed=""
+
+case $reason in
+
+  BOUND6|REBOOT6|REBIND6)
+    pd_changed="1"
+    pd_id=1
+    pds=""
+    while [ $pd_id -lt 10 ]; do
+      new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
+      eval "new_prefix=\$$new_prefix_name"
+      new_prefix_length_name="new_dhcp6_ia_pd1_prefix${pd_id}_length"
+      eval "new_prefix_length=\$$new_prefix_length_name"
+      new_prefix_val="$new_prefix/$new_prefix_length"
+      if [ $new_prefix_val != "/" ]; then
+        pds="$pds$new_prefix_val\n"
+      fi
+      pd_id=$((pd_id + 1))
+    done
+    echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
+    ;;
+  RENEW6)
+    pd_id=1
+    pds=""
+    while [ $pd_id -lt 10 ]; do
+      old_prefix_name="old_dhcp6_ia_pd1_prefix${pd_id}"
+      eval "old_prefix=\$$old_prefix_name"
+      old_prefix_length_name="old_dhcp6_ia_pd1_prefix${pd_id}_length"
+      eval "old_prefix_length=\$$old_prefix_length_name"
+      old_prefix_val="$old_prefix/$old_prefix_length"
+      new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
+      eval "new_prefix=\$$new_prefix_name"
+      new_prefix_length_name="new_dhcp6_ia_pd1_prefix${pd_id}_length"
+      eval "new_prefix_length=\$$new_prefix_length_name"
+      new_prefix_val="$new_prefix/$new_prefix_length"
+      if [ "$old_prefix_val" != "$new_prefix_val" ]; then
+        pd_changed="1"
+      fi
+      if [ "$new_prefix_val" != "/" ]; then
+        pds="$pds$new_prefix_val\n"
+      fi
+      pd_id=$((pd_id + 1))
+    done
+    echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
+    ;;
+esac
+
+if [ -n "$pd_changed" ]; then
+  redis-cli -n 1 publish "dhcpcd6.pd_change" "$interface"
+fi

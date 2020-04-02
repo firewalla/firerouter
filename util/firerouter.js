@@ -150,6 +150,14 @@ function getInterfaceResolvConfPath(iface) {
   return `${getRuntimeFolder()}/${iface}.resolv.conf`;
 }
 
+function getInterfaceDelegatedPrefixPath(iface) {
+  return `${getRuntimeFolder()}/dhcpcd/${iface}/delegated_prefix`;
+}
+
+function getInterfacePDCacheDirectory(iface) {
+  return `${getRuntimeFolder()}/dhcpcd/${iface}`;
+}
+
 function getVersion() {
   if(!version) {
     let cmd = "git describe --tags";
@@ -228,5 +236,7 @@ module.exports = {
   getFireRouterHome:getFireRouterHome,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
+  getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
+  getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
   switchBranch: switchBranch
 };
