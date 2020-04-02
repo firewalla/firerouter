@@ -38,6 +38,8 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    // copy dhcpcd.conf
+    await exec(`sudo cp ${r.getFireRouterHome()}/etc/dhcpcd.conf /etc/dhcpcd.conf`);
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
