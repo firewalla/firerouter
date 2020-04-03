@@ -24,11 +24,29 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+const serverKeyDir = `${r.getUserConfigFolder()}/sshd/keys`;
+const keyAlgorithms = ['dsa', 'ecdsa', 'ed25519', 'rsa'];
+
 
 class SSHDPlugin extends Plugin {
 
+  static getKeyFilePath(alg) {
+    return `${serverKeyDir}/ssh_host_${alg}_key`;
+  }
+
   static async preparePlugin() {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/sshd`);
+    await SSHDPlugin.ensureGenerateHostKeys();
+  }
+
+  static async ensureGenerateHostKeys() {
+    await exec(`mkdir -p ${serverKeyDir}`);
+    for (const alg of keyAlgorithms) {
+      const keyFilePath = SSHDPlugin.getKeyFilePath(alg);
+      await fs.accessAsync(keyFilePath, fs.constants.F_OK).catch((err) => {
+        return exec(`sudo ssh-keygen -f ${keyFilePath} -N '' -q -t ${alg}`).catch((err) => {});
+      });
+    }
   }
 
   async flush() {
