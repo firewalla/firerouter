@@ -36,7 +36,13 @@ class MDNSReflectorPlugin extends Plugin {
   }
 
   async reloadMDNSReflector() {
-    await exec(`${__dirname}/reload_mdns_reflector.sh`);
+    if (this.reloadTask)
+      clearTimeout(this.reloadTask);
+    this.reloadTask = setTimeout(async () => {
+      await exec(`${__dirname}/reload_mdns_reflector.sh`).catch((err) => {
+        this.log.error(`Failed to reload mdns reflector for ${this.name}`, err.message);
+      });
+    }, 5000);
   }
 
   _getConfFilePath() {
