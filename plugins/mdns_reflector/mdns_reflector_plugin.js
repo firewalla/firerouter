@@ -21,6 +21,7 @@ const event = require('../../core/event.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+let _reloadTask = null;
 
 class MDNSReflectorPlugin extends Plugin {
 
@@ -36,13 +37,13 @@ class MDNSReflectorPlugin extends Plugin {
   }
 
   async reloadMDNSReflector() {
-    if (this.reloadTask)
-      clearTimeout(this.reloadTask);
-    this.reloadTask = setTimeout(async () => {
+    if (_reloadTask)
+      clearTimeout(_reloadTask);
+    _reloadTask = setTimeout(async () => {
       await exec(`${__dirname}/reload_mdns_reflector.sh`).catch((err) => {
         this.log.error(`Failed to reload mdns reflector for ${this.name}`, err.message);
       });
-    }, 5000);
+    }, 3000);
   }
 
   _getConfFilePath() {
