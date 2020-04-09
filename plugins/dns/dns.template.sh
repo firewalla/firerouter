@@ -1,8 +1,26 @@
 #!/bin/bash
 
+cd %FIREROUTER_HOME%
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$branch" == "master" ]]; then
+  ulimit -c unlimited
+else
+  ulimit -c 0
+fi
+
+PIDS=""
+
 for CONF_FILE in %FIREROUTER_HOME%/etc/dnsmasq.dns.*.conf; do
-  [[ -f "$CONF_FILE" ]] && %DNSMASQ_BINARY% -k --clear-on-reload -u pi -C $CONF_FILE &
+  if [[ -e $CONF_FILE ]]; then
+    %DNSMASQ_BINARY% -k --clear-on-reload -u pi -C $CONF_FILE &
+    PIDS="$PIDS $!"
+  fi
 done;
 
-trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
-for job in `jobs -p`; do wait $job; echo "$job exited"; done
+if [[ -n $PIDS ]]; then
+  wait -n
+  # considered as failure if any child process exits
+  exit 1
+else
+  exit 0
+fi

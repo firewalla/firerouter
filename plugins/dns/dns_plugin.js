@@ -49,8 +49,8 @@ class DNSPlugin extends Plugin {
 
   static async installSystemService() {
     let content = await fs.readFileAsync(dnsServiceFileTemplate, {encoding: 'utf8'});
-    content = content.replace("%WORKING_DIRECTORY%", r.getFireRouterHome());
-    content = content.replace("%DNS_DIRECTORY%", r.getTempFolder());
+    content = content.replace(/%WORKING_DIRECTORY%/g, r.getFireRouterHome());
+    content = content.replace(/%DNS_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_dns.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
@@ -59,8 +59,8 @@ class DNSPlugin extends Plugin {
 
   static async installDNSScript() {
     let content = await fs.readFileAsync(dnsScriptTemplate, {encoding: 'utf8'});
-    content = content.replace("%FIREROUTER_HOME%", r.getFireRouterHome());
-    content = content.replace("%DNSMASQ_BINARY%", r.getFireRouterHome() + "/bin/dnsmasq");    
+    content = content.replace(/%FIREROUTER_HOME%/g, r.getFireRouterHome());
+    content = content.replace(/%DNSMASQ_BINARY%/g, r.getFireRouterHome() + "/bin/dnsmasq");
     const targetFile = r.getTempFolder() + "/dns.sh";
     await fs.writeFileAsync(targetFile, content);
   }
