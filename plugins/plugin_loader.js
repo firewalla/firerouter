@@ -90,17 +90,12 @@ function _isConfigEqual(c1, c2) {
   const c1Copy = JSON.parse(JSON.stringify(c1));
   const c2Copy = JSON.parse(JSON.stringify(c2));
 
-  if (c1Copy.meta)
-    delete c1Copy["meta"];
-  if (c2Copy.meta)
-    delete c2Copy["meta"];
+  // ignore name change
+  if (c1Copy.meta && c1Copy.meta.name)
+    delete c1Copy.meta["name"];
+  if (c2Copy.meta && c2Copy.meta.name)
+    delete c2Copy.meta["name"];
 
-  // considered as changed if uuid is changed
-  if (c1.meta && c1.meta.uuid)
-    c1Copy.meta = {uuid: c1.meta.uuid};
-  if (c2.meta && c2.meta.uuid)
-    c2Copy.meta = {uuid: c2.meta.uuid};
-  
   return _.isEqual(c1Copy, c2Copy);
 }
 
