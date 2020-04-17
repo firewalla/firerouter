@@ -208,6 +208,10 @@ class DNSPlugin extends Plugin {
       if (!this._intfUuid)
         this.fatal(`Cannot find interface uuid for ${this.name}`);
       this.subscribeChangeFrom(intfPlugin);
+      if (!intfPlugin.networkConfig.enabled) {
+        this.log.warn(`Interface ${this.name} is not enabled`);
+        return;
+      }
       await this.prepareEnvironment();
       await this.writeDNSConfFile();
       this._restartService();
