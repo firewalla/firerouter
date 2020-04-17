@@ -36,7 +36,9 @@ class IPChangeSensor extends Sensor {
         }
         case "dhcpcd6.pd_change":
           eventType = event.EVENT_PD_CHANGE;
+          break;
         default:
+          return;
       }
       const iface = message;
       const intfPlugin = pl.getPluginInstance("interface", iface);
