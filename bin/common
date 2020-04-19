@@ -54,7 +54,7 @@ init_network_config() {
   redis-cli set "fireboot:status" "test_network"
   echo "Testing network connectivity ..."
 
-  retry=5
+  retry=10
   while [[ $retry -gt 0 ]]; do
     sleep 3;
     (( retry-- ))
@@ -82,5 +82,6 @@ update_timezone() {
   if [[ "x$FW_TIMEZONE" != "x" ]]; then
     sudo timedatectl set-timezone $FW_TIMEZONE
     sudo systemctl restart cron.service # this is to ensure cron jobs are set to the right timezone
+    sudo systemctl restart rsyslog
   fi
 }
