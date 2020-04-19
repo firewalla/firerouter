@@ -7,8 +7,6 @@ redis-cli del "fireboot:network_down:code"
 
 source ${FIREROUTER_HOME}/bin/common
 
-update_timezone
-
 # step 1 - init network config
 rc=0
 init_network_config; rc=$?
@@ -17,6 +15,8 @@ if [[ ! $rc -eq 0 ]]; then
   redis-cli set "fireboot:network_down:code" $rc
   exit $rc
 fi
+
+update_timezone
 
 # step 2 - upgrade firerouter
 redis-cli set "fireboot:status" "firerouter_check_upgrade"
@@ -49,5 +49,7 @@ touch /home/pi/.firewalla/managed_reboot
 sudo systemctl start firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"
+
+update_timezone
 
 exit 0
