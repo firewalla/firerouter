@@ -1,8 +1,9 @@
+
 [Unit]
 Description=FireRouter UPnP Daemon
 After=network.target
 
 [Service]
 Restart=always
-ExecStart=/usr/sbin/miniupnpd -f "/home/pi/.router/config/upnp/%i.conf"
+ExecStart=/usr/sbin/miniupnpd -P "/var/run/miniupnpd.%i.conf" -f "/home/pi/.router/config/upnp/%i.conf"
 RemainAfterExit=true
