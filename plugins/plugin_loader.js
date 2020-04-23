@@ -30,6 +30,7 @@ const AsyncLock = require('async-lock');
 const exec = require('child-process-promise').exec;
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
+const InterfaceBasePlugin = require('./interface/intf_base_plugin.js');
 
 async function initPlugins() {
   if(_.isEmpty(config.plugins)) {
@@ -104,12 +105,18 @@ async function _publishChangeApplied() {
   await exec(`redis-cli publish "firerouter.change_applied" ""`);
 }
 
+async function _publishIfaceChangeApplied() {
+  // publish to redis db used by Firewalla
+  await exec(`redis-cli publish "firerouter.iface_change_applied" ""`);
+}
+
 async function reapply(config, dryRun = false) {
   return new Promise((resolve, reject) => {
     lock.acquire(LOCK_REAPPLY, async function(done) {
       const errors = [];
       let newPluginCategoryMap = {};
       let changeApplied = false;
+      let ifaceChangeApplied = false;
       const reversedPluginConfs = pluginConfs.reverse();
       // if config is not set, simply reapply effective config
       if (config) {
@@ -161,6 +168,8 @@ async function reapply(config, dryRun = false) {
                 log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
                 await instance.flush();
                 changeApplied = true;
+                if (instance instanceof InterfaceBasePlugin)
+                  ifaceChangeApplied = true;
               }
               instance.propagateConfigChanged(true);
               instance.unsubscribeAllChanges();
@@ -185,6 +194,8 @@ async function reapply(config, dryRun = false) {
                 log.info("Flushing old config", pluginConf.category, instance.name);
                 await instance.flush();
                 changeApplied = true;
+                if (instance instanceof InterfaceBasePlugin)
+                  ifaceChangeApplied = true;
               }
               instance.unsubscribeAllChanges();
             }
@@ -214,6 +225,8 @@ async function reapply(config, dryRun = false) {
                 errors.push(err.message || err);
               });
               changeApplied = true;
+              if (instance instanceof InterfaceBasePlugin)
+                  ifaceChangeApplied = true;
             } else {
               log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
             }
@@ -224,6 +237,8 @@ async function reapply(config, dryRun = false) {
       pluginCategoryMap = newPluginCategoryMap;
       if (changeApplied)
         await _publishChangeApplied();
+      if (ifaceChangeApplied)
+        await _publishIfaceChangeApplied();
       done(null, errors);
       return;
     }, function(err, ret) {
