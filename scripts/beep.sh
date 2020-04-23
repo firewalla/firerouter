@@ -8,7 +8,7 @@ fi
 
 test $NUM -gt 10 && exit 0
 
-test $(redis-cli type sys:nobeep) != "none" && exit 0
+test $(redis-cli type sys:nobeep) != "none" && redis-cli del sys:nobeep && exit 0
 
 sudo modprobe pcspkr
 beep -r $NUM
