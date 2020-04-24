@@ -38,7 +38,11 @@ function getFireRouterHome() {
 
 function getBranch() {
   if(_branch == null) {
-    _branch = cp.execSync("git rev-parse --abbrev-ref HEAD", {encoding: 'utf8'}).replace(/\n/g, "")
+    try {
+      _branch = cp.execSync("git rev-parse --abbrev-ref HEAD", {encoding: 'utf8'}).replace(/\n/g, "")
+    } catch (err) {
+      log.error("Failed to get branch name from git", err.message);
+    }
   }
   return _branch
 }
