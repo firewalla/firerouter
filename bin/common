@@ -59,16 +59,19 @@ init_network_config() {
     sleep 3;
     (( retry-- ))
 
-    if ! nc -w 5 -z 1.1.1.1 443; then
-        echo "Network is unavailable"
-        _rc=3
-        continue
-    fi
-
     if ! nslookup -timeout=5 github.com; then
          echo "DNS is unavailable"
          _rc=4
          continue
+    fi
+
+    if ! nc -w 5 -z 1.1.1.1 443; then
+        echo "Unable to reach 1.1.1.1, trying firewalla.encipher.io ..."
+        if ! nc -w 5 -z firewalla.encipher.io 443; then
+          echo "Unable to reach firewalla.encipher.io"
+          _rc=3
+          continue
+        fi
     fi
     _rc=0
     break;
