@@ -60,9 +60,12 @@ init_network_config() {
     (( retry-- ))
 
     if ! nc -w 5 -z 1.1.1.1 443; then
-        echo "Network is unavailable"
-        _rc=3
-        continue
+        echo "Unable to reach 1.1.1.1, trying 8.8.8.8 ..."
+        if ! nc -w 5 -z 8.8.8.8 53; then
+          echo "Unable to reach 8.8.8.8"
+          _rc=3
+          continue
+        fi
     fi
 
     if ! nslookup -timeout=5 github.com; then
@@ -70,6 +73,7 @@ init_network_config() {
          _rc=4
          continue
     fi
+
     _rc=0
     break;
   done

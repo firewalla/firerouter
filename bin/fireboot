@@ -15,6 +15,7 @@ if [[ ! $rc -eq 0 ]]; then
   redis-cli set "fireboot:network_down:code" $rc
   exit $rc
 fi
+redis-cli del "fireboot:network_down:code"
 
 update_timezone
 
