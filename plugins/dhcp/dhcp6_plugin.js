@@ -15,9 +15,7 @@
 
 'use strict';
 
-const Plugin = require('../plugin.js');
-
-const exec = require('child-process-promise').exec;
+const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -77,6 +75,12 @@ class DHCP6Plugin extends DHCPPlugin {
       // virtual interface, need to strip suffix
       iface = this.name.substr(0, this.name.indexOf(":"));
     }
+    const ifacePlugin = pl.getPluginInstance("interface", this.name);
+    if (!ifacePlugin) {
+      this.fatal(`Interface plugin ${this.name} is not found`);
+    }
+    // in case prefix delegation is used, address may be changed dynamically
+    this.subscribeChangeFrom(ifacePlugin);
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, 
       this.networkConfig.prefixLen, this.networkConfig.lease);
     this._restartService();
