@@ -267,7 +267,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
       const pdSize = this.networkConfig.dhcp6.pdSize || 60;
       if (pdSize > 64)
-        this.log.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
+        this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
       content = content.replace(/%PD_SIZE%/g, pdSize);
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
