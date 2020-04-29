@@ -63,7 +63,7 @@ class UPnPPlugin extends Plugin {
       this.fatal(`ipv4 is not defined on internal interface plugin of upnp ${this.name}`);
     this.subscribeChangeFrom(extPlugin);
     this.subscribeChangeFrom(intfPlugin);
-    const natpmpEnabled = (this.networkConfig.enableNatpmp !== true) ? true : false; // default to false
+    const natpmpEnabled = (this.networkConfig.enableNatpmp !== true) ? false : true; // default to false
     const upnpEnabled = (this.networkConfig.enableUpnp !== false); // default to true
     const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
     const internalCidr = ip.cidrSubnet(intfPlugin.networkConfig.ipv4);
