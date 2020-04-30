@@ -31,6 +31,17 @@ sudo iptables -w -N FR_PASSTHROUGH &> /dev/null
 sudo iptables -w -F FR_PASSTHROUGH
 sudo iptables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
+# INPUT chain protection
+sudo iptables -w -N FR_WAN_ACCEPT &> /dev/null
+sudo iptables -w -F FR_WAN_ACCEPT
+sudo iptables -w -C INPUT -j FR_WAN_ACCEPT &>/dev/null || sudo iptables -w -A INPUT -j FR_WAN_ACCEPT
+sudo iptables -w -A FR_WAN_ACCEPT -p tcp -m multiport --dports 22,53,8833,8834,8837 -j ACCEPT
+
+sudo iptables -w -N FR_WAN_DROP &> /dev/null
+sudo iptables -w -F FR_WAN_DROP
+sudo iptables -w -C INPUT -j FR_WAN_DROP &>/dev/null || sudo iptables -w -A INPUT -j FR_WAN_DROP
+
+
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
 sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
@@ -60,6 +71,16 @@ sudo ip6tables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS 
 sudo ip6tables -w -N FR_PASSTHROUGH &> /dev/null
 sudo ip6tables -w -F FR_PASSTHROUGH
 sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
+
+# INPUT chain protection
+sudo ip6tables -w -N FR_WAN_ACCEPT &> /dev/null
+sudo ip6tables -w -F FR_WAN_ACCEPT
+sudo ip6tables -w -C INPUT -j FR_WAN_ACCEPT &>/dev/null || sudo ip6tables -w -A INPUT -j FR_WAN_ACCEPT
+sudo ip6tables -w -A FR_WAN_ACCEPT -p tcp -m multiport --dports 22,53,8833,8834,8835,8837 -j ACCEPT
+
+sudo ip6tables -w -N FR_WAN_DROP &> /dev/null
+sudo ip6tables -w -F FR_WAN_DROP
+sudo ip6tables -w -C INPUT -j FR_WAN_DROP &>/dev/null || sudo ip6tables -w -A INPUT -j FR_WAN_DROP
 
 
 # ------ flush routing tables

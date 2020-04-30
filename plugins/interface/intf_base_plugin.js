@@ -27,6 +27,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
+const util = require('../../util/util.js');
 
 const event = require('../../core/event.js');
 
@@ -82,6 +83,9 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`, 6);
+        // remove default block rule in INPUT chain on WAN interface
+        await exec(util.wrapIptables(`sudo iptables -w -D FR_WAN_DROP -i ${this.name} -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -p tcp -j DROP`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WAN_DROP -i ${this.name} -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -p tcp -j DROP`)).catch((err) => {});
       }
       // remove from lan_roubable anyway
       if (this.networkConfig.ipv4) {
@@ -229,6 +233,13 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6);
+      // add default block rule in INPUT chain on WAN interface
+      await exec(util.wrapIptables(`sudo iptables -w -A FR_WAN_DROP -i ${this.name} -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -p tcp -j DROP`)).catch((err) => {
+        this.log.error(`Failed to add DROP rule for WAN interface ${this.name}`, err.message);
+      });
+      await exec(util.wrapIptables(`sudo ip6tables -w -A FR_WAN_DROP -i ${this.name} -m conntrack --ctstate NEW -m conntrack ! --ctstate DNAT -p tcp -j DROP`)).catch((err) => {
+        this.log.error(`Failed to add DROP rule for WAN interface ${this.name}`, err.message);
+      });
     }
   }
 
