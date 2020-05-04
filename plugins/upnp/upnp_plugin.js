@@ -50,12 +50,12 @@ class UPnPPlugin extends Plugin {
     await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
   }
 
-  async generateConfig(uuid, extIntf, internalNetwork) {
+  async generateConfig(uuid, extIntf, internalIP, internalNetwork) {
     const natpmpEnabled = (this.networkConfig.enableNatpmp !== true) ? false : true; // default to false
     const upnpEnabled = (this.networkConfig.enableUpnp !== false); // default to true
     let content = await fs.readFileAsync(`${__dirname}/miniupnpd.conf.template`, {encoding: 'utf8'});
     content = content.replace(/%EXTERNAL_INTERFACE%/g, extIntf);
-    content = content.replace(/%INTERNAL_INTERFACE%/g, this.name);
+    content = content.replace(/%INTERNAL_INTERFACE%/g, internalIP);
     content = content.replace(/%ENABLE_NATPMP%/g, natpmpEnabled ? "yes" : "no");
     content = content.replace(/%ENABLE_UPNP%/g, upnpEnabled ? "yes" : "no");
     content = content.replace(/%UUID%/g, uuid);
@@ -100,8 +100,9 @@ class UPnPPlugin extends Plugin {
 
     const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
     const internalCidr = ip.cidrSubnet(intState.ip4);
+    const internalIP = intState.ip4.split('/')[0];
     const internalNetwork = `${internalCidr.networkAddress}/${internalCidr.subnetMaskLength}`;
-    await this.generateConfig(uuid, extIntf, internalNetwork);
+    await this.generateConfig(uuid, extIntf, internalIP, internalNetwork);
     await exec(`sudo systemctl restart firerouter_upnpd@${this.name}`);
   }
 
