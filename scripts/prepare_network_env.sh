@@ -61,7 +61,6 @@ sudo ip6tables -w -N FR_PASSTHROUGH &> /dev/null
 sudo ip6tables -w -F FR_PASSTHROUGH
 sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
-
 # ------ flush routing tables
 sudo ip r flush table global_local
 sudo ip r flush table global_default

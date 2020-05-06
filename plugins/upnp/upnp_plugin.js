@@ -45,34 +45,17 @@ class UPnPPlugin extends Plugin {
     await exec(`sudo systemctl stop firerouter_upnpd@${this.name}`).catch((err) => {});
     await fs.unlinkAsync(this._getConfigFilePath()).catch((err) => {});
     await exec(`sudo iptables -w -t nat -F ${this._getNATChain()}`).catch((err) => {});
-    await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
+    if (this._currentExtIp4)
+      await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_UPNP -d ${this._currentExtIp4} -j ${this._getNATChain()}`)).catch((err) => {});
     await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
   }
 
-  async generateConfig() {
-    const extIntf = this.networkConfig.extIntf;
-    if (!extIntf)
-      this.fatal(`extIntf is not defined defined in upnp config of ${this.name}`);
-    const extPlugin = pl.getPluginInstance("interface", extIntf);
-    const intfPlugin = pl.getPluginInstance("interface", this.name);
-    if (!extPlugin)
-      this.fatal(`External interface plugin ${extIntf} is not found on upnp ${this.name}`);
-    if (!intfPlugin)
-      this.fatal(`Internal interface plugin ${intIntf} is not found on upnp ${this.name}`);
-    if (!(intfPlugin.networkConfig && intfPlugin.networkConfig.ipv4))
-      this.fatal(`ipv4 is not defined on internal interface plugin of upnp ${this.name}`);
-    this.subscribeChangeFrom(extPlugin);
-    this.subscribeChangeFrom(intfPlugin);
+  async generateConfig(uuid, extIntf, internalIP, internalNetwork) {
     const natpmpEnabled = (this.networkConfig.enableNatpmp !== true) ? false : true; // default to false
     const upnpEnabled = (this.networkConfig.enableUpnp !== false); // default to true
-    const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
-    const internalCidr = ip.cidrSubnet(intfPlugin.networkConfig.ipv4);
-    const internalNetwork = `${internalCidr.networkAddress}/${internalCidr.subnetMaskLength}`;
-
-    
     let content = await fs.readFileAsync(`${__dirname}/miniupnpd.conf.template`, {encoding: 'utf8'});
     content = content.replace(/%EXTERNAL_INTERFACE%/g, extIntf);
-    content = content.replace(/%INTERNAL_INTERFACE%/g, this.name);
+    content = content.replace(/%INTERNAL_INTERFACE%/g, internalIP);
     content = content.replace(/%ENABLE_NATPMP%/g, natpmpEnabled ? "yes" : "no");
     content = content.replace(/%ENABLE_UPNP%/g, upnpEnabled ? "yes" : "no");
     content = content.replace(/%UUID%/g, uuid);
@@ -81,13 +64,45 @@ class UPnPPlugin extends Plugin {
   }
 
   async apply() {
+    const extIntf = this.networkConfig.extIntf;
+    if (!extIntf)
+      this.fatal(`extIntf is not defined defined in upnp config of ${this.name}`);
+    const extPlugin = pl.getPluginInstance("interface", extIntf);
+    const intfPlugin = pl.getPluginInstance("interface", this.name);
+    if (!extPlugin)
+      this.fatal(`External interface plugin ${extIntf} is not found on upnp ${this.name}`);
+    if (!intfPlugin)
+      this.fatal(`Internal interface plugin ${this.name} is not found on upnp ${this.name}`);
+    this.subscribeChangeFrom(extPlugin);
+    this.subscribeChangeFrom(intfPlugin);
+
+    const intState = await intfPlugin.state();
+    if (!intState.ip4) {
+      this.log.error(`Internal interface ${this.name} IPv4 address is not found`);
+      return;
+    }
+    const extState = await extPlugin.state();
+    if (!extState.ip4) {
+      this.log.error(`External interface ${extIntf} IPv4 address is not found`);
+      return;
+    }
+    const externalIP = extState.ip4.split('/')[0];
+
     // initialize iptables chains
     await exec(`sudo iptables -w -t nat -N ${this._getNATChain()} &> /dev/null`).catch((err) => {});
     await exec(`sudo ip6tables -w -t nat -N ${this._getNATChain()} &> /dev/null`).catch((err) => {});
-    await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
-    await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
+    await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_UPNP -d ${externalIP} -j ${this._getNATChain()}`)).catch((err) => {
+      this.log.error(`Failed to add UPnP chain for ${this.name}, external IP ${externalIP}`);
+    });
+    this._currentExtIp4 = externalIP;
+    // do not add IPv6 support for UPnP
+    // await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
 
-    await this.generateConfig();
+    const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+    const internalCidr = ip.cidrSubnet(intState.ip4);
+    const internalIP = intState.ip4.split('/')[0];
+    const internalNetwork = `${internalCidr.networkAddress}/${internalCidr.subnetMaskLength}`;
+    await this.generateConfig(uuid, extIntf, internalIP, internalNetwork);
     await exec(`sudo systemctl restart firerouter_upnpd@${this.name}`);
   }
 
