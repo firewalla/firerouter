@@ -1,7 +1,7 @@
 # WAN network interface
 ext_ifname=%EXTERNAL_INTERFACE%
 
-listening_ip=%INTERNAL_INTERFACE%
+listening_ip=%LISTENING_IP%
 
 minissdpdsocket=/var/run/minissdpd.%INTERNAL_INTERFACE%.sock
 
