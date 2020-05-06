@@ -55,7 +55,8 @@ class UPnPPlugin extends Plugin {
     const upnpEnabled = (this.networkConfig.enableUpnp !== false); // default to true
     let content = await fs.readFileAsync(`${__dirname}/miniupnpd.conf.template`, {encoding: 'utf8'});
     content = content.replace(/%EXTERNAL_INTERFACE%/g, extIntf);
-    content = content.replace(/%INTERNAL_INTERFACE%/g, internalIP);
+    content = content.replace(/%LISTENING_IP%/g, internalIP);
+    content = content.replace(/%INTERNAL_INTERFACE%/g, this.name);
     content = content.replace(/%ENABLE_NATPMP%/g, natpmpEnabled ? "yes" : "no");
     content = content.replace(/%ENABLE_UPNP%/g, upnpEnabled ? "yes" : "no");
     content = content.replace(/%UUID%/g, uuid);
