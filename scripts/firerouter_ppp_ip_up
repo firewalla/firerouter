@@ -17,4 +17,7 @@ echo "nameserver $DNS2" >> /etc/ppp/$INTF.resolv.conf
 # lossen reverse path filtering settings on pppoe interface
 sudo sysctl -w net.ipv4.conf.$INTF.rp_filter=2
 
+# adjust receive packet steering on pppoe interface
+sudo bash -c "echo 7 > /sys/class/net/${INTF}/queues/rx-0/rps_cpus" || true
+
 redis-cli -n 1 publish "pppoe.ip_change" "$INTF"
