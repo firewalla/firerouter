@@ -38,7 +38,11 @@ function getFireRouterHome() {
 
 function getBranch() {
   if(_branch == null) {
-    _branch = cp.execSync("git rev-parse --abbrev-ref HEAD", {encoding: 'utf8'}).replace(/\n/g, "")
+    try {
+      _branch = cp.execSync("git rev-parse --abbrev-ref HEAD", {encoding: 'utf8'}).replace(/\n/g, "")
+    } catch (err) {
+      log.error("Failed to get branch name from git", err.message);
+    }
   }
   return _branch
 }
@@ -150,6 +154,14 @@ function getInterfaceResolvConfPath(iface) {
   return `${getRuntimeFolder()}/${iface}.resolv.conf`;
 }
 
+function getInterfaceDelegatedPrefixPath(iface) {
+  return `${getRuntimeFolder()}/dhcpcd/${iface}/delegated_prefix`;
+}
+
+function getInterfacePDCacheDirectory(iface) {
+  return `${getRuntimeFolder()}/dhcpcd/${iface}`;
+}
+
 function getVersion() {
   if(!version) {
     let cmd = "git describe --tags";
@@ -228,5 +240,7 @@ module.exports = {
   getFireRouterHome:getFireRouterHome,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
+  getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
+  getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
   switchBranch: switchBranch
 };

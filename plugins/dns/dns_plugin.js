@@ -49,8 +49,8 @@ class DNSPlugin extends Plugin {
 
   static async installSystemService() {
     let content = await fs.readFileAsync(dnsServiceFileTemplate, {encoding: 'utf8'});
-    content = content.replace("%WORKING_DIRECTORY%", r.getFireRouterHome());
-    content = content.replace("%DNS_DIRECTORY%", r.getTempFolder());
+    content = content.replace(/%WORKING_DIRECTORY%/g, r.getFireRouterHome());
+    content = content.replace(/%DNS_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_dns.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
@@ -59,8 +59,8 @@ class DNSPlugin extends Plugin {
 
   static async installDNSScript() {
     let content = await fs.readFileAsync(dnsScriptTemplate, {encoding: 'utf8'});
-    content = content.replace("%FIREROUTER_HOME%", r.getFireRouterHome());
-    content = content.replace("%DNSMASQ_BINARY%", r.getFireRouterHome() + "/bin/dnsmasq");    
+    content = content.replace(/%FIREROUTER_HOME%/g, r.getFireRouterHome());
+    content = content.replace(/%DNSMASQ_BINARY%/g, r.getFireRouterHome() + "/bin/dnsmasq");
     const targetFile = r.getTempFolder() + "/dns.sh";
     await fs.writeFileAsync(targetFile, content);
   }
@@ -69,7 +69,7 @@ class DNSPlugin extends Plugin {
     const confPath = this._getConfFilePath();
     await fs.unlinkAsync(confPath).catch((err) => {});
     await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
-    await exec(`rm -rf ${r.getFirewallaUserConfigFolder()}/dnsmasq/${this.name}`).catch((err) => {});
+    // do not touch firewalla user config dnsmasq directory in flush()
     this._restartService();
   }
 
@@ -82,12 +82,13 @@ class DNSPlugin extends Plugin {
   }
 
   async prepareEnvironment() {
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq/${this.name}`).catch((err) => {});
+    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq/${this._intfUuid}`).catch((err) => {});
   }
 
   async writeDNSConfFile() {
     let content = await fs.readFileAsync(dnsConfTemplate, {encoding: "utf8"});
     content = content.replace(/%INTERFACE%/g, this.name);
+    content = content.replace(/%INTERFACE_UUID%/g, this._intfUuid);
     await fs.writeFileAsync(this._getConfFilePath(), content);
 
     await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
@@ -190,14 +191,27 @@ class DNSPlugin extends Plugin {
   _restartService() {
     if (!_restartTask) {
       _restartTask = setTimeout(() => {
-        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns");
+        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns").catch((err) => {
+          this.log.warn("Failed to restart firerouter_dns", err.message);
+        });
         _restartTask = null;
-      }, 10000);
+      }, 5000);
     }
   }
 
   async apply() {
     if (this.name !== "default") {
+      const intfPlugin = pl.getPluginInstance("interface", this.name);
+      if (!intfPlugin)
+        this.fatal(`Cannot find interface plugin for ${this.name}`);
+      this._intfUuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+      if (!this._intfUuid)
+        this.fatal(`Cannot find interface uuid for ${this.name}`);
+      this.subscribeChangeFrom(intfPlugin);
+      if (!intfPlugin.networkConfig.enabled) {
+        this.log.warn(`Interface ${this.name} is not enabled`);
+        return;
+      }
       await this.prepareEnvironment();
       await this.writeDNSConfFile();
       this._restartService();
