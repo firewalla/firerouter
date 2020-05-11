@@ -28,6 +28,8 @@ const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
 
+const wrapIptables = require('../../util/util.js').wrapIptables;
+
 const event = require('../../core/event.js');
 
 Promise.promisifyAll(fs);
@@ -82,6 +84,12 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`, 6);
+        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+          this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+        });
+        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+          this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+        });
       }
       // remove from lan_roubable anyway
       if (this.networkConfig.ipv4) {
@@ -229,6 +237,12 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6);
+      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+        this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+      });
+      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+        this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+      });
     }
   }
 
