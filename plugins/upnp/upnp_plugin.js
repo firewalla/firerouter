@@ -30,7 +30,10 @@ class UPnPPlugin extends Plugin {
   static async preparePlugin() {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/upnp`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_upnpd@.service /etc/systemd/system/`);
+    // discard miniupnpd log from syslog
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/10-miniupnpd.conf /etc/rsyslog.d/`);
     await exec(`sudo systemctl daemon-reload`);
+    await exec(`sudo systemctl restart rsyslog`);
   }
 
   _getConfigFilePath() {
