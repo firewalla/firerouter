@@ -5,5 +5,5 @@ After=network.target
 
 [Service]
 Restart=always
-ExecStart=/bin/bash -c '/usr/sbin/miniupnpd -d -P "/var/run/miniupnpd.%i.conf" -f "/home/pi/.router/config/upnp/%i.conf" > /dev/null 2>&1'
+ExecStart=/usr/sbin/miniupnpd -P "/var/run/miniupnpd.%i.conf" -f "/home/pi/.router/config/upnp/%i.conf"
 RemainAfterExit=true
