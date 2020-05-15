@@ -266,6 +266,8 @@ class InterfaceBasePlugin extends Plugin {
         await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
           this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
         });
+        // this can directly trigger downstream plugins to reapply config adapting to the static IP
+        this.propagateConfigChanged(true);
       }
       if (this.networkConfig.nameservers) {
         const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
@@ -300,6 +302,8 @@ class InterfaceBasePlugin extends Plugin {
             this.fatal(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
+        // this can directly trigger downstream plugins to reapply config adapting to the static IP
+        this.propagateConfigChanged(true);
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
