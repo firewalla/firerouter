@@ -27,6 +27,7 @@ class MDNSReflectorPlugin extends Plugin {
 
   static async preparePlugin() {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/mdns_reflector`);
+    await exec(`sudo systemctl disable avahi-daemon`).catch((err) => {});
   }
 
   async flush() {
