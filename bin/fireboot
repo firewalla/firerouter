@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sleep 3
+
 redis-cli del "fireboot:status"
 redis-cli del "fireboot:network_down:code"
 
