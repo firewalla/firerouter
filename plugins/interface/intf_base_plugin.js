@@ -76,14 +76,14 @@ class InterfaceBasePlugin extends Plugin {
 
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, null, 6).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
         // restore reverse path filtering settings
         await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, `${rtid}/0xffff`, 6);
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6);
         await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
@@ -125,8 +125,8 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
       }
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => { });
+      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { });
+      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
     }
   }
 
