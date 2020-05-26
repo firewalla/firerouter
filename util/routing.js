@@ -70,8 +70,6 @@ async function createCustomizedRoutingTable(tableName) {
 
 async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, af = 4) {
   from = from || "all";
-  let cmd = `ip -${af} rule list`; 
-  let result = await exec(cmd);
   let rule = `from ${from} `;
   if (fwmark) {
     if (_.isString(fwmark) && fwmark.includes("/")) {
@@ -86,13 +84,14 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  result = result.stdout.replace(/\[detached\] /g, "");
-  if (result.includes(rule)) {
+  if (priority)
+    rule = `${rule} priority ${priority}`;
+  let cmd = `ip -${af} rule list ${rule}`;
+  let result = await exec(cmd).then(r => r.stdout);
+  if (result.length > 0) {
     log.debug("Same policy routing rule already exists: ", rule);
     return;
   }
-  if (priority)
-    rule = `${rule} priority ${priority}`;
   cmd = `sudo ip -${af} rule add ${rule}`;
   log.info("Create new policy routing rule: ", cmd);
   result = await exec(cmd);
@@ -102,11 +101,8 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   }
 }
 
-async function removePolicyRoutingRule(from, iif, tableName, fwmark, af = 4) {
+async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, af = 4) {
   from = from || "all";
-  let cmd = `ip -${af} rule list`;
-  let result = await exec(cmd);
-  result = result.stdout.replace(/\[detached\] /g, "");
   let rule = `from ${from} `;
   if (fwmark) {
     if (_.isString(fwmark) && fwmark.includes("/")) {
@@ -121,7 +117,11 @@ async function removePolicyRoutingRule(from, iif, tableName, fwmark, af = 4) {
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  if (!result.includes(rule)) {
+  if (priority)
+    rule = `${rule} priority ${priority}`;
+  let cmd = `ip -${af} rule list ${rule}`;
+  let result = await exec(cmd).then(r => r.stdout);
+  if (result.length === 0) {
     log.debug("Policy routing rule does not exist: ", rule);
     return;
   }
@@ -236,12 +236,12 @@ async function createInterfaceRoutingRules(intf) {
 }
 
 async function removeInterfaceRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, `${intf}_local`);
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`);
-  await removePolicyRoutingRule("all", intf, `${intf}_default`);
-  await removePolicyRoutingRule("all", intf, `${intf}_local`, null, 6);
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`, null, 6);
-  await removePolicyRoutingRule("all", intf, `${intf}_default`, null, 6);
+  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501);
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001);
+  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001);
+  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6);
+  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
 }
 
 async function createInterfaceGlobalRoutingRules(intf) {
@@ -250,8 +250,8 @@ async function createInterfaceGlobalRoutingRules(intf) {
 }
 
 async function removeInterfaceGlobalRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT);
-  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, null, 6);
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001);
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6);
 }
 
 async function getInterfaceGWIP(intf, af = 4) {

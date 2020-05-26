@@ -41,7 +41,8 @@ TIME_THRESHOLD="2019-10-14"
 
 function sync_time() {
     time_website=$1
-    time=$(curl -D - ${time_website} -o /dev/null --silent | awk -F ": " '/^Date: / {print $2}')
+    logger "Syncing time from ${time_website}..."
+    time=$(curl -m5 -D - ${time_website} -o /dev/null --silent | awk -F ": " '/^Date: / {print $2}')
     if [[ "x$time" == "x" ]]; then
         logger "ERROR: Failed to load date info from website: $time_website"
         return 1
@@ -51,7 +52,8 @@ function sync_time() {
         tsThreshold=$(date -d "$TIME_THRESHOLD" +%s)
         if [ $tsWebsite -ge $tsThreshold ];
         then
-          sudo date -s "$time";
+          echo "$tsWebsite";
+          return 0
         else
           return 1
         fi
@@ -59,13 +61,11 @@ function sync_time() {
 }
 
 logger "FIREROUTER.UPGRADE.DATE.SYNC"
-sync_time status.github.com || sync_time google.com || sync_time live.com || sync_time facebook.com
-ret=$?
-if [[ $ret -ne 0 ]]; then
-    sudo systemctl stop ntp
-    sudo date -s "$TIME_THRESHOLD" # set minimal date here to prevent SSL failure on undergoing HTTPS calls
-    sudo timeout 30 ntpd -gq || sudo ntpdate -b -u -s time.nist.gov
-    sudo systemctl start ntp
+tsWebsite=$(sync_time status.github.com || sync_time google.com || sync_time live.com || sync_time facebook.com)
+tsSystem=$(date +%s)
+if [ "0$tsWebsite" -ge "0$tsSystem" ]; # prefix 0 as tsWebsite could be empty
+then
+    sudo date +%s -s "@$tsWebsite";
 fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync

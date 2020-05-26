@@ -43,11 +43,11 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
   }
 
-  async isWAN() {
+  isWAN() {
     return true;
   }
 
-  async isLAN() {
+  isLAN() {
     return false;
   }
 
