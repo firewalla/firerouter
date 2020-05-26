@@ -36,9 +36,12 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
     });
-    await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
-      this.log.error(`Failed to enable stp on bridge interface ${this.name}`, err.message);
-    })
+    // no need to enable stp if there is only one interface in bridge
+    if (this.networkConfig.intf.length > 1) {
+      await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
+        this.log.error(`Failed to enable stp on bridge interface ${this.name}`, err.message);
+      });
+    }
     await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
       this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
     });
