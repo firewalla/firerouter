@@ -82,8 +82,8 @@ class InterfaceBasePlugin extends Plugin {
         await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6);
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6).catch((err) =>{});
         await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });

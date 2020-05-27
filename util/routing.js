@@ -242,12 +242,12 @@ async function createInterfaceRoutingRules(intf) {
 }
 
 async function removeInterfaceRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501);
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001);
-  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001);
-  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6);
-  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
+  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501).catch((err) => {});
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6).catch((err) => {});
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6).catch((err) => {});
 }
 
 async function createInterfaceGlobalRoutingRules(intf) {
@@ -256,8 +256,8 @@ async function createInterfaceGlobalRoutingRules(intf) {
 }
 
 async function removeInterfaceGlobalRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001);
-  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6);
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6).catch((err) => {});
 }
 
 async function getInterfaceGWIP(intf, af = 4) {
