@@ -88,7 +88,7 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, a
     rule = `${rule} priority ${priority}`;
   let cmd = `ip -${af} rule list ${rule}`;
   let result = await exec(cmd).then(r => r.stdout).catch((err) => {
-    log.error(`Failed to list rule with command ${cmd}`, err.message);
+    log.debug(`Failed to list rule with command ${cmd}`, err.message);
     return "";
   });
   if (result.length > 0) {
@@ -124,7 +124,7 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
     rule = `${rule} priority ${priority}`;
   let cmd = `ip -${af} rule list ${rule}`;
   let result = await exec(cmd).then(r => r.stdout).catch((err) => {
-    log.error(`Failed to list rule with command ${cmd}`, err.message);
+    log.debug(`Failed to list rule with command ${cmd}`, err.message);
     return "";
   });
   if (result.length === 0) {
