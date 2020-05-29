@@ -28,6 +28,11 @@ class MDNSReflectorPlugin extends Plugin {
   static async preparePlugin() {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/mdns_reflector`);
     await exec(`sudo systemctl disable avahi-daemon`).catch((err) => {});
+    // redirect avahi-daemon log to specific log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/11-avahi-daemon.conf /etc/rsyslog.d/`);
+    pl.scheduleRestartRsyslog();
+    // copy logrotate config for avahi-daemon log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/avahi-daemon /etc/logrotate.d/`);
   }
 
   async flush() {
