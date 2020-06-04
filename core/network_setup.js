@@ -40,6 +40,11 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dhcpcd6`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    // redirect dhcpcd log to specific log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhcpcd.conf /etc/rsyslog.d/`);
+    pl.scheduleRestartRsyslog();
+    // copy logrotate config for dhcpcd log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhcpcd /etc/logrotate.d/`);
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});

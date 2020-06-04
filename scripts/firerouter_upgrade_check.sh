@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # This script will check if there is any upgrade available for firerouter
