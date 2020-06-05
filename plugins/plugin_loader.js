@@ -23,6 +23,7 @@ let pluginConfs = [];
 let pluginCategoryMap = {};
 
 let scheduledReapplyTask = null;
+let restartRsyslogTask = null;
 
 const _ = require('lodash');
 const Promise = require('bluebird');
@@ -259,10 +260,21 @@ function scheduleReapply() {
   }
 }
 
+function scheduleRestartRsyslog() {
+  if (restartRsyslogTask)
+    clearTimeout(restartRsyslogTask);
+  restartRsyslogTask = setTimeout(() => {
+    exec(`sudo systemctl restart rsyslog`).catch((err) => {
+      log.error("Failed to restart rsyslog", err.message);
+    });
+  }, 5000);
+}
+
 module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
   getPluginInstances: getPluginInstances,
   reapply: reapply,
-  scheduleReapply: scheduleReapply
+  scheduleReapply: scheduleReapply,
+  scheduleRestartRsyslog: scheduleRestartRsyslog
 };
