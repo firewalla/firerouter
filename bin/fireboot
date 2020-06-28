@@ -15,11 +15,14 @@ rc=0
 
 if [[ $NETWORK_SETUP == "yes" ]]; then
   init_network_config; rc=$?
-  if [[ ! $rc -eq 0 ]]; then
-    redis-cli set "fireboot:status" "network_down"
-    redis-cli set "fireboot:network_down:code" $rc
-    exit $rc
-  fi
+else
+  test_network; rc=$?
+fi
+
+if [[ ! $rc -eq 0 ]]; then
+  redis-cli set "fireboot:status" "network_down"
+  redis-cli set "fireboot:network_down:code" $rc
+  exit $rc
 fi
 
 update_timezone
