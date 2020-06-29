@@ -35,13 +35,14 @@ echo "Upgrading FireRouter ..."
 
 # step 3 - restart firerouter and init network config again
 if [[ -f /dev/shm/firerouter.upgraded ]]; then
-  # need to redo prepare network if firerouter is upgraded
-  rm -f /dev/shm/firerouter.prepared
-  redis-cli set "fireboot:status" "firerouter_upgrade"
-  echo "Restarting FireRouter ..."
-  sudo systemctl restart firerouter
 
   if [[ $NETWORK_SETUP == "yes" ]]; then
+    # need to redo prepare network if firerouter is upgraded
+    rm -f /dev/shm/firerouter.prepared
+    redis-cli set "fireboot:status" "firerouter_upgrade"
+    echo "Restarting FireRouter ..."
+    sudo systemctl restart firerouter
+
     init_network_config
   else
     test_network
