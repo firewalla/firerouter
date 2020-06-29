@@ -40,7 +40,13 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   redis-cli set "fireboot:status" "firerouter_upgrade"
   echo "Restarting FireRouter ..."
   sudo systemctl restart firerouter
-  init_network_config
+
+  if [[ $NETWORK_SETUP == "yes" ]]; then
+    init_network_config
+  else
+    test_network
+  fi
+
   rm -f /dev/shm/firerouter.upgraded
   echo "Restarting FireReset ..."
   sudo systemctl restart firereset
