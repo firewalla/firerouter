@@ -8,7 +8,7 @@ User=pi
 Restart=always
 RestartSec=5
 WorkingDirectory=/home/pi/firerouter
-ExecStart=/bin/bash -c "/home/pi/firerouter/scripts/firereset.sh >> /home/pi/.forever/firereset.log 2>&1"
+ExecStart=/bin/bash -c "sudo chown pi /home/pi/.forever/firereset.log; /home/pi/firerouter/scripts/firereset.sh >> /home/pi/.forever/firereset.log 2>&1"
 
 [Install]
 WantedBy=multi-user.target
