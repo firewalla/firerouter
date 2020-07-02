@@ -51,6 +51,10 @@ init_network_config() {
 
   echo "Successfully apply last network config"
 
+  test_network
+}
+
+test_network() {
   redis-cli set "fireboot:status" "test_network"
   echo "Testing network connectivity ..."
 

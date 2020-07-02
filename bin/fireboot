@@ -8,10 +8,17 @@ redis-cli del "fireboot:network_down:code"
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
 source ${FIREROUTER_HOME}/bin/common
+source ${FIREROUTER_HOME}/platform/platform.sh
 
 # step 1 - init network config
 rc=0
-init_network_config; rc=$?
+
+if [[ $NETWORK_SETUP == "yes" ]]; then
+  init_network_config; rc=$?
+else
+  test_network; rc=$?
+fi
+
 if [[ ! $rc -eq 0 ]]; then
   redis-cli set "fireboot:status" "network_down"
   redis-cli set "fireboot:network_down:code" $rc
@@ -29,12 +36,19 @@ echo "Upgrading FireRouter ..."
 
 # step 3 - restart firerouter and init network config again
 if [[ -f /dev/shm/firerouter.upgraded ]]; then
-  # need to redo prepare network if firerouter is upgraded
-  rm -f /dev/shm/firerouter.prepared
-  redis-cli set "fireboot:status" "firerouter_upgrade"
-  echo "Restarting FireRouter ..."
-  sudo systemctl restart firerouter
-  init_network_config
+
+  if [[ $NETWORK_SETUP == "yes" ]]; then
+    # need to redo prepare network if firerouter is upgraded
+    rm -f /dev/shm/firerouter.prepared
+    redis-cli set "fireboot:status" "firerouter_upgrade"
+    echo "Restarting FireRouter ..."
+    sudo systemctl restart firerouter
+
+    init_network_config
+  else
+    test_network
+  fi
+
   rm -f /dev/shm/firerouter.upgraded
   echo "Restarting FireReset ..."
   sudo systemctl restart firereset
