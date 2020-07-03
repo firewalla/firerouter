@@ -7,7 +7,7 @@ NETWORK_SETUP=yes
 
 case "$UNAME" in
 "x86_64")
-  source $FW_PLATFORM_DIR/$GOLD/platform.sh
+  source $FW_PLATFORM_DIR/gold/platform.sh
   FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/gold
   ;;
 "aarch64")
