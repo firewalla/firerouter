@@ -17,6 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
+const pl = require('../plugin_loader.js');
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -31,6 +32,13 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
   async createInterface() {
     for (const intf of this.networkConfig.intf) {
       await exec(`sudo ip addr flush dev ${intf}`);
+      const intfPlugin = pl.getPluginInstance("interface", intf);
+      if (intfPlugin) {
+        // this is useful if it is a passthrough bridge
+        this.subscribeChangeFrom(intfPlugin);
+      } else {
+        this.fatal(`Lower interface plugin not found ${intf}`);
+      }
     }
 
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
