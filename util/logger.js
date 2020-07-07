@@ -31,16 +31,6 @@ String.prototype.capitalizeFirstLetter = function () {
 
 var production = false;
 
-if (process.env.FWPRODUCTION) {
-  console.log("LOGGER SET TO PRODUCTION");
-  production = true;
-}
-
-if (fs.existsSync("/tmp/FWPRODUCTION")) {
-  console.log("LOGGER SET TO PRODUCTION");
-  production = true;
-}
-
 var globalLogLevel = 'info';
 
 if (process.env.FWDEBUG) {
@@ -49,9 +39,6 @@ if (process.env.FWDEBUG) {
 } else if (fs.existsSync("/home/pi/.firewalla/config/FWDEBUG")) {
   globalLogLevel = fs.readFileSync("/home/pi/.firewalla/config/FWDEBUG", "utf8").trim();
   console.log("LOGGER SET TO", globalLogLevel);
-}
-else if (production) {
-  globalLogLevel = 'warn';
 }
 
 function getFileTransport() {
