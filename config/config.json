@@ -103,6 +103,14 @@
       "config": {
         "delay": 5
       }
+    },
+    {
+      "file_path": "./wan_conn_check_sensor.js",
+      "config": {
+        "ping_test_ip": "1.1.1.1",
+        "ping_test_count": 5,
+        "dns_test_domain": "github.com"
+      }
     }
   ]
 }

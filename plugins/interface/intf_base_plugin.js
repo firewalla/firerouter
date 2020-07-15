@@ -465,6 +465,17 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  async updateRouteForDNS() {
+    // TODO: there is no IPv6 DNS currently
+    const dns = await this.getDNSNameservers();
+    const gateway = await routing.getInterfaceGWIP(this.name, 4);
+    if (!_.isArray(dns) || dns.length === 0 || !gateway)
+      return;
+    for (const dnsIP of dns) {
+      await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true).catch((err) => {});
+    }
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -483,6 +494,8 @@ class InterfaceBasePlugin extends Plugin {
     await this.applyIpDnsSettings();
 
     await this.changeRoutingTables();
+
+    await this.updateRouteForDNS();
   }
 
   async _getSysFSClassNetValue(key) {
@@ -491,6 +504,11 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     })
     return value;
+  }
+
+  async getDNSNameservers() {
+    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
+    return dns;
   }
 
   async state() {
@@ -509,7 +527,7 @@ class InterfaceBasePlugin extends Plugin {
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     const gateway = await routing.getInterfaceGWIP(this.name) || null;
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6) || null;
-    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
+    const dns = await this.getDNSNameservers();
     return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, gateway6, dns, rtid};
   }
 
@@ -532,6 +550,16 @@ class InterfaceBasePlugin extends Plugin {
           // the interface from which prefix is delegated is changed, need to reapply config
           this._reapplyNeeded = true;
           pl.scheduleReapply();
+        }
+      }
+      case event.EVENT_IP_CHANGE: {
+        const payload = event.getEventPayload(e);
+        const iface = payload.intf;
+        if (iface === this.name && this.isWAN()) {
+          // update route for DNS from DHCP
+          this.updateRouteForDNS().catch((err) => {
+            this.log.error(`Failed to update route for DNS on ${this.name}`, err.message);
+          });
         }
       }
       default:
