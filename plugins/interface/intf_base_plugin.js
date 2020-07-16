@@ -506,6 +506,14 @@ class InterfaceBasePlugin extends Plugin {
     return value;
   }
 
+  _getWANConnState(name) {
+    const routingPlugin = pl.getPluginInstance("routing", "global");
+    if (routingPlugin) {
+      return routingPlugin.getWANConnState(name);
+    }
+    return null;
+  }
+
   async getDNSNameservers() {
     const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
     return dns;
@@ -528,11 +536,15 @@ class InterfaceBasePlugin extends Plugin {
     const gateway = await routing.getInterfaceGWIP(this.name) || null;
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6) || null;
     const dns = await this.getDNSNameservers();
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, gateway6, dns, rtid};
+    let wanConnState = null;
+    if (this.isWAN())
+      wanConnState = this._getWANConnState(this.name);
+    return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, gateway6, dns, rtid, wanConnState};
   }
 
   onEvent(e) {
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IF_UP: {

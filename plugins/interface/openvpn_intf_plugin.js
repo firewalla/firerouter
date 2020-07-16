@@ -83,7 +83,8 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   onEvent(e) {
     // stub implementation
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info("Received event", e);
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IF_UP: 
