@@ -33,7 +33,7 @@ class WanConnCheckSensor extends Sensor {
         this._checkWanConnectivity().catch((err) => {
           this.log.error("Failed to do WAN connectivity check", err.message);
         });
-      }, 60000);
+      }, 30000);
     }, 60000);
   }
 
@@ -42,11 +42,11 @@ class WanConnCheckSensor extends Sensor {
     const pingTestIP = this.config.ping_test_ip || "1.1.1.1";
     const pingTestCount = this.config.ping_test_count || 5;
     const dnsTestDomain = this.config.dns_test_domain || "github.com";
-    for (const wanIntfPlugin of wanIntfPlugins) {
+    await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       let active = true;
       let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${pingTestIP} | grep "received" | awk '{print $4}'`;
       await exec(cmd).then((result) => {
-        if (!result || !result.stdout || result.stdout.trim() !== `${pingTestCount}`)
+        if (!result || !result.stdout || Number(result.stdout.trim()) <= pingTestCount / 2)
           active = false;  
       }).catch((err) => {
         this.log.error(`Failed to do ping test on ${wanIntfPlugin.name}`, err.message);
@@ -68,8 +68,9 @@ class WanConnCheckSensor extends Sensor {
       }
 
       const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active});
+      event.suppressLogging(e);
       wanIntfPlugin.propagateEvent(e);
-    }
+    }));
   }
 }
 

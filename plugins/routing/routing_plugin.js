@@ -79,10 +79,6 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  async _updateDNSRoute() {
-
-  }
-
   async _applyActiveGlobalDefaultRouting() {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_APPLY_ACTIVE_WAN, async (done) => {
@@ -97,12 +93,16 @@ class RoutingPlugin extends Plugin {
         switch (type) {
           case "single":
           case "primary_standby": {
-            for (const viaIntf of Object.keys(this._wanStatus)) {
+            let activeIntfFound = false;
+            for (const viaIntf of Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq)) { // sort by seq in ascending order
               const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
               const state = await viaIntfPlugin.state();
-              const active = this._wanStatus[viaIntf].active;
+              const ready = this._wanStatus[viaIntf].ready;
+              this._wanStatus[viaIntf].active = ready && !activeIntfFound;
+              if (this._wanStatus[viaIntf].active === true)
+                activeIntfFound = true;
               // set a much lower priority for inactive WAN
-              const metric = this._wanStatus[viaIntf].seq + (active ? 0 : 100);
+              const metric = this._wanStatus[viaIntf].seq + (ready ? 0 : 100);
               if (state && state.ip4) {
                 const addr = new Address4(state.ip4);
                 const networkAddr = addr.startAddress();
@@ -142,7 +142,7 @@ class RoutingPlugin extends Plugin {
                 this.log.error("Failed to get gateway IP of global default interface " + viaIntf);
               }
               const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
-              if (gw6 && active) { // do not add IPv6 default route for inactive WAN, WAN connectivity check only uses IPv4
+              if (gw6 && ready) { // do not add IPv6 default route for inactive WAN, WAN connectivity check only uses IPv4
                 await routing.addRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 await routing.addRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
               } else {
@@ -156,9 +156,10 @@ class RoutingPlugin extends Plugin {
             const multiPathDesc6 = [];
             for (const viaIntf of Object.keys(this._wanStatus)) {
               const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
-              const active = this._wanStatus[viaIntf].active;
+              const ready = this._wanStatus[viaIntf].ready;
               const weight = this._wanStatus[viaIntf].weight || 50;
               const state = await viaIntfPlugin.state();
+              this._wanStatus[viaIntf].active = ready;
               if (state && state.ip4) {
                 const addr = new Address4(state.ip4);
                 const networkAddr = addr.startAddress();
@@ -181,7 +182,7 @@ class RoutingPlugin extends Plugin {
               const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
               if (gw) {
                 // add a default route with higher metric if it is inactive. A default route is needed for WAN connectivity check, e.g., ping -I eth0 1.1.1.1
-                if (active) {
+                if (ready) {
                   multiPathDesc.push({ nextHop: gw, dev: viaIntf, weight: weight });
                 } else {
                   const metric = this._wanStatus[viaIntf].seq + 100;
@@ -193,7 +194,7 @@ class RoutingPlugin extends Plugin {
               }
 
               if (gw6) {
-                if (active) {
+                if (ready) {
                   multiPathDesc6.push({ nextHop: gw6, dev: viaIntf, weight: weight });
                 } else {
                   // do not add IPv6 default route for inactive WAN, WAN connectivity check only uses IPv4
@@ -252,7 +253,8 @@ class RoutingPlugin extends Plugin {
                     this.fatal(`Cannot find global defautl interface plugin ${viaIntf2}`);
                   this.subscribeChangeFrom(viaIntf2Plugin);
                   this._wanStatus[viaIntf2] = {
-                    active: true,
+                    active: false,
+                    ready: true,
                     seq: 1,
                     plugin: viaIntf2Plugin,
                     successCount: 0,
@@ -266,7 +268,8 @@ class RoutingPlugin extends Plugin {
                     this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
                   this.subscribeChangeFrom(viaIntfPlugin);
                   this._wanStatus[viaIntf] = {
-                    active: true,
+                    active: false,
+                    ready: true,
                     seq: 0,
                     plugin: viaIntfPlugin,
                     successCount: 0,
@@ -283,7 +286,8 @@ class RoutingPlugin extends Plugin {
                     if (viaIntfPlugin) {
                       this.subscribeChangeFrom(viaIntfPlugin);
                       this._wanStatus[viaIntf] = {
-                        active: true,
+                        active: false,
+                        ready: true,
                         seq: seq,
                         weight: nextHop.weight,
                         plugin: viaIntfPlugin,
@@ -341,7 +345,8 @@ class RoutingPlugin extends Plugin {
               if (viaIntfPlugin) {
                 this.subscribeChangeFrom(viaIntfPlugin);
                 this._wanStatus[viaIntf] = {
-                  active: true,
+                  active: true, // always set active to true for non-global routing plugin
+                  ready: true,
                   seq: 0,
                   plugin: viaIntfPlugin,
                   successCount: 0,
@@ -385,13 +390,22 @@ class RoutingPlugin extends Plugin {
   }
 
   getActiveWANPlugins() {
-    return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].active).map(i => this._wanStatus[i].plugin).sort((a, b) => {
-      return a.seq - b.seq;
-    });
+    return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].active).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
+  }
+
+  getWANConnState(name) {
+    if (this._wanStatus[name]) {
+      return {
+        ready: this._wanStatus[name].ready,
+        active: this._wanStatus[name].active
+      };
+    }
+    return null;
   }
 
   onEvent(e) {
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IP_CHANGE: {
@@ -422,30 +436,30 @@ class RoutingPlugin extends Plugin {
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
         }
-        let activeWanChanged = false;
-        if (currentStatus.active && currentStatus.failureCount >=2) {
-          currentStatus.active = false;
-          activeWanChanged = true;
+        let changeActiveWanNeeded = false;
+        if (currentStatus.ready && currentStatus.failureCount >=2) {
+          currentStatus.ready = false;
+          changeActiveWanNeeded = true;
         }
-        if (!currentStatus.active && currentStatus.successCount >= 10) {
-          currentStatus.active = true;
-          // need to be stricter if inactive WAN is back to active 
+        if (!currentStatus.ready && currentStatus.successCount >= 10) {
+          currentStatus.ready = true;
+          // need to be stricter if inactive WAN is back to ready 
           switch (type) {
             case "load_balance": {
-              activeWanChanged = true;
+              changeActiveWanNeeded = true;
               break;
             }
             case "primary_standby": {
               const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-              if (failback && currentStatus.seq === 0)
-                // apply WAN settings in failback mode if primary WAN is back to active
-                activeWanChanged = true;
+              if (this.getActiveWANPlugins().length === 0 || (failback && currentStatus.seq === 0))
+                // apply WAN settings in failback mode if primary WAN is back to ready
+                changeActiveWanNeeded = true;
               break;
             }
             default:
           }
         }
-        if (activeWanChanged) {
+        if (changeActiveWanNeeded) {
           this.scheduleApplyActiveGlobalDefaultRouting();
         }
       }
@@ -460,13 +474,18 @@ class RoutingPlugin extends Plugin {
       this.log.info("Apply active global default routing", Object.keys(this._wanStatus).map(i => {
         return {
           name: i,
-          active: this._wanStatus[i].active,
+          ready: this._wanStatus[i].ready,
           seq: this._wanStatus[i].seq,
           successCount: this._wanStatus[i].successCount,
           failureCount:  this._wanStatus[i].failureCount
         }
       }));
-      this._applyActiveGlobalDefaultRouting();
+      this._applyActiveGlobalDefaultRouting().then(() => {
+        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
+        this.propagateEvent(e);
+      }).catch((err) => {
+        this.log.error("Failed to apply active global default routing", err.message);
+      });
     }, 10000);
   }
 }
