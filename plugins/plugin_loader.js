@@ -29,6 +29,7 @@ const _ = require('lodash');
 const Promise = require('bluebird');
 const AsyncLock = require('async-lock');
 const exec = require('child-process-promise').exec;
+const fwpclient = require('../util/redis_manager.js').getPublishClient();
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 
@@ -102,12 +103,12 @@ function _isConfigEqual(c1, c2) {
 
 async function _publishChangeApplied() {
   // publish to redis db used by Firewalla
-  await exec(`redis-cli publish "firerouter.change_applied" ""`);
+  await fwpclient.publishAsync("firerouter.change_applied", "");
 }
 
 async function _publishIfaceChangeApplied() {
   // publish to redis db used by Firewalla
-  await exec(`redis-cli publish "firerouter.iface_change_applied" ""`);
+  await fwpclient.publishAsync("firerouter.iface_change_applied", "");
 }
 
 async function reapply(config, dryRun = false) {
