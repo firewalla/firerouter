@@ -25,7 +25,7 @@ const AsyncLock = require('async-lock');
 const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
 const lock = new AsyncLock();
 const _ = require('lodash');
-const fwpclient = require('../../util/redis_manager.js').getPublishClient();
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 
 class RoutingPlugin extends Plugin {
    
@@ -394,6 +394,20 @@ class RoutingPlugin extends Plugin {
     return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].active).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
   }
 
+  getWANConnStates() {
+    if (this._wanStatus) {
+      const result = {};
+      Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).forEach(i => {
+        result[i] = {
+          ready: this._wanStatus[i].ready,
+          active: this._wanStatus[i].active
+        };
+      });
+      return result;
+    }
+    return null;
+  }
+
   getWANConnState(name) {
     if (this._wanStatus[name]) {
       return {
@@ -438,9 +452,17 @@ class RoutingPlugin extends Plugin {
           currentStatus.failureCount++;
         }
         let changeActiveWanNeeded = false;
+        let changeDesc = null;
         if (currentStatus.ready && currentStatus.failureCount >=2) {
           currentStatus.ready = false;
-          changeActiveWanNeeded = true;
+          if (currentStatus.active)
+            changeActiveWanNeeded = true;
+
+          changeDesc = {
+            intf: intf,
+            ready: false,
+            wanSwitched: changeActiveWanNeeded
+          };
         }
         if (!currentStatus.ready && currentStatus.successCount >= 10) {
           currentStatus.ready = true;
@@ -459,16 +481,27 @@ class RoutingPlugin extends Plugin {
             }
             default:
           }
+          changeDesc = {
+            intf: intf,
+            ready: true,
+            wanSwitched: changeActiveWanNeeded
+          };
         }
-        if (changeActiveWanNeeded) {
-          this.scheduleApplyActiveGlobalDefaultRouting();
-        }
+        if (changeDesc) {
+          if (changeActiveWanNeeded) {
+            this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
+          } else {
+            changeDesc.currentStatus = this.getWANConnStates();
+            this.schedulePublishWANConnChanged(changeDesc);
+          }
+            
+        } 
       }
       default:
     }
   }
 
-  scheduleApplyActiveGlobalDefaultRouting() {
+  scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
     if (this.applyActiveGlobalDefaultRoutingTask)
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
@@ -484,19 +517,23 @@ class RoutingPlugin extends Plugin {
       this._applyActiveGlobalDefaultRouting().then(() => {
         const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
         this.propagateEvent(e);
+        if (changeDesc) {
+          changeDesc.currentStatus = this.getWANConnStates();
+          this.schedulePublishWANConnChanged(changeDesc);
+        }
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
     }, 10000);
   }
 
-  _publishWANSwitched(msg) {
+  schedulePublishWANConnChanged(changeDesc) {
     // publish to redis db used by Firewalla
-    if (this.publishWANSwitchedTask)
-      clearTimeout(this.publishWANSwitchedTask);
-    this.publishWANSwitchedTask = setTimeout(() => {
-      fwpclient.publishAsync("firerouter.wan_switched", msg).catch((err) => {});
-    }, 15000);
+    if (this.publishWANConnChangedTask)
+      clearTimeout(this.publishWANConnChangedTask);
+    this.publishWANConnChangedTask = setTimeout(() => {
+      pclient.publishAsync("firerouter.wan_conn_changed", JSON.stringify(changeDesc)).catch((err) => {});
+    }, 10000);
   }
 }
 
