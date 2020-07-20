@@ -25,6 +25,7 @@ const AsyncLock = require('async-lock');
 const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
 const lock = new AsyncLock();
 const _ = require('lodash');
+const fwpclient = require('../../util/redis_manager.js').getPublishClient();
 
 class RoutingPlugin extends Plugin {
    
@@ -487,6 +488,15 @@ class RoutingPlugin extends Plugin {
         this.log.error("Failed to apply active global default routing", err.message);
       });
     }, 10000);
+  }
+
+  _publishWANSwitched(msg) {
+    // publish to redis db used by Firewalla
+    if (this.publishWANSwitchedTask)
+      clearTimeout(this.publishWANSwitchedTask);
+    this.publishWANSwitchedTask = setTimeout(() => {
+      fwpclient.publishAsync("firerouter.wan_switched", msg).catch((err) => {});
+    }, 15000);
   }
 }
 

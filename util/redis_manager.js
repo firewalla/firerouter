@@ -24,6 +24,7 @@ Promise.promisifyAll(redis.Multi.prototype);
 
 class RedisManager {
   constructor() {
+    this.rclient = {};
   }
 
   getPrimaryDBRedisClient() {
@@ -39,74 +40,40 @@ class RedisManager {
     return this.primaryDBClient;
   }
 
-  getBackDBRedisClient() {
-    if(!this.backupDBClient) {
-      this.backupDBClient = redis.createClient({
+  getRedisClient(db = 1) {
+    if(!this.rclient[db]) {
+      const rclient = redis.createClient({
         host: "localhost",
-        db: 1
+        db: db
       });
-      this.backupDBClient.on('error', (err) => {
+      rclient.on('error', (err) => {
         log.error("Redis client got error:", err);
-      })
-    }
-    return this.backupDBClient;
-  }
-
-  getRedisClient() {
-    if(!this.rclient) {
-      this.rclient = redis.createClient()
-      this.rclient.on('error', (err) => {
-        log.error("Redis client got error:", err);
-      })
-    }
-    return this.rclient
-  }
-
-  getBufferRedisClient() {
-    if (!this.bclient) {
-      // this client will return all replies as buffers instead of strings
-      this.bclient = redis.createClient({return_buffers: true});
-      this.bclient.on('error', (err) => {
-        log.error("Redis buffer client got error:", err);
       });
+      this.rclient[db] = rclient;
     }
-    return this.bclient;
-  }
-
-  getMetricsRedisClient() {
-    if(!this.mclient) {
-      this.mclient = redis.createClient()
-      this.mclient.on('error', (err) => {
-        log.error("Redis metrics client got error:", err);
-      })
-    }
-    return this.mclient
+    return this.rclient[db];
   }
 
   getSubscriptionClient() {
     if(!this.sclient) {
-      this.sclient = redis.createClient()
+      this.sclient = redis.createClient();
       this.sclient.setMaxListeners(0)
-
       this.sclient.on('error', (err) => {
         log.error("Redis sclient got error:", err);
-      })
+      });
     }
-
-    return this.sclient
+    return this.sclient;
   }
 
   getPublishClient() {
     if(!this.pclient) {
-      this.pclient = redis.createClient()
-      this.pclient.setMaxListeners(0)
-
+      this.pclient = redis.createClient();
+      this.pclient.setMaxListeners(0);
       this.pclient.on('error', (err) => {
         log.error("Redis pclient got error:", err);
-      })
+      });
     }
-
-    return this.pclient
+    return this.pclient;
   }
 }
 
