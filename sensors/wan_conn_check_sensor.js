@@ -39,17 +39,22 @@ class WanConnCheckSensor extends Sensor {
 
   async _checkWanConnectivity() {
     const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin.isWAN());
-    const pingTestIP = this.config.ping_test_ip || "1.1.1.1";
-    const pingTestCount = this.config.ping_test_count || 5;
-    const dnsTestDomain = this.config.dns_test_domain || "github.com";
+    const defaultPingTestIP = this.config.ping_test_ip || "1.1.1.1";
+    const pingTestCount = this.config.ping_test_count || 8;
+    const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       let active = true;
+      const extraConf = wanIntfPlugin && wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.extra;
+      const pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+      const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
       let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${pingTestIP} | grep "received" | awk '{print $4}'`;
       await exec(cmd).then((result) => {
-        if (!result || !result.stdout || Number(result.stdout.trim()) <= pingTestCount / 2)
-          active = false;  
+        if (!result || !result.stdout || Number(result.stdout.trim()) <= pingTestCount / 2) {
+          this.log.error(`Failed to pass ping test to ${pingTestIP} on ${wanIntfPlugin.name}`);
+          active = false;
+        }
       }).catch((err) => {
-        this.log.error(`Failed to do ping test on ${wanIntfPlugin.name}`, err.message);
+        this.log.error(`Failed to do ping test to ${pingTestIP} on ${wanIntfPlugin.name}`, err.message);
         active = false;
       });
       if (active) {
@@ -58,10 +63,12 @@ class WanConnCheckSensor extends Sensor {
           const nameserver = nameservers[0];
           cmd = `dig -4 +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
           await exec(cmd).then((result) => {
-            if (!result || !result.stdout || result.stdout.trim().length === 0)
+            if (!result || !result.stdout || result.stdout.trim().length === 0) {
+              this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
               active = false;
+            }
           }).catch((err) => {
-            this.log.error(`Failed to do DNS test on ${wanIntfPlugin.name}`, err.message);
+            this.log.error(`Failed to do DNS test using ${nameserver} on ${wanIntfPlugin.name}`, err.message);
             active = false;
           });
         }

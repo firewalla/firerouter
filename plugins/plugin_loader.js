@@ -98,6 +98,12 @@ function _isConfigEqual(c1, c2) {
   if (c2Copy.meta && c2Copy.meta.name)
     delete c2Copy.meta["name"];
 
+  // ignore extra data
+  if (c1Copy.hasOwnProperty("extra"))
+    delete c1Copy["extra"];
+  if (c2Copy.hasOwnProperty("extra"))
+    delete c2Copy["extra"];
+
   return _.isEqual(c1Copy, c2Copy);
 }
 
