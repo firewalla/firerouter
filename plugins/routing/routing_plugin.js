@@ -26,6 +26,8 @@ const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
 const lock = new AsyncLock();
 const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
+const wrapIptables = require('../../util/util.js').wrapIptables;
+const exec = require('child-process-promise').exec;
 
 class RoutingPlugin extends Plugin {
    
@@ -36,6 +38,7 @@ class RoutingPlugin extends Plugin {
     }
 
     this._wanStatus = {};
+    await this._flushOutputSNATRules();
 
     switch (this.name) {
       case "global": {
@@ -74,6 +77,29 @@ class RoutingPlugin extends Plugin {
             default: {
               this.log.error(`Unsupported routing type for ${this.name}: ${type}`);
             }
+          }
+        }
+      }
+    }
+  }
+
+  async _flushOutputSNATRules() {
+    await exec(wrapIptables(`sudo iptables -w -t nat -F FR_OUTPUT_SNAT`)).catch((err) => {});
+    await exec(wrapIptables(`sudo ip6tables -w -t nat -F FR_OUTPUT_SNAT`)).catch((err) => {});
+  }
+
+  async _refreshOutputSNATRules() {
+    await this._flushOutputSNATRules();
+    for (const srcIntf of Object.keys(this._wanStatus)) {
+      const srcIntfPlugin = this._wanStatus[srcIntf].plugin;
+      const state = await srcIntfPlugin.state();
+      if (state && state.ip4) {
+        const ip4Addr = state.ip4.split('/')[0];
+        for (const dstIntf of Object.keys(this._wanStatus)) {
+          if (dstIntf !== srcIntf) {
+            await exec(wrapIptables(`sudo iptables -t nat -A FR_OUTPUT_SNAT -s ${ip4Addr} -o ${dstIntf} -j MASQUERADE`)).catch((err) => {
+              log.error(`Failed to add output SNAT rule from ${ip4Addr} to ${dstIntf}`, err.message);
+            });
           }
         }
       }
@@ -233,6 +259,7 @@ class RoutingPlugin extends Plugin {
           }
           default:
         }
+        await this._refreshOutputSNATRules();
         done(null);
       }, function(err, ret) {
         if (err)
