@@ -70,16 +70,34 @@ class UPnPPlugin extends Plugin {
   }
 
   async apply() {
-    const extIntf = this.networkConfig.extIntf;
-    if (!extIntf)
-      this.fatal(`extIntf is not defined defined in upnp config of ${this.name}`);
-    const extPlugin = pl.getPluginInstance("interface", extIntf);
+    let extIntf = this.networkConfig.extIntf;
+    let extPlugin = null;
+    if (!extIntf) {
+      this.log.info(`extIntf is not explicitly defined, will use active WAN from routing_plugins instead`);
+      const routingPlugin = pl.getPluginInstance("routing", "global");
+      if (!routingPlugin) {
+        this.fatal("Global default routing plugin is not defined");
+      } else {
+        this.subscribeChangeFrom(routingPlugin);
+        const activeWANPlugins = routingPlugin.getActiveWANPlugins();
+        if (activeWANPlugins.length > 0) {
+          extPlugin = activeWANPlugins[0];
+          extIntf = extPlugin.name;
+        }
+      }
+    } else {
+      extPlugin = pl.getPluginInstance("interface", extIntf);
+      if (!extPlugin)
+        this.fatal(`External interface plugin ${extIntf} is not found on upnp ${this.name}`);
+      this.subscribeChangeFrom(extPlugin);
+    }
+    if (!extPlugin || !extIntf) {
+      this.log.error(`No active WAN is found, mdns reflector will not be applied on ${this.name}`);
+      return;
+    }
     const intfPlugin = pl.getPluginInstance("interface", this.name);
-    if (!extPlugin)
-      this.fatal(`External interface plugin ${extIntf} is not found on upnp ${this.name}`);
     if (!intfPlugin)
       this.fatal(`Internal interface plugin ${this.name} is not found on upnp ${this.name}`);
-    this.subscribeChangeFrom(extPlugin);
     this.subscribeChangeFrom(intfPlugin);
 
     const intState = await intfPlugin.state();
@@ -117,6 +135,7 @@ class UPnPPlugin extends Plugin {
       this.log.info(`Received event on ${this.name}`, e);
     const eventType = event.getEventType(e);
     switch (eventType) {
+      case event.EVENT_WAN_SWITCHED:
       case event.EVENT_IP_CHANGE: {
         this._reapplyNeeded = true;
         pl.scheduleReapply();

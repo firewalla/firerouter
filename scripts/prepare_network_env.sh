@@ -20,6 +20,9 @@ sudo iptables -w -t nat -A FR_POSTROUTING -j FR_PASSTHROUGH
 sudo iptables -w -t nat -N FR_SNAT &> /dev/null
 sudo iptables -w -t nat -F FR_SNAT &> /dev/null
 sudo iptables -w -t nat -A FR_POSTROUTING -j FR_SNAT
+sudo iptables -w -t nat -N FR_OUTPUT_SNAT &> /dev/null
+sudo iptables -w -t nat -F FR_OUTPUT_SNAT &> /dev/null
+sudo iptables -w -t nat -A FR_POSTROUTING -j FR_OUTPUT_SNAT
 
 sudo iptables -w -t mangle -N FR_PREROUTING &>/dev/null
 sudo iptables -w -t mangle -F FR_PREROUTING &>/dev/null
@@ -62,6 +65,9 @@ sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_PASSTHROUGH
 sudo ip6tables -w -t nat -N FR_SNAT &> /dev/null
 sudo ip6tables -w -t nat -F FR_SNAT &> /dev/null
 sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_SNAT
+sudo ip6tables -w -t nat -N FR_OUTPUT_SNAT &> /dev/null
+sudo ip6tables -w -t nat -F FR_OUTPUT_SNAT &> /dev/null
+sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_OUTPUT_SNAT
 
 sudo ip6tables -w -t mangle -N FR_PREROUTING &>/dev/null
 sudo ip6tables -w -t mangle -F FR_PREROUTING &>/dev/null

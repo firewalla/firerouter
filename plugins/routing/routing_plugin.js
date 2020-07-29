@@ -26,6 +26,8 @@ const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
 const lock = new AsyncLock();
 const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
+const wrapIptables = require('../../util/util.js').wrapIptables;
+const exec = require('child-process-promise').exec;
 
 class RoutingPlugin extends Plugin {
    
@@ -36,6 +38,7 @@ class RoutingPlugin extends Plugin {
     }
 
     this._wanStatus = {};
+    await this._flushOutputSNATRules();
 
     switch (this.name) {
       case "global": {
@@ -74,6 +77,29 @@ class RoutingPlugin extends Plugin {
             default: {
               this.log.error(`Unsupported routing type for ${this.name}: ${type}`);
             }
+          }
+        }
+      }
+    }
+  }
+
+  async _flushOutputSNATRules() {
+    await exec(wrapIptables(`sudo iptables -w -t nat -F FR_OUTPUT_SNAT`)).catch((err) => {});
+    await exec(wrapIptables(`sudo ip6tables -w -t nat -F FR_OUTPUT_SNAT`)).catch((err) => {});
+  }
+
+  async _refreshOutputSNATRules() {
+    await this._flushOutputSNATRules();
+    for (const srcIntf of Object.keys(this._wanStatus)) {
+      const srcIntfPlugin = this._wanStatus[srcIntf].plugin;
+      const state = await srcIntfPlugin.state();
+      if (state && state.ip4) {
+        const ip4Addr = state.ip4.split('/')[0];
+        for (const dstIntf of Object.keys(this._wanStatus)) {
+          if (dstIntf !== srcIntf) {
+            await exec(wrapIptables(`sudo iptables -t nat -A FR_OUTPUT_SNAT -s ${ip4Addr} -o ${dstIntf} -j MASQUERADE`)).catch((err) => {
+              log.error(`Failed to add output SNAT rule from ${ip4Addr} to ${dstIntf}`, err.message);
+            });
           }
         }
       }
@@ -129,7 +155,7 @@ class RoutingPlugin extends Plugin {
                 await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 // add route for DNS nameserver IP in global_default table
                 const dns = await viaIntfPlugin.getDNSNameservers();
-                if (_.isArray(dns) && dns.length !== 0) {
+                if (_.isArray(dns) && dns.length !== 0 && ready) {
                   for (const dnsIP of dns) {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
@@ -190,6 +216,18 @@ class RoutingPlugin extends Plugin {
                   await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
                   await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 }
+                // add route for DNS nameserver IP in global_default table
+                const dns = await viaIntfPlugin.getDNSNameservers();
+                if (_.isArray(dns) && dns.length !== 0 && ready) {
+                  for (const dnsIP of dns) {
+                    await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 4, true).catch((err) => {
+                      this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
+                    });
+                    await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", null, 4, true).catch((err) => {
+                      this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
+                    });
+                  }
+                }
               } else {
                 this.log.error("Failed to get IPv4 gateway of global default interface " + viaIntf);
               }
@@ -221,6 +259,7 @@ class RoutingPlugin extends Plugin {
           }
           default:
         }
+        await this._refreshOutputSNATRules();
         done(null);
       }, function(err, ret) {
         if (err)
