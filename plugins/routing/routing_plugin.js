@@ -503,9 +503,9 @@ class RoutingPlugin extends Plugin {
             wanSwitched: changeActiveWanNeeded
           };
         }
-        if (!currentStatus.ready && currentStatus.successCount >= 10) {
+        if (!currentStatus.ready && (currentStatus.successCount >= 10 || (currentStatus.successCount >= 2 && this.getActiveWANPlugins().length === 0))) {
           currentStatus.ready = true;
-          // need to be stricter if inactive WAN is back to ready 
+          // need to be stricter if inactive WAN is back to ready or fast failback if no WAN is active currently
           switch (type) {
             case "load_balance": {
               changeActiveWanNeeded = true;
