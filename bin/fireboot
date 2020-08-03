@@ -19,11 +19,17 @@ else
   test_network; rc=$?
 fi
 
-if [[ ! $rc -eq 0 ]]; then
+while [[ ! $rc -eq 0 ]]; do
   redis-cli set "fireboot:status" "network_down"
   redis-cli set "fireboot:network_down:code" $rc
-  exit $rc
-fi
+  if [[ $rc -eq 1 || $rc -eq 2 ]]; then
+    # do not retry if there is error from network config apply
+    exit $rc
+  else
+    # retry if error is from test_network
+    test_network; rc=$?
+  fi
+done
 redis-cli del "fireboot:network_down:code"
 
 update_timezone
