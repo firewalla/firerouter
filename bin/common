@@ -9,7 +9,7 @@ init_network_config() {
   api_ready=0
   while [[ timeout -gt 0 && api_ready -eq 0 ]]
   do
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
+    HTTP_STATUS_CODE=`curl -m10 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
     if [[ $HTTP_STATUS_CODE != 200 ]]; then
       sleep 10
     else
@@ -30,7 +30,7 @@ init_network_config() {
 
   if [[ ! -f /dev/shm/firerouter.prepared ]]; then
     echo "Preparing network environment ..."
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
+    HTTP_STATUS_CODE=`curl -m10 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
     if [[ $HTTP_STATUS_CODE != "200" ]]; then
       echo "Failed to prepare environment"
       _rc=2
@@ -41,7 +41,7 @@ init_network_config() {
 
   test $_rc -eq  0 || return $_rc
 
-  HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
+  HTTP_STATUS_CODE=`curl -m10 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
   if [[ $HTTP_STATUS_CODE != "200" ]]; then
     echo "Failed to apply current config"
     _rc=2
