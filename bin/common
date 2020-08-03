@@ -73,10 +73,13 @@ test_network() {
         fi
     fi
 
-    if ! nslookup -timeout=5 github.com; then
-         echo "DNS is unavailable"
-         _rc=4
-         continue
+    if ! dig +short +timeout=5 github.com && ! dig +short +timeout=5 +tcp github.com; then
+        echo "DNS is unavailable for dig github.com (both tcp & udp)"
+        if ! host -W 5 firewalla.encipher.io; then
+          echo "DNS is unavailable for host firewalla.encipher.io"
+          _rc=4
+          continue
+        fi
     fi
 
     _rc=0
