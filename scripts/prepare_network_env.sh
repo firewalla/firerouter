@@ -29,6 +29,8 @@ sudo iptables -w -t mangle -F FR_PREROUTING &>/dev/null
 sudo iptables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo iptables -w -t mangle -A PREROUTING -j FR_PREROUTING
 # restore fwmark for packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo iptables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
+# save the updated fwmark into the connmark, which may be used in tc filter actions
+sudo iptables -w -t mangle -A FR_PREROUTING -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
 
 sudo iptables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo iptables -w -t mangle -F FR_OUTPUT &> /dev/null
@@ -74,6 +76,8 @@ sudo ip6tables -w -t mangle -F FR_PREROUTING &>/dev/null
 sudo ip6tables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t mangle -A PREROUTING -j FR_PREROUTING
 # restore fwmark for packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo ip6tables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
+# save the updated fwmark into the connmark, which may be used in tc filter actions
+sudo ip6tables -w -t mangle -A FR_PREROUTING -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
 
 sudo ip6tables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo ip6tables -w -t mangle -F FR_OUTPUT &> /dev/null
