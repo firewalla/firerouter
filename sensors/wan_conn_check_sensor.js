@@ -41,15 +41,17 @@ class WanConnCheckSensor extends Sensor {
     const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin.isWAN());
     const defaultPingTestIP = this.config.ping_test_ip || "1.1.1.1";
     const pingTestCount = this.config.ping_test_count || 8;
+    const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       let active = true;
       const extraConf = wanIntfPlugin && wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.extra;
       const pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+      const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
       const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
       let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${pingTestIP} | grep "received" | awk '{print $4}'`;
       await exec(cmd).then((result) => {
-        if (!result || !result.stdout || Number(result.stdout.trim()) <= pingTestCount / 2) {
+        if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
           this.log.error(`Failed to pass ping test to ${pingTestIP} on ${wanIntfPlugin.name}`);
           active = false;
         }

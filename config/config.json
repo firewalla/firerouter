@@ -109,6 +109,7 @@
       "config": {
         "ping_test_ip": "1.1.1.1",
         "ping_test_count": 8,
+        "ping_success_rate": 0.5,
         "dns_test_domain": "github.com"
       }
     }
