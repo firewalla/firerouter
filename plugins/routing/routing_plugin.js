@@ -98,7 +98,7 @@ class RoutingPlugin extends Plugin {
         for (const dstIntf of Object.keys(this._wanStatus)) {
           if (dstIntf !== srcIntf) {
             await exec(wrapIptables(`sudo iptables -t nat -A FR_OUTPUT_SNAT -s ${ip4Addr} -o ${dstIntf} -j MASQUERADE`)).catch((err) => {
-              log.error(`Failed to add output SNAT rule from ${ip4Addr} to ${dstIntf}`, err.message);
+              this.log.error(`Failed to add output SNAT rule from ${ip4Addr} to ${dstIntf}`, err.message);
             });
           }
         }
