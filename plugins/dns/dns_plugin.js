@@ -105,7 +105,14 @@ class DNSPlugin extends Plugin {
             const wanIntf = wanIntfPlugins[0].name;
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            this.log.error(`No active WAN is found for dns ${this.name}`);
+            // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
+            const primaryWanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
+            if (primaryWanIntfPlugin) {
+              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${primaryWanIntfPlugin.name}`);
+              await fs.symlinkAsync(r.getInterfaceResolvConfPath(primaryWanIntfPlugin.name), this._getResolvFilePath());
+            } else {
+              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+            }
           }
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
@@ -129,7 +136,14 @@ class DNSPlugin extends Plugin {
             const wanIntf = wanIntfPlugins[0].name;
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            this.log.error(`No active WAN is for for dns ${this.name}`);
+            // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
+            const primaryWanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
+            if (primaryWanIntfPlugin) {
+              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${primaryWanIntfPlugin.name}`);
+              await fs.symlinkAsync(r.getInterfaceResolvConfPath(primaryWanIntfPlugin.name), this._getResolvFilePath());
+            } else {
+              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+            }
           }
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
