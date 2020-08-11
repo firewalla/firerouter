@@ -478,6 +478,7 @@ class RoutingPlugin extends Plugin {
           return;
         const intf = payload.intf;
         const active = payload.active || false;
+        const forceState = payload.forceState;
         if (!this._wanStatus[intf]) {
           this.log.warn(`Interface ${intf} is not defined in global routing plugin, ignore event`, e);
           return;
@@ -492,7 +493,7 @@ class RoutingPlugin extends Plugin {
         }
         let changeActiveWanNeeded = false;
         let changeDesc = null;
-        if (currentStatus.ready && currentStatus.failureCount >=2) {
+        if (currentStatus.ready && (forceState !== true && currentStatus.failureCount >=2 || forceState === false)) {
           currentStatus.ready = false;
           if (currentStatus.active)
             changeActiveWanNeeded = true;
@@ -503,7 +504,7 @@ class RoutingPlugin extends Plugin {
             wanSwitched: changeActiveWanNeeded
           };
         }
-        if (!currentStatus.ready && (currentStatus.successCount >= 10 || (currentStatus.successCount >= 2 && this.getActiveWANPlugins().length === 0))) {
+        if (!currentStatus.ready && (forceState !== false && (currentStatus.successCount >= 10 || (currentStatus.successCount >= 2 && this.getActiveWANPlugins().length === 0)) || forceState === true)) {
           currentStatus.ready = true;
           // need to be stricter if inactive WAN is back to ready or fast failback if no WAN is active currently
           switch (type) {

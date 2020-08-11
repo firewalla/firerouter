@@ -49,6 +49,7 @@ class WanConnCheckSensor extends Sensor {
       const pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
       const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
       const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
+      const forceState = (extraConf && extraConf.forceState) || undefined;
       let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${pingTestIP} | grep "received" | awk '{print $4}'`;
       await exec(cmd).then((result) => {
         if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
@@ -76,7 +77,7 @@ class WanConnCheckSensor extends Sensor {
         }
       }
 
-      const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active});
+      const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState});
       event.suppressLogging(e);
       wanIntfPlugin.propagateEvent(e);
     }));
