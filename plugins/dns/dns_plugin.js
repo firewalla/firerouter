@@ -45,6 +45,7 @@ class DNSPlugin extends Plugin {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dnsmasq`).catch((err) => {});
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dnsmasq`).catch((err) => {});
     await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
+    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq_local`).catch((err) => {});
   } 
 
   static async installSystemService() {
