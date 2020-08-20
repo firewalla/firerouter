@@ -38,6 +38,16 @@ sudo iptables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo iptables -
 # restore fwmark for output packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo iptables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
 
+sudo iptables -w -N FR_INPUT &> /dev/null
+sudo iptables -w -F FR_INPUT
+sudo iptables -w -C INPUT -j FR_INPUT &> /dev/null || sudo iptables -w -I INPUT -j FR_INPUT
+
+# chain for igmp proxy
+sudo iptables -w -N FR_IGMP &> /dev/null
+sudo iptables -w -F FR_IGMP
+
+sudo iptables -w -A FR_INPUT -j FR_IGMP
+
 sudo iptables -w -N FR_FORWARD &> /dev/null
 sudo iptables -w -F FR_FORWARD
 sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
@@ -47,6 +57,8 @@ sudo iptables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS -
 sudo iptables -w -N FR_PASSTHROUGH &> /dev/null
 sudo iptables -w -F FR_PASSTHROUGH
 sudo iptables -w -A FR_FORWARD -j FR_PASSTHROUGH
+
+sudo iptables -w -A FR_FORWARD -j FR_IGMP
 
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
