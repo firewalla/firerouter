@@ -479,8 +479,6 @@ class RoutingPlugin extends Plugin {
         if (this.name !== "global")
           return;
         const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || "single";
-        if (type === "single")
-          return;
         const intf = payload.intf;
         const active = payload.active || false;
         const forceState = payload.forceState;
@@ -500,7 +498,7 @@ class RoutingPlugin extends Plugin {
         let changeDesc = null;
         if (currentStatus.ready && (forceState !== true && currentStatus.failureCount >=2 || forceState === false)) {
           currentStatus.ready = false;
-          if (currentStatus.active)
+          if (currentStatus.active && type !== "single")
             changeActiveWanNeeded = true;
 
           changeDesc = {
