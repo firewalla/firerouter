@@ -179,6 +179,11 @@ class DNSPlugin extends Plugin {
         this.log.warn(`Interface ${this.name} is not enabled`);
         return;
       }
+      const state = await intfPlugin.state();
+      if (!state || !state.ip4) {
+        this.log.warn(`Interface ${this.name} does not have IPv4 address`);
+        return;
+      }
       await this.prepareEnvironment();
       await this.writeDNSConfFile();
       this._restartService();
