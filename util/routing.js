@@ -140,14 +140,14 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   }
 }
 
-async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4) {
+async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
   if (gateway) {
-    cmd = `sudo ip -${af} route add ${dest} via ${gateway} dev ${intf} table ${tableName}`;
+    cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${dest} via ${gateway} dev ${intf} table ${tableName}`;
   } else {
-    cmd = `sudo ip -${af} route add ${dest} dev ${intf} table ${tableName}`;
+    cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${dest} dev ${intf} table ${tableName}`;
   }
   if (preference)
     cmd = `${cmd} preference ${preference}`;
@@ -234,18 +234,22 @@ async function initializeInterfaceRoutingTables(intf) {
 
 async function createInterfaceRoutingRules(intf) {
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
+  await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
+  await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001, null, 6);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
 }
 
 async function removeInterfaceRoutingRules(intf) {
   await removePolicyRoutingRule("all", intf, `${intf}_local`, 501).catch((err) => {});
+  await removePolicyRoutingRule("all", "lo", `${intf}_local`, 501).catch((err) => {});
   await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001).catch((err) => {});
   await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001).catch((err) => {});
   await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6).catch((err) => {});
+  await removePolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6).catch((err) => {});
   await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6).catch((err) => {});
   await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6).catch((err) => {});
 }
