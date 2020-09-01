@@ -430,12 +430,18 @@ class RoutingPlugin extends Plugin {
   }
 
   getActiveWANPlugins() {
-    return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].active).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
+    if (this._wanStatus)
+      return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].active).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
+    else
+      return null;
   }
 
   getPrimaryWANPlugin() {
-    const iface = Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq)[0];
-    return this._wanStatus[iface].plugin;
+    if (this._wanStatus) {
+      const iface = Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq)[0];
+      return this._wanStatus[iface].plugin;
+    } else
+      return null;
   }
 
   getWANConnStates() {
@@ -453,7 +459,7 @@ class RoutingPlugin extends Plugin {
   }
 
   getWANConnState(name) {
-    if (this._wanStatus[name]) {
+    if (this._wanStatus && this._wanStatus[name]) {
       return {
         ready: this._wanStatus[name].ready,
         active: this._wanStatus[name].active
