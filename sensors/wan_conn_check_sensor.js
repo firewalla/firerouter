@@ -33,7 +33,7 @@ class WanConnCheckSensor extends Sensor {
         this._checkWanConnectivity().catch((err) => {
           this.log.error("Failed to do WAN connectivity check", err.message);
         });
-      }, 30000);
+      }, 20000);
     }, 60000);
   }
 
