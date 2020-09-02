@@ -49,8 +49,8 @@ class DNSPlugin extends Plugin {
 
   static async installSystemService() {
     let content = await fs.readFileAsync(dnsServiceFileTemplate, {encoding: 'utf8'});
-    content = content.replace("%WORKING_DIRECTORY%", r.getFireRouterHome());
-    content = content.replace("%DNS_DIRECTORY%", r.getTempFolder());
+    content = content.replace(/%WORKING_DIRECTORY%/g, r.getFireRouterHome());
+    content = content.replace(/%DNS_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_dns.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
@@ -59,8 +59,8 @@ class DNSPlugin extends Plugin {
 
   static async installDNSScript() {
     let content = await fs.readFileAsync(dnsScriptTemplate, {encoding: 'utf8'});
-    content = content.replace("%FIREROUTER_HOME%", r.getFireRouterHome());
-    content = content.replace("%DNSMASQ_BINARY%", r.getFireRouterHome() + "/bin/dnsmasq");    
+    content = content.replace(/%FIREROUTER_HOME%/g, r.getFireRouterHome());
+    content = content.replace(/%DNSMASQ_BINARY%/g, r.getFireRouterHome() + "/bin/dnsmasq");
     const targetFile = r.getTempFolder() + "/dns.sh";
     await fs.writeFileAsync(targetFile, content);
   }
@@ -100,62 +100,12 @@ class DNSPlugin extends Plugin {
         const routingPlugin = pl.getPluginInstance("routing", this.name) || pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
           this.subscribeChangeFrom(routingPlugin);
-          const defaultRoute = routingPlugin.networkConfig.default;
-          if (!defaultRoute)
-            this.fatal(`Default route is not set in ${routingPlugin.name}`);
-          const type = defaultRoute.type || "single";
-          switch (type) {
-            case "single": {
-              const wanIntf = defaultRoute.viaIntf;
-              if (wanIntf) {
-                await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
-              } else {
-                this.fatal(`Cannot find WAN interface for ${this.name}`);
-              }
-              break;
-            }
-            case "primary_standby": {
-              const primaryIntf = defaultRoute.viaIntf;
-              let primaryNameservers = [];
-              const standbyIntf = defaultRoute.viaIntf2;
-              let standbyNameservers = [];
-              if (primaryIntf && standyIntf) {
-                primaryNameservers = await fs.readFileAsync(r.getInterfaceResolvConfPath(primaryIntf), {encoding: "utf8"}).then((content) => content.split("\n").filter(l => l.length > 0)).catch((err) => {
-                  this.log.error(`Failed to get nameservers for ${primaryIntf}`, err);
-                  return [];
-                });
-              } else {
-                this.log.error(`Cannot find primary WAN interface for ${this.name}`);
-              }
-              if (standyIntf) {
-                standbyNameservers = await fs.readFileAsync(r.getInterfaceResolvConfPath(standbyIntf), {encoding: "utf8"}).then((content) => content.split("\n").filter(l => l.length > 0)).catch((err) => {
-                  this.log.error(`Failed to get nameservers for ${standbyIntf}`, err);
-                  return [];
-                });
-              } else {
-                this.log.error(`Cannot find standby WAN interface for ${this.name}`);
-              }
-              await fs.writeFileAsync(this._getResolvFilePath(), primaryNameservers.concat(standbyNameservers).join("\n"));
-              break;
-            }
-            case "load_balance": {
-              const nextHops = defaultRoute.nextHops;
-              let nameservers = [];
-              for (let nextHop of nextHops) {
-                const wanIntf = nextHop.viaIntf;
-                if (wanIntf) {
-                  const intfNameservers = await fs.readFileAsync(r.getInterfaceResolvConfPath(wanIntf), {encoding: "utf8"}).then((content) => content.split("\n").filter(l => l.length > 0)).catch((err) => {
-                    this.log.error(`Failed to get nameservers for ${wanIntf}`, err);
-                    return [];
-                  });
-                  nameservers = nameservers.concat(intfNameservers);
-                } else {
-                  this.log.error(`Cannot find WAN interface for ${this.name}`);
-                }
-              }
-              await fs.writeFileAsync(this._getResolvFilePath(), nameservers.join("\n"));
-              break;
-            }
+          const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
+          if (wanIntfPlugins.length > 0) {
+            const wanIntf = wanIntfPlugins[0].name;
+            await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
+          } else {
+            this.log.error(`No active WAN is found for dns ${this.name}`);
           }
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
@@ -174,13 +124,15 @@ class DNSPlugin extends Plugin {
         const routingPlugin = pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
           this.subscribeChangeFrom(routingPlugin);
-          const wanIntf = routingPlugin.networkConfig && routingPlugin.networkConfig.default && routingPlugin.networkConfig.default.viaIntf;
-          if (wanIntf) {
+          const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
+          if (wanIntfPlugins.length > 0) {
+            const wanIntf = wanIntfPlugins[0].name;
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            this.fatal(`Cannot find WAN interface for ${this.name}`);
-            return;
+            this.log.error(`No active WAN is for for dns ${this.name}`);
           }
+        } else {
+          this.fatal(`Cannot find routing plugin for ${this.name}`);
         }
       }
     }
@@ -191,7 +143,9 @@ class DNSPlugin extends Plugin {
   _restartService() {
     if (!_restartTask) {
       _restartTask = setTimeout(() => {
-        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns");
+        exec("sudo systemctl stop firerouter_dns; sudo systemctl start firerouter_dns").catch((err) => {
+          this.log.warn("Failed to restart firerouter_dns", err.message);
+        });
         _restartTask = null;
       }, 5000);
     }
@@ -206,6 +160,10 @@ class DNSPlugin extends Plugin {
       if (!this._intfUuid)
         this.fatal(`Cannot find interface uuid for ${this.name}`);
       this.subscribeChangeFrom(intfPlugin);
+      if (!intfPlugin.networkConfig.enabled) {
+        this.log.warn(`Interface ${this.name} is not enabled`);
+        return;
+      }
       await this.prepareEnvironment();
       await this.writeDNSConfFile();
       this._restartService();

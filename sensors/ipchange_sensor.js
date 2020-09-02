@@ -26,34 +26,43 @@ class IPChangeSensor extends Sensor {
 
   async run() {
     sclient.on("message", (channel, message) => {
+      let eventType = event.EVENT_IP_CHANGE;
       switch (channel) {
         case "pppoe.ip_change":
-        case "dhclient.ip_change": {
-          const iface = message;
-          const intfPlugin = pl.getPluginInstance("interface", iface);
-          if (intfPlugin) {
-            const e = event.buildEvent(event.EVENT_IP_CHANGE, {intf: iface});
-            if (this.config.delay) {
-              setTimeout(() => {
-                intfPlugin.propagateEvent(e);
-              }, this.config.delay * 1000);
-            } else {
-              intfPlugin.propagateEvent(e);
-            }
-            const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
-            if (uuid) {
-              // publish to redis db used by Firewalla
-              exec(`redis-cli publish "firerouter.iface.ip_change" "${uuid}"`);
-            }
-          }
+        case "dhclient.ip_change":
+        case "dhcpcd6.ip_change": {
+          eventType = event.EVENT_IP_CHANGE;
           break;
         }
+        case "dhcpcd6.pd_change":
+          eventType = event.EVENT_PD_CHANGE;
+          break;
         default:
+          return;
+      }
+      const iface = message;
+      const intfPlugin = pl.getPluginInstance("interface", iface);
+      if (intfPlugin) {
+        const e = event.buildEvent(eventType, { intf: iface });
+        if (this.config.delay) {
+          setTimeout(() => {
+            intfPlugin.propagateEvent(e);
+          }, this.config.delay * 1000);
+        } else {
+          intfPlugin.propagateEvent(e);
+        }
+        const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+        if (uuid) {
+          // publish to redis db used by Firewalla
+          exec(`redis-cli publish "firerouter.iface.ip_change" "${uuid}"`);
+        }
       }
     });
 
     sclient.subscribe("dhclient.ip_change");
     sclient.subscribe("pppoe.ip_change");
+    sclient.subscribe("dhcpcd6.ip_change");
+    sclient.subscribe("dhcpcd6.pd_change");
   }
 }
 

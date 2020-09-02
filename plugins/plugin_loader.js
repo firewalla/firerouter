@@ -23,6 +23,7 @@ let pluginConfs = [];
 let pluginCategoryMap = {};
 
 let scheduledReapplyTask = null;
+let restartRsyslogTask = null;
 
 const _ = require('lodash');
 const Promise = require('bluebird');
@@ -90,17 +91,12 @@ function _isConfigEqual(c1, c2) {
   const c1Copy = JSON.parse(JSON.stringify(c1));
   const c2Copy = JSON.parse(JSON.stringify(c2));
 
-  if (c1Copy.meta)
-    delete c1Copy["meta"];
-  if (c2Copy.meta)
-    delete c2Copy["meta"];
+  // ignore name change
+  if (c1Copy.meta && c1Copy.meta.name)
+    delete c1Copy.meta["name"];
+  if (c2Copy.meta && c2Copy.meta.name)
+    delete c2Copy.meta["name"];
 
-  // considered as changed if uuid is changed
-  if (c1.meta && c1.meta.uuid)
-    c1Copy.meta = {uuid: c1.meta.uuid};
-  if (c2.meta && c2.meta.uuid)
-    c2Copy.meta = {uuid: c2.meta.uuid};
-  
   return _.isEqual(c1Copy, c2Copy);
 }
 
@@ -109,12 +105,18 @@ async function _publishChangeApplied() {
   await exec(`redis-cli publish "firerouter.change_applied" ""`);
 }
 
+async function _publishIfaceChangeApplied() {
+  // publish to redis db used by Firewalla
+  await exec(`redis-cli publish "firerouter.iface_change_applied" ""`);
+}
+
 async function reapply(config, dryRun = false) {
   return new Promise((resolve, reject) => {
     lock.acquire(LOCK_REAPPLY, async function(done) {
       const errors = [];
       let newPluginCategoryMap = {};
       let changeApplied = false;
+      let ifaceChangeApplied = false;
       const reversedPluginConfs = pluginConfs.reverse();
       // if config is not set, simply reapply effective config
       if (config) {
@@ -166,6 +168,8 @@ async function reapply(config, dryRun = false) {
                 log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
                 await instance.flush();
                 changeApplied = true;
+                if (pluginConf.category === "interface")
+                  ifaceChangeApplied = true;
               }
               instance.propagateConfigChanged(true);
               instance.unsubscribeAllChanges();
@@ -190,6 +194,8 @@ async function reapply(config, dryRun = false) {
                 log.info("Flushing old config", pluginConf.category, instance.name);
                 await instance.flush();
                 changeApplied = true;
+                if (pluginConf.category === "interface")
+                  ifaceChangeApplied = true;
               }
               instance.unsubscribeAllChanges();
             }
@@ -219,6 +225,8 @@ async function reapply(config, dryRun = false) {
                 errors.push(err.message || err);
               });
               changeApplied = true;
+              if (pluginConf.category === "interface")
+                  ifaceChangeApplied = true;
             } else {
               log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
             }
@@ -229,6 +237,8 @@ async function reapply(config, dryRun = false) {
       pluginCategoryMap = newPluginCategoryMap;
       if (changeApplied)
         await _publishChangeApplied();
+      if (ifaceChangeApplied)
+        await _publishIfaceChangeApplied();
       done(null, errors);
       return;
     }, function(err, ret) {
@@ -250,10 +260,21 @@ function scheduleReapply() {
   }
 }
 
+function scheduleRestartRsyslog() {
+  if (restartRsyslogTask)
+    clearTimeout(restartRsyslogTask);
+  restartRsyslogTask = setTimeout(() => {
+    exec(`sudo systemctl restart rsyslog`).catch((err) => {
+      log.error("Failed to restart rsyslog", err.message);
+    });
+  }, 5000);
+}
+
 module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
   getPluginInstances: getPluginInstances,
   reapply: reapply,
-  scheduleReapply: scheduleReapply
+  scheduleReapply: scheduleReapply,
+  scheduleRestartRsyslog: scheduleRestartRsyslog
 };

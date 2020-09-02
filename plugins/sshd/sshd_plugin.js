@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019 - 2020 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -18,17 +18,35 @@
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
-const r = require('../../util/firerouter');
+const r = require('../../util/firerouter.js');
 const event = require('../../core/event.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+const serverKeyDir = `${r.getUserConfigFolder()}/sshd/keys`;
+const keyAlgorithms = ['dsa', 'ecdsa', 'ed25519', 'rsa'];
+
 
 class SSHDPlugin extends Plugin {
 
+  static getKeyFilePath(alg) {
+    return `${serverKeyDir}/ssh_host_${alg}_key`;
+  }
+
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/sshd`)
+    await exec(`mkdir -p ${r.getUserConfigFolder()}/sshd`);
+    await SSHDPlugin.ensureGenerateHostKeys();
+  }
+
+  static async ensureGenerateHostKeys() {
+    await exec(`mkdir -p ${serverKeyDir}`);
+    for (const alg of keyAlgorithms) {
+      const keyFilePath = SSHDPlugin.getKeyFilePath(alg);
+      await fs.accessAsync(keyFilePath, fs.constants.F_OK).catch((err) => {
+        return exec(`sudo ssh-keygen -f ${keyFilePath} -N '' -q -t ${alg}`).catch((err) => {});
+      });
+    }
   }
 
   async flush() {

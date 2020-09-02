@@ -1,0 +1,10 @@
+/var/log/dhcpcd.log
+{
+  rotate 7
+  daily
+  missingok
+  notifempty
+  compress
+  delaycompress
+  nocreate
+}

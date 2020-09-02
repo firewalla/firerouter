@@ -17,29 +17,39 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
+const pl = require('../plugin_loader.js');
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {
-        this.log.error(`Failed to bring down interface ${this.name}`, err.message);
-      });
-      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {
-        this.log.error(`Failed to delete bridge ${this.name}`, err.message);
-      });
+      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
+      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {});
     }
   }
 
   async createInterface() {
-    for(const intf of this.networkConfig.intf) {
+    for (const intf of this.networkConfig.intf) {
       await exec(`sudo ip addr flush dev ${intf}`);
+      const intfPlugin = pl.getPluginInstance("interface", intf);
+      if (intfPlugin) {
+        // this is useful if it is a passthrough bridge
+        this.subscribeChangeFrom(intfPlugin);
+      } else {
+        this.fatal(`Lower interface plugin not found ${intf}`);
+      }
     }
 
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
     });
+    // no need to enable stp if there is only one interface in bridge
+    if (this.networkConfig.intf.length > 1) {
+      await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
+        this.log.error(`Failed to enable stp on bridge interface ${this.name}`, err.message);
+      });
+    }
     await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
       this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
     });

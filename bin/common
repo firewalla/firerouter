@@ -22,7 +22,7 @@ init_network_config() {
     _rc=1
   fi
 
-  test $_rc -eq  0 || exit $_rc
+  test $_rc -eq  0 || return $_rc
   echo "FireRouter API is available"
 
   redis-cli set "fireboot:status" "apply_network"
@@ -39,7 +39,7 @@ init_network_config() {
     fi
   fi
 
-  test $_rc -eq  0 || exit $_rc
+  test $_rc -eq  0 || return $_rc
 
   HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/apply_current_config' -XPOST -H 'Content-Type: application/json' -d {}`
   if [[ $HTTP_STATUS_CODE != "200" ]]; then
@@ -47,22 +47,47 @@ init_network_config() {
     _rc=2
   fi
 
-  test $_rc -eq  0 || exit $_rc
+  test $_rc -eq  0 || return $_rc
 
   echo "Successfully apply last network config"
 
   redis-cli set "fireboot:status" "test_network"
   echo "Testing network connectivity ..."
 
-  retry=10
+  retry=30
   while [[ $retry -gt 0 ]]; do
-    sleep 5;
+    redis-cli set "fireboot:status:code" $retry
+    sleep 3;
     (( retry-- ))
-    nc -z 1.1.1.1 443 || (echo "Network is unavailable" && _rc=3; continue;)
-    nslookup -timeout=10 github.com || (echo "DNS is unavailable" && _rc=4; continue;)
+
+    if ! nc -w 5 -z 1.1.1.1 443; then
+        echo "Unable to reach 1.1.1.1, trying 8.8.8.8 ..."
+        if ! nc -w 5 -z 8.8.8.8 53; then
+          echo "Unable to reach 8.8.8.8"
+          _rc=3
+          continue
+        fi
+    fi
+
+    if ! nslookup -timeout=5 github.com; then
+         echo "DNS is unavailable"
+         _rc=4
+         continue
+    fi
+
     _rc=0
     break;
   done
-  test $_rc -eq 0 || exit $_rc
+  test $_rc -eq 0 || return $_rc
   echo "Network connectivity test succeeded"
+}
+
+update_timezone() {
+  FW_TIMEZONE=$(redis-cli hget sys:config timezone)
+  FW_ACTUAL_TIMEZONE=$(cat /etc/timezone)
+  if [[ "x$FW_TIMEZONE" != "x" && "x$FW_TIMEZONE" != "x$FW_ACTUAL_TIMEZONE" ]]; then
+    sudo timedatectl set-timezone $FW_TIMEZONE
+    sudo systemctl restart cron.service # this is to ensure cron jobs are set to the right timezone
+    sudo systemctl restart rsyslog
+  fi
 }
