@@ -33,6 +33,17 @@
         ],
         "enabled": true
       }
+    },
+    "openvpn": {
+      "tun_fwvpn": {
+        "meta": {
+          "name": "Firewalla VPN",
+          "type": "lan"
+        },
+        "enabled": false,
+        "instance": "server",
+        "type": "server"
+      }
     }
   },
   "routing": {
@@ -47,6 +58,9 @@
       "useNameserversFromWAN": true
     },
     "br0": {
+      "useNameserversFromWAN": true
+    },
+    "tun_fwvpn": {
       "useNameserversFromWAN": true
     }
   },

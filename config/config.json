@@ -25,6 +25,18 @@
       "init_seq": 4
     },
     {
+      "file_path": "./interface/bond_intf_plugin.js",
+      "config_path": "interface.bond",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
+      "file_path": "./interface/openvpn_intf_plugin.js",
+      "config_path": "interface.openvpn",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
@@ -49,9 +61,33 @@
       "init_seq": 8
     },
     {
+      "file_path": "./dhcp/dhcp6_plugin.js",
+      "config_path": "dhcp6",
+      "category": "dhcp6",
+      "init_seq": 8
+    },
+    {
       "file_path": "./sshd/sshd_plugin.js",
       "config_path": "sshd",
       "category": "sshd",
+      "init_seq": 9
+    },
+    {
+      "file_path": "./upnp/upnp_plugin.js",
+      "config_path": "upnp",
+      "category": "upnp",
+      "init_seq": 9
+    },
+    {
+      "file_path": "./nat_passthrough/nat_passthrough_plugin.js",
+      "config_path": "nat_passthrough",
+      "category": "nat_passthrough",
+      "init_seq": 9
+    },
+    {
+      "file_path": "./mdns_reflector/mdns_reflector_plugin.js",
+      "config_path": "mdns_reflector",
+      "category": "mdns_reflector",
       "init_seq": 9
     }
   ],

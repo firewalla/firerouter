@@ -1,0 +1,23 @@
+#!/bin/sh
+
+ip_changed=""
+
+case "$reason" in
+  BOUND|REBOOT)
+    ip_changed="1"
+    ;;
+  RENEW|REBIND)
+    if [ -n "$old_ip_address" ] && [ "$old_ip_address" != "$new_ip_address" ]; then
+      ip_changed="1"
+    fi
+    ;;
+  TIMEOUT)
+    if [ "$exit_status" == "0" ]; then
+      ip_changed="1"
+    fi
+    ;;
+esac
+
+if [ -n "$ip_changed" ]; then
+  redis-cli -n 1 publish "dhclient.ip_change" "$interface"
+fi

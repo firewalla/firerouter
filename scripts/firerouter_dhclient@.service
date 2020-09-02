@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter DHCP Client
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/sbin/dhclient -1 -pf "/run/dhclient.%i.pid" -lf "/var/lib/dhcp/dhclient.%i.leases" %i -e rt_tables="main %i_local" -e default_rt_tables="main %i_default"
+RemainAfterExit=true

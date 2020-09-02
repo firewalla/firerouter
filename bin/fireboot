@@ -1,11 +1,25 @@
 #!/bin/bash
 
+sleep 3
+
+redis-cli del "fireboot:status"
+redis-cli del "fireboot:network_down:code"
+
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
 source ${FIREROUTER_HOME}/bin/common
 
 # step 1 - init network config
-init_network_config
+rc=0
+init_network_config; rc=$?
+if [[ ! $rc -eq 0 ]]; then
+  redis-cli set "fireboot:status" "network_down"
+  redis-cli set "fireboot:network_down:code" $rc
+  exit $rc
+fi
+redis-cli del "fireboot:network_down:code"
+
+update_timezone
 
 # step 2 - upgrade firerouter
 redis-cli set "fireboot:status" "firerouter_check_upgrade"
@@ -15,6 +29,8 @@ echo "Upgrading FireRouter ..."
 
 # step 3 - restart firerouter and init network config again
 if [[ -f /dev/shm/firerouter.upgraded ]]; then
+  # need to redo prepare network if firerouter is upgraded
+  rm -f /dev/shm/firerouter.prepared
   redis-cli set "fireboot:status" "firerouter_upgrade"
   echo "Restarting FireRouter ..."
   sudo systemctl restart firerouter
@@ -32,8 +48,11 @@ sudo systemctl start fireupgrade
 # step 5 - start firewalla
 redis-cli set "fireboot:status" "firewalla"
 echo "Starting Firewalla ..."
+touch /home/pi/.firewalla/managed_reboot
 sudo systemctl start firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"
+
+update_timezone
 
 exit 0

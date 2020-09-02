@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019 - 2020 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -41,7 +41,7 @@ async function createCustomizedRoutingTable(tableName) {
     const name = line[1];
     usedTid.push(tid);
     if (name === tableName) {
-      log.info("Table with same name already exists: " + tid);
+      log.debug("Table with same name already exists: " + tid);
       return Number(tid);
     }
   }
@@ -68,10 +68,8 @@ async function createCustomizedRoutingTable(tableName) {
   return id;
 }
 
-async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark) {
+async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, af = 4) {
   from = from || "all";
-  let cmd = "ip rule list"; 
-  let result = await exec(cmd);
   let rule = `from ${from} `;
   if (fwmark) {
     if (_.isString(fwmark) && fwmark.includes("/")) {
@@ -86,14 +84,18 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark) {
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  result = result.stdout.replace(/\[detached\] /g, "");
-  if (result.includes(rule)) {
-    log.info("Same policy routing rule already exists: ", rule);
-    return;
-  }
   if (priority)
     rule = `${rule} priority ${priority}`;
-  cmd = `sudo ip rule add ${rule}`;
+  let cmd = `ip -${af} rule list ${rule}`;
+  let result = await exec(cmd).then(r => r.stdout).catch((err) => {
+    log.debug(`Failed to list rule with command ${cmd}`, err.message);
+    return "";
+  });
+  if (result.length > 0) {
+    log.debug("Same policy routing rule already exists: ", rule);
+    return;
+  }
+  cmd = `sudo ip -${af} rule add ${rule}`;
   log.info("Create new policy routing rule: ", cmd);
   result = await exec(cmd);
   if (result.stderr !== "") {
@@ -102,11 +104,8 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark) {
   }
 }
 
-async function removePolicyRoutingRule(from, iif, tableName, fwmark) {
+async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, af = 4) {
   from = from || "all";
-  let cmd = "ip rule list";
-  let result = await exec(cmd);
-  result = result.stdout.replace(/\[detached\] /g, "");
   let rule = `from ${from} `;
   if (fwmark) {
     if (_.isString(fwmark) && fwmark.includes("/")) {
@@ -121,11 +120,18 @@ async function removePolicyRoutingRule(from, iif, tableName, fwmark) {
   if (iif && iif !== "")
     rule = `${rule}iif ${iif} `;
   rule = `${rule}lookup ${tableName}`;
-  if (!result.includes(rule)) {
-    log.info("Policy routing rule does not exist: ", rule);
+  if (priority)
+    rule = `${rule} priority ${priority}`;
+  let cmd = `ip -${af} rule list ${rule}`;
+  let result = await exec(cmd).then(r => r.stdout).catch((err) => {
+    log.debug(`Failed to list rule with command ${cmd}`, err.message);
+    return "";
+  });
+  if (result.length === 0) {
+    log.debug("Policy routing rule does not exist: ", rule);
     return;
   }
-  cmd = `sudo ip rule del ${rule}`;
+  cmd = `sudo ip -${af} rule del ${rule}`;
   log.info("Remove policy routing rule: ", cmd);
   result = await exec(cmd);
   if (result.stderr !== "") {
@@ -134,14 +140,14 @@ async function removePolicyRoutingRule(from, iif, tableName, fwmark) {
   }
 }
 
-async function addRouteToTable(dest, gateway, intf, tableName, preference) {
+async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
   if (gateway) {
-    cmd = `sudo ip route add ${dest} via ${gateway} dev ${intf} table ${tableName}`;
+    cmd = `sudo ip -${af} route add ${dest} via ${gateway} dev ${intf} table ${tableName}`;
   } else {
-    cmd = `sudo ip route add ${dest} dev ${intf} table ${tableName}`;
+    cmd = `sudo ip -${af} route add ${dest} dev ${intf} table ${tableName}`;
   }
   if (preference)
     cmd = `${cmd} preference ${preference}`;
@@ -152,10 +158,10 @@ async function addRouteToTable(dest, gateway, intf, tableName, preference) {
   }
 }
 
-async function addMultiPathRouteToTable(dest, tableName,  ...multipathDesc) {
+async function addMultiPathRouteToTable(dest, tableName, af = 4, ...multipathDesc) {
   let cmd = null;
   dest = dest || "default";
-  cmd =  `sudo ip route add ${dest}`;
+  cmd =  `sudo ip -${af} route add ${dest}`;
   tableName = tableName || "main";
   cmd = `${cmd} table ${tableName}`;
   for (let desc of multipathDesc) {
@@ -176,11 +182,11 @@ async function addMultiPathRouteToTable(dest, tableName,  ...multipathDesc) {
   }
 }
 
-async function removeRouteFromTable(dest, gateway, intf, tableName) {
+async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
-  cmd = `sudo ip route del ${dest}`;
+  cmd = `sudo ip -${af} route del ${dest}`;
   if (gateway) {
     cmd = `${cmd} via ${gateway}`;
   }
@@ -196,20 +202,24 @@ async function removeRouteFromTable(dest, gateway, intf, tableName) {
 }
 
 async function flushRoutingTable(tableName) {
-  let cmd = `sudo ip route flush table ${tableName}`;
-  let result = await exec(cmd);
-  if (result.stderr !== "") {
-    log.error("Failed to flush routing table.", result.stderr);
-    throw result.stderr;
+  const cmds = [`sudo ip route flush table ${tableName}`, `sudo ip -6 route flush table ${tableName}`];
+  for (const cmd of cmds) {
+    let result = await exec(cmd);
+    if (result.stderr !== "") {
+      log.error("Failed to flush routing table.", result.stderr);
+      throw result.stderr;
+    }
   }
 }
 
 async function flushPolicyRoutingRules() {
-  const cmd = "sudo ip rule flush";
-  let result = await exec(cmd);
-  if (result.stderr !== "") {
-    log.error("Failed to flush policy routing rules.", result.stderr);
-    throw result.stderr;
+  const cmds = [`sudo ip rule flush`, `sudo ip -6 rule flush`];
+  for (const cmd of cmds) {
+    let result = await exec(cmd);
+    if (result.stderr !== "") {
+      log.error("Failed to flush policy routing rules.", result.stderr);
+      throw result.stderr;
+    }
   }
 }
 
@@ -226,24 +236,32 @@ async function createInterfaceRoutingRules(intf) {
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
+  await createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
+  await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001, null, 6);
+  await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
 }
 
 async function removeInterfaceRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, `${intf}_local`);
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`);
-  await removePolicyRoutingRule("all", intf, `${intf}_default`);
+  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501).catch((err) => {});
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6).catch((err) => {});
+  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6).catch((err) => {});
 }
 
 async function createInterfaceGlobalRoutingRules(intf) {
   await createPolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001);
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6);
 }
 
 async function removeInterfaceGlobalRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT);
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6).catch((err) => {});
 }
 
-async function getInterfaceGWIP(intf) {
-  const nextHop = await exec(`ip r show table ${intf}_default | grep default | awk '{print $3}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
+async function getInterfaceGWIP(intf, af = 4) {
+  const nextHop = await exec(`ip -${af} r show table ${intf}_default | grep default | awk '{print $3}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
   return nextHop;
 }
 

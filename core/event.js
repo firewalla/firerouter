@@ -32,5 +32,7 @@ module.exports = {
   getEventPayload: getEventPayload,
   EVENT_IF_UP: "ifup",
   EVENT_IF_DOWN: "ifdown",
-  EVENT_IP_CHANGE: "ipchange"
+  EVENT_IP_CHANGE: "ipchange",
+  EVENT_PD_CHANGE: "pdchange",
+  EVENT_WAN_CONN_CHECK: "wan_conn_check"
 };

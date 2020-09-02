@@ -29,26 +29,25 @@ const pppoeTemplateFilePath = `${r.getFireRouterHome()}/etc/ppp.conf.template`
 class PPPoEInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    const pppIpUpScriptPath = `${r.getFireRouterHome()}/scripts/ppp_ip_up`;
-    await exec(`sudo rm /etc/ppp/ip-up.d/*`).catch((err) => {});
-    await exec(`sudo cp ${pppIpUpScriptPath} /etc/ppp/ip-up.d/`).catch((err) => {});
+    // copy pppd hook script
+    await exec(`sudo rm /etc/ppp/ip-up.d/firerouter_*`).catch((err) => {});
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ppp_ip_up /etc/ppp/ip-up.d/`).catch((err) => {});
     await exec(`mkdir -p ${r.getUserConfigFolder()}/pppoe`).catch((err) => {});
-  }
-
-  _getPPPDPidFilePath() {
-    return `/run/ppp-${this.name}.pid`;
+    // copy firerouter_pppd.service
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
+    await exec("sudo systemctl daemon-reload");
   }
 
   async flushIP() {
-    await exec(`cat ${this._getPPPDPidFilePath()}`).then((result) => exec(`sudo kill -9 ${result.stdout.trim()}`)).catch((err) => {});
+    await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
     await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
   }
 
-  async isWAN() {
+  isWAN() {
     return true;
   }
 
-  async isLAN() {
+  isLAN() {
     return false;
   }
 
@@ -90,9 +89,11 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
 
   async interfaceUpDown() {
     if (this.networkConfig.enabled) {
-      await exec(`sudo pppd file ${this._getConfFilePath()}`);
+      await exec(`sudo systemctl restart firerouter_pppd@${this.name}`).catch((err) => {
+        this.log.error(`Failed to enable pppd on interface ${this.name}: ${err.message}`);
+      });
     } else {
-      await exec(`cat ${this._getPPPDPidFilePath()}`).then((result) => exec(`sudo kill -9 ${result.stdout.trim()}`)).catch((err) => {});
+      await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
     }
   }
 

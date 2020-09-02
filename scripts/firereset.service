@@ -3,6 +3,7 @@ Description=FireReset
 After=network.target
 
 [Service]
+Environment="FIREROUTER_HOME=/home/pi/firerouter"
 User=root
 Restart=always
 RestartSec=5

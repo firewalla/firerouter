@@ -1,0 +1,33 @@
+# WAN network interface
+ext_ifname=%EXTERNAL_INTERFACE%
+
+listening_ip=%LISTENING_IP%
+
+minissdpdsocket=/var/run/minissdpd.%INTERNAL_INTERFACE%.sock
+
+enable_natpmp=%ENABLE_NATPMP%
+enable_upnp=%ENABLE_UPNP%
+
+upnp_nat_chain=UPNP_%INTERNAL_INTERFACE%
+
+lease_file=/var/run/upnp.%INTERNAL_INTERFACE%.leases
+
+friendly_name=Firewalla Gold
+manufacturer_name=Firewalla
+manufacturer_url=https://firewalla.com
+model_name=Firewalla Gold
+model_description=Firewalla Gold
+model_url=https://firewalla.com
+
+secure_mode=yes
+
+clean_ruleset_threshold=20
+clean_ruleset_interval=600
+
+uuid=%UUID%
+
+deny 1194 0.0.0.0/0 0-65535
+deny 8833-8834 0.0.0.0/0 0-65535
+deny 8837 0.0.0.0/0 0-65535
+allow 1024-65535 %INTERNAL_NETWORK% 1024-65535
+deny 0-65535 0.0.0.0/0 0-65535
