@@ -41,8 +41,7 @@ echo "Upgrading FireRouter ..."
 
 
 # step 3 - restart firerouter and init network config again
-branch_changed=$(redis-cli hget fr:sys:config branch.changed)
-if [[ -f /dev/shm/firerouter.upgraded || "x$branch_changed" != "x" ]]; then
+if [[ -f /dev/shm/firerouter.upgraded ]]; then
 
   if [[ $NETWORK_SETUP == "yes" ]]; then
     # need to redo prepare network if firerouter is upgraded or branch is changed
@@ -57,7 +56,6 @@ if [[ -f /dev/shm/firerouter.upgraded || "x$branch_changed" != "x" ]]; then
   fi
 
   rm -f /dev/shm/firerouter.upgraded
-  redis-cli hdel fr:sys:config branch.changed
   echo "Restarting FireReset ..."
   sudo systemctl restart firereset
 fi
