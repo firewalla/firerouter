@@ -530,6 +530,8 @@ class InterfaceBasePlugin extends Plugin {
     const duplex = await this._getSysFSClassNetValue("duplex");
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
+    const txBytes = await this._getSysFSClassNetValue("statistics/tx_bytes");
+    const rxBytes = await this._getSysFSClassNetValue("statistics/rx_bytes");
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -543,7 +545,7 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     if (this.isWAN())
       wanConnState = this._getWANConnState(this.name);
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, gateway6, dns, rtid, wanConnState};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip6, gateway, gateway6, dns, rtid, wanConnState};
   }
 
   onEvent(e) {
