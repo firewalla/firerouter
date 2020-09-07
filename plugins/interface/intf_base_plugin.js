@@ -250,34 +250,7 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhcpcd6/${this.name}.conf`;
   }
 
-  async applyIpDnsSettings() {
-    if (this.networkConfig.dhcp) {
-      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
-        this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
-      });
-
-      await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
-        this.log.info(`Remove old resolv conf for ${this.name}`);
-        return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
-      }).catch((err) => {});
-      await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
-    } else {
-      if (this.networkConfig.ipv4) {
-        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
-          this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
-        });
-        // this can directly trigger downstream plugins to reapply config adapting to the static IP
-        this.propagateConfigChanged(true);
-      }
-      if (this.networkConfig.nameservers) {
-        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
-        await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
-          return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
-        }).catch((err) => {});
-        await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
-      }
-    }
-
+  async applyIpv6Settings() {
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
@@ -357,6 +330,37 @@ class InterfaceBasePlugin extends Plugin {
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+  }
+
+  async applyIpDnsSettings() {
+    if (this.networkConfig.dhcp) {
+      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
+        this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
+      });
+
+      await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
+        this.log.info(`Remove old resolv conf for ${this.name}`);
+        return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
+      }).catch((err) => {});
+      await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
+    } else {
+      if (this.networkConfig.ipv4) {
+        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
+          this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
+        });
+        // this can directly trigger downstream plugins to reapply config adapting to the static IP
+        this.propagateConfigChanged(true);
+      }
+      if (this.networkConfig.nameservers) {
+        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+        await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
+          return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
+        }).catch((err) => {});
+        await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
+      }
+    }
+
+    await this.applyIpv6Settings();
   }
 
   async changeRoutingTables() {
