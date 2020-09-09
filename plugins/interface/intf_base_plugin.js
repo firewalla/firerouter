@@ -480,6 +480,13 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  async setHardwareAddress() {
+    if (this.networkConfig.hwAddr)
+      await exec(`sudo ip link set ${this.name} address ${this.networkConfig.hwAddr}`).catch((err) => {
+        this.log.error(`Failed to set hardware address of ${this.name} to ${this.networkConfig.hwAddr}`, err.message);
+      });
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -494,6 +501,8 @@ class InterfaceBasePlugin extends Plugin {
 
     if (!this.networkConfig.enabled)
       return;
+
+    await this.setHardwareAddress();
 
     await this.applyIpDnsSettings();
 
