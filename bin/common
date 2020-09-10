@@ -9,7 +9,7 @@ init_network_config() {
   api_ready=0
   while [[ timeout -gt 0 && api_ready -eq 0 ]]
   do
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
+    HTTP_STATUS_CODE=`curl -m10 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
     if [[ $HTTP_STATUS_CODE != 200 ]]; then
       sleep 10
     else
@@ -30,7 +30,7 @@ init_network_config() {
 
   if [[ ! -f /dev/shm/firerouter.prepared ]]; then
     echo "Preparing network environment ..."
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
+    HTTP_STATUS_CODE=`curl -m30 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
     if [[ $HTTP_STATUS_CODE != "200" ]]; then
       echo "Failed to prepare environment"
       _rc=2
@@ -51,6 +51,10 @@ init_network_config() {
 
   echo "Successfully apply last network config"
 
+  test_network
+}
+
+test_network() {
   redis-cli set "fireboot:status" "test_network"
   echo "Testing network connectivity ..."
 
@@ -69,10 +73,13 @@ init_network_config() {
         fi
     fi
 
-    if ! nslookup -timeout=5 github.com; then
-         echo "DNS is unavailable"
-         _rc=4
-         continue
+    if ! dig +short +timeout=5 github.com && ! dig +short +timeout=5 +tcp github.com; then
+        echo "DNS is unavailable for dig github.com (both tcp & udp)"
+        if ! host -W 5 firewalla.encipher.io; then
+          echo "DNS is unavailable for host firewalla.encipher.io"
+          _rc=4
+          continue
+        fi
     fi
 
     _rc=0

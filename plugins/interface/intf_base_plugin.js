@@ -48,9 +48,9 @@ class InterfaceBasePlugin extends Plugin {
     await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
     await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
     // regenerate ipv6 link local address based on EUI64
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.addr_gen_mode=0`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.disable_ipv6=1`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name}.disable_ipv6=0`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.addr_gen_mode=0`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=0`).catch((err) => {});
   }
 
   async flush() {
@@ -79,7 +79,7 @@ class InterfaceBasePlugin extends Plugin {
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
         // restore reverse path filtering settings
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=1`).catch((err) => {});
+        await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`).catch((err) => {});
@@ -232,7 +232,7 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
-      await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=2`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
@@ -250,34 +250,7 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhcpcd6/${this.name}.conf`;
   }
 
-  async applyIpDnsSettings() {
-    if (this.networkConfig.dhcp) {
-      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
-        this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
-      });
-
-      await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
-        this.log.info(`Remove old resolv conf for ${this.name}`);
-        return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
-      }).catch((err) => {});
-      await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
-    } else {
-      if (this.networkConfig.ipv4) {
-        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
-          this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
-        });
-        // this can directly trigger downstream plugins to reapply config adapting to the static IP
-        this.propagateConfigChanged(true);
-      }
-      if (this.networkConfig.nameservers) {
-        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
-        await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
-          return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
-        }).catch((err) => {});
-        await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
-      }
-    }
-
+  async applyIpv6Settings() {
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
@@ -357,6 +330,37 @@ class InterfaceBasePlugin extends Plugin {
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+  }
+
+  async applyIpDnsSettings() {
+    if (this.networkConfig.dhcp) {
+      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
+        this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
+      });
+
+      await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
+        this.log.info(`Remove old resolv conf for ${this.name}`);
+        return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
+      }).catch((err) => {});
+      await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
+    } else {
+      if (this.networkConfig.ipv4) {
+        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
+          this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
+        });
+        // this can directly trigger downstream plugins to reapply config adapting to the static IP
+        this.propagateConfigChanged(true);
+      }
+      if (this.networkConfig.nameservers) {
+        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+        await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
+          return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
+        }).catch((err) => {});
+        await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
+      }
+    }
+
+    await this.applyIpv6Settings();
   }
 
   async changeRoutingTables() {
@@ -465,6 +469,24 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  async updateRouteForDNS() {
+    // TODO: there is no IPv6 DNS currently
+    const dns = await this.getDNSNameservers();
+    const gateway = await routing.getInterfaceGWIP(this.name, 4);
+    if (!_.isArray(dns) || dns.length === 0 || !gateway)
+      return;
+    for (const dnsIP of dns) {
+      await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true).catch((err) => {});
+    }
+  }
+
+  async setHardwareAddress() {
+    if (this.networkConfig.hwAddr)
+      await exec(`sudo ip link set ${this.name} address ${this.networkConfig.hwAddr}`).catch((err) => {
+        this.log.error(`Failed to set hardware address of ${this.name} to ${this.networkConfig.hwAddr}`, err.message);
+      });
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -480,9 +502,13 @@ class InterfaceBasePlugin extends Plugin {
     if (!this.networkConfig.enabled)
       return;
 
+    await this.setHardwareAddress();
+
     await this.applyIpDnsSettings();
 
     await this.changeRoutingTables();
+
+    await this.updateRouteForDNS();
   }
 
   async _getSysFSClassNetValue(key) {
@@ -493,6 +519,19 @@ class InterfaceBasePlugin extends Plugin {
     return value;
   }
 
+  _getWANConnState(name) {
+    const routingPlugin = pl.getPluginInstance("routing", "global");
+    if (routingPlugin) {
+      return routingPlugin.getWANConnState(name);
+    }
+    return null;
+  }
+
+  async getDNSNameservers() {
+    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
+    return dns;
+  }
+
   async state() {
     const mac = await this._getSysFSClassNetValue("address");
     const mtu = await this._getSysFSClassNetValue("mtu");
@@ -500,6 +539,8 @@ class InterfaceBasePlugin extends Plugin {
     const duplex = await this._getSysFSClassNetValue("duplex");
     const speed = await this._getSysFSClassNetValue("speed");
     const operstate = await this._getSysFSClassNetValue("operstate");
+    const txBytes = await this._getSysFSClassNetValue("statistics/tx_bytes");
+    const rxBytes = await this._getSysFSClassNetValue("statistics/rx_bytes");
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -509,12 +550,16 @@ class InterfaceBasePlugin extends Plugin {
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     const gateway = await routing.getInterfaceGWIP(this.name) || null;
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6) || null;
-    const dns = await fs.readFileAsync(r.getInterfaceResolvConfPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
-    return {mac, mtu, carrier, duplex, speed, operstate, ip4, ip6, gateway, gateway6, dns, rtid};
+    const dns = await this.getDNSNameservers();
+    let wanConnState = null;
+    if (this.isWAN())
+      wanConnState = this._getWANConnState(this.name);
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip6, gateway, gateway6, dns, rtid, wanConnState};
   }
 
   onEvent(e) {
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IF_UP: {
@@ -532,6 +577,16 @@ class InterfaceBasePlugin extends Plugin {
           // the interface from which prefix is delegated is changed, need to reapply config
           this._reapplyNeeded = true;
           pl.scheduleReapply();
+        }
+      }
+      case event.EVENT_IP_CHANGE: {
+        const payload = event.getEventPayload(e);
+        const iface = payload.intf;
+        if (iface === this.name && this.isWAN()) {
+          // update route for DNS from DHCP
+          this.updateRouteForDNS().catch((err) => {
+            this.log.error(`Failed to update route for DNS on ${this.name}`, err.message);
+          });
         }
       }
       default:

@@ -45,6 +45,7 @@ class DNSPlugin extends Plugin {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dnsmasq`).catch((err) => {});
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dnsmasq`).catch((err) => {});
     await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
+    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq_local`).catch((err) => {});
   } 
 
   static async installSystemService() {
@@ -105,7 +106,14 @@ class DNSPlugin extends Plugin {
             const wanIntf = wanIntfPlugins[0].name;
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            this.log.error(`No active WAN is found for dns ${this.name}`);
+            // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
+            const primaryWanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
+            if (primaryWanIntfPlugin) {
+              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${primaryWanIntfPlugin.name}`);
+              await fs.symlinkAsync(r.getInterfaceResolvConfPath(primaryWanIntfPlugin.name), this._getResolvFilePath());
+            } else {
+              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+            }
           }
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
@@ -129,7 +137,14 @@ class DNSPlugin extends Plugin {
             const wanIntf = wanIntfPlugins[0].name;
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
-            this.log.error(`No active WAN is for for dns ${this.name}`);
+            // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
+            const primaryWanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
+            if (primaryWanIntfPlugin) {
+              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${primaryWanIntfPlugin.name}`);
+              await fs.symlinkAsync(r.getInterfaceResolvConfPath(primaryWanIntfPlugin.name), this._getResolvFilePath());
+            } else {
+              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+            }
           }
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
@@ -164,6 +179,11 @@ class DNSPlugin extends Plugin {
         this.log.warn(`Interface ${this.name} is not enabled`);
         return;
       }
+      const state = await intfPlugin.state();
+      if (!state || !state.ip4) {
+        this.log.warn(`Interface ${this.name} does not have IPv4 address`);
+        return;
+      }
       await this.prepareEnvironment();
       await this.writeDNSConfFile();
       this._restartService();
@@ -173,9 +193,11 @@ class DNSPlugin extends Plugin {
   }
 
   onEvent(e) {
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
     const eventType = event.getEventType(e);
     switch (eventType) {
+      case event.EVENT_WAN_SWITCHED:
       case event.EVENT_IP_CHANGE: {
         this._reapplyNeeded = true;
         pl.scheduleReapply();
