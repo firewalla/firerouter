@@ -44,6 +44,7 @@ module.exports = {
   EVENT_IF_DOWN: "ifdown",
   EVENT_IP_CHANGE: "ipchange",
   EVENT_PD_CHANGE: "pdchange",
+  EVENT_PPPOE_IPV6_UP: "pppoe_ipv6_up",
   EVENT_WAN_CONN_CHECK: "wan_conn_check",
   EVENT_WAN_SWITCHED: "wan_switched"
 };
