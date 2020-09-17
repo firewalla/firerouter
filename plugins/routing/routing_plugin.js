@@ -135,6 +135,7 @@ class RoutingPlugin extends Plugin {
                 const networkAddr = addr.startAddress();
                 const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
                 await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
+                await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
               }
@@ -144,6 +145,7 @@ class RoutingPlugin extends Plugin {
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
                   await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, null, 6).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 6).catch((err) => { });
                 }
               } else {
                 this.log.info("No ip6 found on global default interface " + viaIntf);
@@ -192,6 +194,7 @@ class RoutingPlugin extends Plugin {
                 const networkAddr = addr.startAddress();
                 const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
                 await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
+                await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
               }
@@ -201,6 +204,7 @@ class RoutingPlugin extends Plugin {
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
                   await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, null, 6).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 6).catch((err) => { });
                 }
               } else {
                 this.log.info("No ip6 found on global default interface " + viaIntf);

@@ -130,7 +130,6 @@ sudo ip rule add pref 0 from all lookup local
 sudo ip rule add pref 32766 from all lookup main
 sudo ip rule add pref 32767 from all lookup default
 
-sudo ip rule add pref 3000 from all lookup global_local
 sudo ip rule add pref 4001 from all lookup static
 
 rules_to_remove=`ip -6 rule list | grep -v -e "^6000:" | cut -d: -f2-`;
@@ -141,6 +140,5 @@ sudo ip -6 rule add pref 0 from all lookup local
 sudo ip -6 rule add pref 32766 from all lookup main
 sudo ip -6 rule add pref 32767 from all lookup default
 
-sudo ip -6 rule add pref 3000 from all lookup global_local
 sudo ip -6 rule add pref 4001 from all lookup static
 
