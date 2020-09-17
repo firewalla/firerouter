@@ -264,6 +264,16 @@ async function removeInterfaceGlobalRoutingRules(intf) {
   await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6).catch((err) => {});
 }
 
+async function createInterfaceGlobalLocalRoutingRules(intf) {
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000);
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000, null, 6);
+}
+
+async function removeInterfaceGlobalLocalRoutingRules(intf) {
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000, null, 6).catch((err) => {});
+}
+
 async function getInterfaceGWIP(intf, af = 4) {
   const nextHop = await exec(`ip -${af} r show table ${intf}_default | grep default | awk '{print $3}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
   return nextHop;
@@ -283,6 +293,8 @@ module.exports = {
   removeInterfaceRoutingRules: removeInterfaceRoutingRules,
   createInterfaceGlobalRoutingRules: createInterfaceGlobalRoutingRules,
   removeInterfaceGlobalRoutingRules: removeInterfaceGlobalRoutingRules,
+  createInterfaceGlobalLocalRoutingRules: createInterfaceGlobalLocalRoutingRules,
+  removeInterfaceGlobalLocalRoutingRules: removeInterfaceGlobalLocalRoutingRules,
   getInterfaceGWIP: getInterfaceGWIP,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,

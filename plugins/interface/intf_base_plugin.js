@@ -73,6 +73,7 @@ class InterfaceBasePlugin extends Plugin {
       // remove related policy routing rules
       await routing.removeInterfaceRoutingRules(this.name);
       await routing.removeInterfaceGlobalRoutingRules(this.name);
+      await routing.removeInterfaceGlobalLocalRoutingRules(this.name);
 
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
@@ -228,6 +229,8 @@ class InterfaceBasePlugin extends Plugin {
         return;
       await routing.createInterfaceRoutingRules(this.name);
       await routing.createInterfaceGlobalRoutingRules(this.name);
+      if (this.isLAN())
+        await routing.createInterfaceGlobalLocalRoutingRules(this.name);
     }
 
     if (this.isWAN()) {
@@ -252,8 +255,9 @@ class InterfaceBasePlugin extends Plugin {
 
   async applyIpv6Settings() {
     if (this.networkConfig.dhcp6) {
-      // add link local route to interface local routing table
+      // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+      await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
       const pdSize = this.networkConfig.dhcp6.pdSize || 60;
       if (pdSize > 64)
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
@@ -267,8 +271,9 @@ class InterfaceBasePlugin extends Plugin {
       // TODO: do not support dns nameservers from DHCPv6 currently
     } else {
       if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
-        // add link local route to interface local routing table
+        // add link local route to interface local and default routing table
         await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+        await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
@@ -302,8 +307,9 @@ class InterfaceBasePlugin extends Plugin {
               if (!subPrefix) {
                 this.log.error(`Failed to calculate sub prefix from ${prefixMask} and id ${subPrefixId} for ${this.name}`);
               } else {
-                // add link local route to interface local routing table
+                // add link local route to interface local and default routing table
                 await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+                await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
                 const addr = new Address6(subPrefix);
                 if (!addr.isValid()) {
                   this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
@@ -372,6 +378,7 @@ class InterfaceBasePlugin extends Plugin {
       const networkAddr = addr.startAddress();
       const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
       await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`).catch((err) => {});
+      await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`).catch((err) => {});
     }
     if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
       const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
@@ -382,6 +389,7 @@ class InterfaceBasePlugin extends Plugin {
         const networkAddr = addr.startAddress();
         const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
         await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+        await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
       }
     }
     if (this.networkConfig.ipv6DelegateFrom) {
@@ -399,6 +407,7 @@ class InterfaceBasePlugin extends Plugin {
           const networkAddr = addr.startAddress();
           const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
           await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+          await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
         }
       }
     }
