@@ -89,6 +89,12 @@
       "config_path": "mdns_reflector",
       "category": "mdns_reflector",
       "init_seq": 9
+    },
+    {
+      "file_path": "./igmp_proxy/igmp_proxy_plugin.js",
+      "config_path": "igmp_proxy",
+      "category": "igmp_proxy",
+      "init_seq": 9
     }
   ],
   "sensors": [
@@ -102,6 +108,15 @@
       "file_path": "./ipchange_sensor.js",
       "config": {
         "delay": 5
+      }
+    },
+    {
+      "file_path": "./wan_conn_check_sensor.js",
+      "config": {
+        "ping_test_ip": "1.1.1.1",
+        "ping_test_count": 8,
+        "ping_success_rate": 0.5,
+        "dns_test_domain": "github.com"
       }
     }
   ]

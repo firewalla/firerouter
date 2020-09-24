@@ -17,6 +17,8 @@ strict-order
 conf-dir=/home/pi/.firewalla/config/dnsmasq/%INTERFACE_UUID%
 # global configurations
 conf-dir=/home/pi/.firewalla/config/dnsmasq/
+# user local configurations
+conf-dir=/home/pi/.firewalla/config/dnsmasq_local
 
 resolv-file=/home/pi/.router/config/dnsmasq/%INTERFACE%.resolv.conf
 

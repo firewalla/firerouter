@@ -26,13 +26,25 @@ function getEventPayload(event) {
   return event && event.payload;
 }
 
+function suppressLogging(event) {
+  event.logging = false;
+}
+
+function isLoggingSuppressed(event) {
+  return event.logging === false;
+}
+
 module.exports = {
   buildEvent: buildEvent,
   getEventType: getEventType,
   getEventPayload: getEventPayload,
+  suppressLogging: suppressLogging,
+  isLoggingSuppressed: isLoggingSuppressed,
   EVENT_IF_UP: "ifup",
   EVENT_IF_DOWN: "ifdown",
   EVENT_IP_CHANGE: "ipchange",
   EVENT_PD_CHANGE: "pdchange",
-  EVENT_WAN_CONN_CHECK: "wan_conn_check"
+  EVENT_PPPOE_IPV6_UP: "pppoe_ipv6_up",
+  EVENT_WAN_CONN_CHECK: "wan_conn_check",
+  EVENT_WAN_SWITCHED: "wan_switched"
 };

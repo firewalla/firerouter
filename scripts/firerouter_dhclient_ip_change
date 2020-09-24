@@ -12,7 +12,7 @@ case "$reason" in
     fi
     ;;
   TIMEOUT)
-    if [ "$exit_status" == "0" ]; then
+    if [ "$exit_status" = "0" ]; then
       ip_changed="1"
     fi
     ;;

@@ -207,7 +207,6 @@ function getProcessName() {
 
 async function switchBranch(targetBranch) {
   await exec(`${getFireRouterHome()}/scripts/switch_branch.sh ${targetBranch}`);
-  scheduleRestartFireBoot();
 }
 
 function scheduleRestartFireBoot(delay = 10) {

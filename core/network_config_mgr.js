@@ -17,7 +17,7 @@
 
 let instance = null;
 const log = require('../util/logger.js')(__filename);
-const rclient = require('../util/redis_manager').getPrimaryDBRedisClient();
+const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
 const exec = require('child-process-promise').exec;
 const {Address4, Address6} = require('ip-address');
