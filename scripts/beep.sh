@@ -2,7 +2,7 @@
 
 # execute Firewalla beep.sh if any
 FW_BEEP=/home/pi/firewalla/scripts/beep.sh
-test -x $FW_BEEP ]] && exec $FW_BEEP $@
+test -x $FW_BEEP && exec $FW_BEEP $@
 
 NUM=${1:-'1'}
 
