@@ -57,7 +57,9 @@ class SSHDPlugin extends Plugin {
   }
 
   async reloadSSHD() {
-    await exec(`${__dirname}/reload_sshd.sh`);
+    await exec(`${__dirname}/reload_sshd.sh`).catch((err) => {
+      this.log.error(`Failed to execute reload_sshd.sh`, err.message);
+    });
   }
 
   _getConfFilePath() {
