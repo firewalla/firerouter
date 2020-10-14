@@ -50,6 +50,12 @@ class RoutingPlugin extends Plugin {
         await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
         await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => {});
         await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => {});
+        // remove DNS specific routes
+        if (_.isArray(this._dnsRoutes)) {
+          for (const dnsRoute of this._dnsRoutes)
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, "main", 4).catch((err) => { });
+        }
+        this._dnsRoutes = [];
         break;
       }
       default: {
@@ -116,6 +122,12 @@ class RoutingPlugin extends Plugin {
         await routing.removeRouteFromTable("default", null, null, "main").catch((err) => { });
         await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => { });
         await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => { });
+        // remove DNS specific routes
+        if (_.isArray(this._dnsRoutes)) {
+          for (const dnsRoute of this._dnsRoutes)
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, "main", 4).catch((err) => { });
+        }
+        this._dnsRoutes = [];
         const type = this.networkConfig.default.type || "single";
         switch (type) {
           case "single":
@@ -159,12 +171,13 @@ class RoutingPlugin extends Plugin {
                 const dns = await viaIntfPlugin.getDNSNameservers();
                 if (_.isArray(dns) && dns.length !== 0 && ready) {
                   for (const dnsIP of dns) {
-                    await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 4, true).catch((err) => {
+                    await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", null, 4, true).catch((err) => {
+                    await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
+                    this._dnsRoutes.push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric});
                   }
                 }
               } else {
@@ -213,10 +226,11 @@ class RoutingPlugin extends Plugin {
               const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
               if (gw) {
                 // add a default route with higher metric if it is inactive. A default route is needed for WAN connectivity check, e.g., ping -I eth0 1.1.1.1
+                let metric = this._wanStatus[viaIntf].seq;
                 if (ready) {
                   multiPathDesc.push({ nextHop: gw, dev: viaIntf, weight: weight });
                 } else {
-                  const metric = this._wanStatus[viaIntf].seq + 100;
+                  metric = this._wanStatus[viaIntf].seq + 100;
                   await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
                   await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 }
@@ -224,12 +238,13 @@ class RoutingPlugin extends Plugin {
                 const dns = await viaIntfPlugin.getDNSNameservers();
                 if (_.isArray(dns) && dns.length !== 0 && ready) {
                   for (const dnsIP of dns) {
-                    await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 4, true).catch((err) => {
+                    await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", null, 4, true).catch((err) => {
+                    await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
+                    this._dnsRoutes.push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric});
                   }
                 }
               } else {
