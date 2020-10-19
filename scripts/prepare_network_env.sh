@@ -54,6 +54,12 @@ sudo iptables -w -F FR_ICMP
 
 sudo iptables -w -A FR_INPUT -j FR_ICMP
 
+# chain for ssh
+sudo iptables -w -N FR_SSH &> /dev/null
+sudo iptables -w -F FR_SSH
+
+sudo iptables -w -A FR_INPUT -j FR_SSH
+
 sudo iptables -w -N FR_FORWARD &> /dev/null
 sudo iptables -w -F FR_FORWARD
 sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
