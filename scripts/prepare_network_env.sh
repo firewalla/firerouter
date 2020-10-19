@@ -48,6 +48,12 @@ sudo iptables -w -F FR_IGMP
 
 sudo iptables -w -A FR_INPUT -j FR_IGMP
 
+# chain for icmp
+sudo iptables -w -N FR_ICMP &> /dev/null
+sudo iptables -w -F FR_ICMP
+
+sudo iptables -w -A FR_INPUT -j FR_ICMP
+
 sudo iptables -w -N FR_FORWARD &> /dev/null
 sudo iptables -w -F FR_FORWARD
 sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
@@ -96,6 +102,16 @@ sudo ip6tables -w -t mangle -F FR_OUTPUT &> /dev/null
 sudo ip6tables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo ip6tables -w -t mangle -A OUTPUT -j FR_OUTPUT
 # restore fwmark for output packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo ip6tables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
+
+sudo ip6tables -w -N FR_INPUT &> /dev/null
+sudo ip6tables -w -F FR_INPUT
+sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
+
+# chain for icmp
+sudo ip6tables -w -N FR_ICMP &> /dev/null
+sudo ip6tables -w -F FR_ICMP
+
+sudo ip6tables -w -A FR_INPUT -j FR_ICMP
 
 sudo ip6tables -w -N FR_FORWARD &> /dev/null
 sudo ip6tables -w -F FR_FORWARD
