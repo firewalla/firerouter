@@ -95,6 +95,12 @@
       "config_path": "igmp_proxy",
       "category": "igmp_proxy",
       "init_seq": 9
+    },
+    {
+      "file_path": "./icmp/icmp_plugin.js",
+      "config_path": "icmp",
+      "category": "icmp",
+      "init_seq": 9
     }
   ],
   "sensors": [
