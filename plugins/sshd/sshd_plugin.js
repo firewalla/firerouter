@@ -18,6 +18,7 @@
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const util = require('../../util/util.js');
 const r = require('../../util/firerouter.js');
 const event = require('../../core/event.js');
 const fs = require('fs');
@@ -55,6 +56,7 @@ class SSHDPlugin extends Plugin {
   async flush() {
     this.log.info("Flushing SSHD", this.name);
     const confPath = this._getConfFilePath();
+    await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
     await fs.unlinkAsync(confPath).catch((err) => {});
     await this.reloadSSHD().catch((err) => {});
   }
@@ -90,10 +92,12 @@ class SSHDPlugin extends Plugin {
   async apply() {
     if (this.networkConfig.enabled) {
       await this.generateConfFile();
+      await exec(util.wrapIptables(`sudo iptables -w -A FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
       await this.reloadSSHD();
     } else {
       const confPath = this._getConfFilePath();
       await fs.unlinkAsync(confPath).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
       await this.reloadSSHD();
     }
   }
