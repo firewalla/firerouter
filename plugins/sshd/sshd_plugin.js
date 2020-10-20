@@ -45,10 +45,10 @@ class SSHDPlugin extends Plugin {
     for (const alg of keyAlgorithms) {
       const keyFilePath = SSHDPlugin.getKeyFilePath(alg);
       await fs.accessAsync(keyFilePath, fs.constants.F_OK).then(() => {
-        return exec(`bash -c 'diff <( ssh-keygen -y -e -f ${keyFilePath} ) <( ssh-keygen -y -e -f ${keyFilePath}.pub )'`);
+        return exec(`bash -c 'diff <( ssh-keygen -y -e -f ${keyFilePath} ) <( ssh-keygen -y -e -f ${keyFilePath}.pub )'`);  
       }).catch((err) => {
         console.log(`Key verification on ${keyFilePath} failed`, err.message);
-        return exec(`sudo bash -c 'ssh-keygen -f ${keyFilePath} -N '' -q -t ${alg} <<< y' 2>&1 > /dev/null`).catch((err) => {
+        return exec(`sudo bash -c 'ssh-keygen -f ${keyFilePath} -N "" -q -t ${alg} <<< y' 2>&1 > /dev/null`).catch((err) => {
           // todo
           console.log(`Generate host key ${keyFilePath} failed.`, err.message);
         });
