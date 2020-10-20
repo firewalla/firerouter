@@ -40,13 +40,14 @@ class WanConnCheckSensor extends Sensor {
   async _checkWanConnectivity() {
     const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin.isWAN());
     const defaultPingTestIP = this.config.ping_test_ip || ["1.1.1.1", "8.8.8.8", "9.9.9.9"];
-    const pingTestCount = this.config.ping_test_count || 8;
+    const defaultPingTestCount = this.config.ping_test_count || 8;
     const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       let active = true;
       const extraConf = wanIntfPlugin && wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.extra;
       let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+      let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
       if (_.isString(pingTestIP))
         pingTestIP = [pingTestIP];
       if (pingTestIP.length > 3) {
