@@ -169,7 +169,7 @@ class RoutingPlugin extends Plugin {
                 await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 // add route for DNS nameserver IP in global_default table
                 const dns = await viaIntfPlugin.getDNSNameservers();
-                if (_.isArray(dns) && dns.length !== 0 && ready) {
+                if (_.isArray(dns) && dns.length !== 0) {
                   for (const dnsIP of dns) {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
