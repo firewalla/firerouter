@@ -48,6 +48,7 @@ class WanConnCheckSensor extends Sensor {
       const extraConf = wanIntfPlugin && wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.extra;
       let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
       let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
+      const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
       if (_.isString(pingTestIP))
         pingTestIP = [pingTestIP];
       if (pingTestIP.length > 3) {
@@ -75,7 +76,7 @@ class WanConnCheckSensor extends Sensor {
           active = false;
         }
       });
-      if (active) {
+      if (active && dnsTestEnabled) {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
         if (_.isArray(nameservers) && nameservers.length !== 0) {
           const nameserver = nameservers[0];
