@@ -95,6 +95,12 @@
       "config_path": "igmp_proxy",
       "category": "igmp_proxy",
       "init_seq": 9
+    },
+    {
+      "file_path": "./icmp/icmp_plugin.js",
+      "config_path": "icmp",
+      "category": "icmp",
+      "init_seq": 9
     }
   ],
   "sensors": [
@@ -113,7 +119,7 @@
     {
       "file_path": "./wan_conn_check_sensor.js",
       "config": {
-        "ping_test_ip": "1.1.1.1",
+        "ping_test_ip": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
         "ping_test_count": 8,
         "ping_success_rate": 0.5,
         "dns_test_domain": "github.com"

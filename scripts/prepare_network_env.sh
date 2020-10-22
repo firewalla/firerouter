@@ -30,7 +30,7 @@ sudo iptables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip
 # restore fwmark for packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo iptables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
 # save the updated fwmark into the connmark, which may be used in tc filter actions
-sudo iptables -w -t mangle -A FR_PREROUTING -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
+sudo iptables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
 
 sudo iptables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo iptables -w -t mangle -F FR_OUTPUT &> /dev/null
@@ -47,6 +47,18 @@ sudo iptables -w -N FR_IGMP &> /dev/null
 sudo iptables -w -F FR_IGMP
 
 sudo iptables -w -A FR_INPUT -j FR_IGMP
+
+# chain for icmp
+sudo iptables -w -N FR_ICMP &> /dev/null
+sudo iptables -w -F FR_ICMP
+
+sudo iptables -w -A FR_INPUT -j FR_ICMP
+
+# chain for ssh
+sudo iptables -w -N FR_SSH &> /dev/null
+sudo iptables -w -F FR_SSH
+
+sudo iptables -w -A FR_INPUT -j FR_SSH
 
 sudo iptables -w -N FR_FORWARD &> /dev/null
 sudo iptables -w -F FR_FORWARD
@@ -89,13 +101,23 @@ sudo ip6tables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo i
 # restore fwmark for packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo ip6tables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
 # save the updated fwmark into the connmark, which may be used in tc filter actions
-sudo ip6tables -w -t mangle -A FR_PREROUTING -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
+sudo ip6tables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
 
 sudo ip6tables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo ip6tables -w -t mangle -F FR_OUTPUT &> /dev/null
 sudo ip6tables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo ip6tables -w -t mangle -A OUTPUT -j FR_OUTPUT
 # restore fwmark for output packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
 sudo ip6tables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
+
+sudo ip6tables -w -N FR_INPUT &> /dev/null
+sudo ip6tables -w -F FR_INPUT
+sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
+
+# chain for icmp
+sudo ip6tables -w -N FR_ICMP &> /dev/null
+sudo ip6tables -w -F FR_ICMP
+
+sudo ip6tables -w -A FR_INPUT -j FR_ICMP
 
 sudo ip6tables -w -N FR_FORWARD &> /dev/null
 sudo ip6tables -w -F FR_FORWARD
@@ -130,7 +152,6 @@ sudo ip rule add pref 0 from all lookup local
 sudo ip rule add pref 32766 from all lookup main
 sudo ip rule add pref 32767 from all lookup default
 
-sudo ip rule add pref 3000 from all lookup global_local
 sudo ip rule add pref 4001 from all lookup static
 
 rules_to_remove=`ip -6 rule list | grep -v -e "^6000:" | cut -d: -f2-`;
@@ -141,6 +162,5 @@ sudo ip -6 rule add pref 0 from all lookup local
 sudo ip -6 rule add pref 32766 from all lookup main
 sudo ip -6 rule add pref 32767 from all lookup default
 
-sudo ip -6 rule add pref 3000 from all lookup global_local
 sudo ip -6 rule add pref 4001 from all lookup static
 

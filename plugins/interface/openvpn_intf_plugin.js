@@ -76,6 +76,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
             await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
           }
           await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_local`).catch((err) => {});
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_default`).catch((err) => {});
         }
       }
     }
