@@ -36,6 +36,8 @@ class NetworkSetup {
   async prepareEnvironment() {
     // create dhclient runtime folder
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
+    // create dhclient config folder
+    await exec(`mkdir -p ${r.getUserConfigFolder()}/dhclient`);
     // create dhcpv6 client config folder
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dhcpcd6`);
     // copy dhclient-script
