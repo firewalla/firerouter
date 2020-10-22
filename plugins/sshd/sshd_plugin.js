@@ -18,6 +18,7 @@
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const util = require('../../util/util.js');
 const r = require('../../util/firerouter.js');
 const event = require('../../core/event.js');
 const fs = require('fs');
@@ -43,8 +44,14 @@ class SSHDPlugin extends Plugin {
     await exec(`mkdir -p ${serverKeyDir}`);
     for (const alg of keyAlgorithms) {
       const keyFilePath = SSHDPlugin.getKeyFilePath(alg);
-      await fs.accessAsync(keyFilePath, fs.constants.F_OK).catch((err) => {
-        return exec(`sudo ssh-keygen -f ${keyFilePath} -N '' -q -t ${alg}`).catch((err) => {});
+      await fs.accessAsync(keyFilePath, fs.constants.F_OK).then(() => {
+        return exec(`bash -c 'diff <( ssh-keygen -y -e -f ${keyFilePath} ) <( ssh-keygen -y -e -f ${keyFilePath}.pub )'`);  
+      }).catch((err) => {
+        console.log(`Key verification on ${keyFilePath} failed`, err.message);
+        return exec(`sudo bash -c 'ssh-keygen -f ${keyFilePath} -N "" -q -t ${alg} <<< y' 2>&1 > /dev/null`).catch((err) => {
+          // todo
+          console.log(`Generate host key ${keyFilePath} failed.`, err.message);
+        });
       });
     }
   }
@@ -52,12 +59,15 @@ class SSHDPlugin extends Plugin {
   async flush() {
     this.log.info("Flushing SSHD", this.name);
     const confPath = this._getConfFilePath();
+    await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
     await fs.unlinkAsync(confPath).catch((err) => {});
     await this.reloadSSHD().catch((err) => {});
   }
 
   async reloadSSHD() {
-    await exec(`${__dirname}/reload_sshd.sh`);
+    await exec(`${__dirname}/reload_sshd.sh`).catch((err) => {
+      this.log.error(`Failed to execute reload_sshd.sh`, err.message);
+    });
   }
 
   _getConfFilePath() {
@@ -85,16 +95,19 @@ class SSHDPlugin extends Plugin {
   async apply() {
     if (this.networkConfig.enabled) {
       await this.generateConfFile();
+      await exec(util.wrapIptables(`sudo iptables -w -A FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
       await this.reloadSSHD();
     } else {
       const confPath = this._getConfFilePath();
       await fs.unlinkAsync(confPath).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
       await this.reloadSSHD();
     }
   }
 
   onEvent(e) {
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IP_CHANGE: {

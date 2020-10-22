@@ -9,6 +9,7 @@ LOCAL_RT_TABLE="${INTF}_local"
 DEFAULT_RT_TABLE="${INTF}_default"
 
 sudo ip r add $LOCAL_IP dev $INTF table $LOCAL_RT_TABLE
+sudo ip r add $LOCAL_IP dev $INTF table $DEFAULT_RT_TABLE
 sudo ip r add default via $PEER_IP dev $INTF table $DEFAULT_RT_TABLE
 
 echo "nameserver $DNS1" > /etc/ppp/$INTF.resolv.conf
@@ -18,6 +19,6 @@ echo "nameserver $DNS2" >> /etc/ppp/$INTF.resolv.conf
 sudo sysctl -w net.ipv4.conf.$INTF.rp_filter=2
 
 # adjust receive packet steering on pppoe interface
-sudo bash -c "echo 7 > /sys/class/net/${INTF}/queues/rx-0/rps_cpus" || true
+sudo bash -c "echo f > /sys/class/net/${INTF}/queues/rx-0/rps_cpus" || true
 
 redis-cli -n 1 publish "pppoe.ip_change" "$INTF"

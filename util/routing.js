@@ -140,14 +140,14 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   }
 }
 
-async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4) {
+async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false) {
   let cmd = null;
   dest = dest || "default";
   tableName = tableName || "main";
   if (gateway) {
-    cmd = `sudo ip -${af} route add ${dest} via ${gateway} dev ${intf} table ${tableName}`;
+    cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${dest} via ${gateway} dev ${intf} table ${tableName}`;
   } else {
-    cmd = `sudo ip -${af} route add ${dest} dev ${intf} table ${tableName}`;
+    cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${dest} dev ${intf} table ${tableName}`;
   }
   if (preference)
     cmd = `${cmd} preference ${preference}`;
@@ -204,11 +204,9 @@ async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4) {
 async function flushRoutingTable(tableName) {
   const cmds = [`sudo ip route flush table ${tableName}`, `sudo ip -6 route flush table ${tableName}`];
   for (const cmd of cmds) {
-    let result = await exec(cmd);
-    if (result.stderr !== "") {
-      log.error("Failed to flush routing table.", result.stderr);
-      throw result.stderr;
-    }
+    await exec(cmd).catch((err) => {
+      log.error(`Failed to flush routing table using command ${cmd}`, err.message);
+    });
   }
 }
 
@@ -234,18 +232,22 @@ async function initializeInterfaceRoutingTables(intf) {
 
 async function createInterfaceRoutingRules(intf) {
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
+  await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
+  await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001, null, 6);
   await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
 }
 
 async function removeInterfaceRoutingRules(intf) {
   await removePolicyRoutingRule("all", intf, `${intf}_local`, 501).catch((err) => {});
+  await removePolicyRoutingRule("all", "lo", `${intf}_local`, 501).catch((err) => {});
   await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001).catch((err) => {});
   await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001).catch((err) => {});
   await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6).catch((err) => {});
+  await removePolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6).catch((err) => {});
   await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6).catch((err) => {});
   await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6).catch((err) => {});
 }
@@ -258,6 +260,16 @@ async function createInterfaceGlobalRoutingRules(intf) {
 async function removeInterfaceGlobalRoutingRules(intf) {
   await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001).catch((err) => {});
   await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6).catch((err) => {});
+}
+
+async function createInterfaceGlobalLocalRoutingRules(intf) {
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000);
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000, null, 6);
+}
+
+async function removeInterfaceGlobalLocalRoutingRules(intf) {
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000, null, 6).catch((err) => {});
 }
 
 async function getInterfaceGWIP(intf, af = 4) {
@@ -279,6 +291,8 @@ module.exports = {
   removeInterfaceRoutingRules: removeInterfaceRoutingRules,
   createInterfaceGlobalRoutingRules: createInterfaceGlobalRoutingRules,
   removeInterfaceGlobalRoutingRules: removeInterfaceGlobalRoutingRules,
+  createInterfaceGlobalLocalRoutingRules: createInterfaceGlobalLocalRoutingRules,
+  removeInterfaceGlobalLocalRoutingRules: removeInterfaceGlobalLocalRoutingRules,
   getInterfaceGWIP: getInterfaceGWIP,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,

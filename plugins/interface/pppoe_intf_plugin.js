@@ -23,6 +23,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const pl = require('../plugin_loader.js');
 Promise.promisifyAll(fs);
+const event = require('../../core/event.js');
 
 const pppoeTemplateFilePath = `${r.getFireRouterHome()}/etc/ppp.conf.template`
 
@@ -32,6 +33,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     // copy pppd hook script
     await exec(`sudo rm /etc/ppp/ip-up.d/firerouter_*`).catch((err) => {});
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ppp_ip_up /etc/ppp/ip-up.d/`).catch((err) => {});
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ppp_ipv6_up /etc/ppp/ipv6-up.d/`).catch((err) => {});
     await exec(`mkdir -p ${r.getUserConfigFolder()}/pppoe`).catch((err) => {});
     // copy firerouter_pppd.service
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
@@ -78,6 +80,8 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       .replace("#MRU#", mru)
       .replace("#MTU#", mtu)
       .replace(/#LINKNAME#/g, linkname);
+    if (this.networkConfig.dhcp6 || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
+      config = `${config}\n+ipv6`;
     const intfPlugin = pl.getPluginInstance("interface", intf);
     if (intfPlugin) {
       this.subscribeChangeFrom(intfPlugin);
@@ -103,6 +107,16 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
     }).catch((err) => {});
     await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
+  }
+
+  onEvent(e) {
+    super.onEvent(e);
+    const eventType = event.getEventType(e);
+    if (eventType === event.EVENT_PPPOE_IPV6_UP) {
+      this.applyIpv6Settings().catch((err) => {
+        this.log.error(`Failed to apply IPv6 settings on ${this.name}`, err.message);
+      });
+    }
   }
 }
 
