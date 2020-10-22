@@ -126,6 +126,9 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
       }
+      if (this.networkConfig.dhcp) {
+        await fs.unlinkAsync(this._getDHClientConfigPath()).catch((err) => {});
+      }
       await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { });
       await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
     }
@@ -338,8 +341,21 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  _getDHClientConfigPath() {
+    return `${r.getUserConfigFolder()}/dhclient/${this.name}.conf`;
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
+      const dhcpOptions = [];
+      if (this.networkConfig.dhcpOptions) {
+        for (const option of Object.keys(this.networkConfig.dhcpOptions)) {
+          dhcpOptions.push(`send ${option} "${this.networkConfig.dhcpOptions[option]}";`);
+        }
+      }
+      let dhclientConf = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhclient.conf.template`, {encoding: "utf8"});
+      dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
+      await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
       await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
