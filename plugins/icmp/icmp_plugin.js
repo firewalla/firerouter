@@ -27,7 +27,9 @@ class ICMPPlugin extends Plugin {
       switch (type) {
         case "echoRequest": {
           await exec(util.wrapIptables(`sudo iptables -w -D FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j DROP`)).catch((err) => {});
+          await exec(util.wrapIptables(`sudo iptables -w -D FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j ACCEPT`)).catch((err) => {});
           await exec(util.wrapIptables(`sudo ip6tables -w -D FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j DROP`)).catch((err) => {});
+          await exec(util.wrapIptables(`sudo ip6tables -w -D FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j ACCEPT`)).catch((err) => {});
           break;
         }
         default:
@@ -46,17 +48,25 @@ class ICMPPlugin extends Plugin {
       switch (type) {
         case "echoRequest": {
           if (value === true) {
-            await exec(util.wrapIptables(`sudo iptables -w -D FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j DROP`)).catch((err) => {
+            await exec(util.wrapIptables(`sudo iptables -w -D FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j DROP`)).then(() => {
+              return exec(util.wrapIptables(`sudo iptables -w -A FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j ACCEPT`));
+            }).catch((err) => {
               this.log.error(`Failed to enable ICMP echo request on ${this.name}`, err.message);
             });
-            await exec(util.wrapIptables(`sudo ip6tables -w -D FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j DROP`)).catch((err) => {
+            await exec(util.wrapIptables(`sudo ip6tables -w -D FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j DROP`)).then(() => {
+              return exec(util.wrapIptables(`sudo ip6tables -w -A FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j ACCEPT`));
+            }).catch((err) => {
               this.log.error(`Failed to enable ICMPv6 echo request on ${this.name}`, err.message);
             });
           } else {
-            await exec(util.wrapIptables(`sudo iptables -w -A FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j DROP`)).catch((err) => {
+            await exec(util.wrapIptables(`sudo iptables -w -A FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j DROP`)).then(() => {
+              return exec(util.wrapIptables(`sudo iptables -w -D FR_ICMP -i ${this.name} -p icmp --icmp-type 8 -j ACCEPT`));
+            }).catch((err) => {
               this.log.error(`Failed to disable ICMP echo request on ${this.name}`, err.message);
             });
-            await exec(util.wrapIptables(`sudo ip6tables -w -A FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j DROP`)).catch((err) => {
+            await exec(util.wrapIptables(`sudo ip6tables -w -A FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j DROP`)).then(() => {
+              return exec(util.wrapIptables(`sudo ip6tables -w -D FR_ICMP -i ${this.name} -p icmpv6 --icmpv6-type 128 -j ACCEPT`));
+            }).catch((err) => {
               this.log.error(`Failed to disable ICMPv6 echo request on ${this.name}`, err.message);
             });
           }
