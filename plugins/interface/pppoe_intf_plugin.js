@@ -101,12 +101,22 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
-  async applyIpDnsSettings() {
+  async applyIpSettings() {
+    // IPv4 address is assigned by pppd and IPv6 will be triggered by event if applicable
+  }
+
+  async applyDnsSettings() {
     await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
       this.log.info(`Remove old resolv conf for ${this.name}`);
       return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
-    }).catch((err) => {});
-    await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
+    }).catch((err) => { });
+    // specified DNS nameservers supersedes those assigned by DHCP
+    if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0) {
+      const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+      await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
+    } else {
+      await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
+    }
   }
 
   onEvent(e) {
