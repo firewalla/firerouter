@@ -204,11 +204,9 @@ async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4) {
 async function flushRoutingTable(tableName) {
   const cmds = [`sudo ip route flush table ${tableName}`, `sudo ip -6 route flush table ${tableName}`];
   for (const cmd of cmds) {
-    let result = await exec(cmd);
-    if (result.stderr !== "") {
-      log.error("Failed to flush routing table.", result.stderr);
-      throw result.stderr;
-    }
+    await exec(cmd).catch((err) => {
+      log.error(`Failed to flush routing table using command ${cmd}`, err.message);
+    });
   }
 }
 
@@ -264,6 +262,16 @@ async function removeInterfaceGlobalRoutingRules(intf) {
   await removePolicyRoutingRule("all", intf, RT_GLOBAL_DEFAULT, 10001, null, 6).catch((err) => {});
 }
 
+async function createInterfaceGlobalLocalRoutingRules(intf) {
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000);
+  await createPolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000, null, 6);
+}
+
+async function removeInterfaceGlobalLocalRoutingRules(intf) {
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000).catch((err) => {});
+  await removePolicyRoutingRule("all", intf, RT_GLOBAL_LOCAL, 3000, null, 6).catch((err) => {});
+}
+
 async function getInterfaceGWIP(intf, af = 4) {
   const nextHop = await exec(`ip -${af} r show table ${intf}_default | grep default | awk '{print $3}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
   return nextHop;
@@ -283,6 +291,8 @@ module.exports = {
   removeInterfaceRoutingRules: removeInterfaceRoutingRules,
   createInterfaceGlobalRoutingRules: createInterfaceGlobalRoutingRules,
   removeInterfaceGlobalRoutingRules: removeInterfaceGlobalRoutingRules,
+  createInterfaceGlobalLocalRoutingRules: createInterfaceGlobalLocalRoutingRules,
+  removeInterfaceGlobalLocalRoutingRules: removeInterfaceGlobalLocalRoutingRules,
   getInterfaceGWIP: getInterfaceGWIP,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
