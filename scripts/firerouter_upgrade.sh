@@ -8,6 +8,7 @@
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
 
+source ${FIREROUTER_HOME}/platform/platform.sh
 
 # timeout_check - timeout control given process or last background process
 # returns:
@@ -135,10 +136,19 @@ touch /dev/shm/firerouter.upgraded
 # in case there is some upgrade change on firewalla.service
 # all the rest services will be updated (in case) via firewalla.service
 
-sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
-sudo cp /home/pi/firerouter/scripts/fireboot.service /etc/systemd/system/.
+if [[ $NETWORK_SETUP == "yes" ]]; then
+  sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
+  sudo cp /home/pi/firerouter/scripts/fireboot.service /etc/systemd/system/.
+else
+  sudo cp /home/pi/firerouter/scripts/fireboot_standalone.service /etc/systemd/system/fireboot.service
+fi
+
 sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
 sudo systemctl daemon-reload
-sudo systemctl reenable firerouter
+
+if [[ $NETWORK_SETUP == "yes" ]]; then
+  sudo systemctl reenable firerouter
+fi
+
 sudo systemctl reenable fireboot
 sudo systemctl reenable firereset

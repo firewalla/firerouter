@@ -15,12 +15,11 @@
 'use strict';
 
 const Sensor = require("./sensor.js");
-const r = require('../util/firerouter.js');
-const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const fwpclient = require('../util/redis_manager.js').getPublishClient();
 
 class IPChangeSensor extends Sensor {
 
@@ -36,6 +35,9 @@ class IPChangeSensor extends Sensor {
         }
         case "dhcpcd6.pd_change":
           eventType = event.EVENT_PD_CHANGE;
+          break;
+        case "pppoe.ipv6_up":
+          eventType = event.EVENT_PPPOE_IPV6_UP;
           break;
         default:
           return;
@@ -54,7 +56,7 @@ class IPChangeSensor extends Sensor {
         const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
         if (uuid) {
           // publish to redis db used by Firewalla
-          exec(`redis-cli publish "firerouter.iface.ip_change" "${uuid}"`);
+          fwpclient.publish("firerouter.iface.ip_change", uuid);
         }
       }
     });
@@ -63,6 +65,7 @@ class IPChangeSensor extends Sensor {
     sclient.subscribe("pppoe.ip_change");
     sclient.subscribe("dhcpcd6.ip_change");
     sclient.subscribe("dhcpcd6.pd_change");
+    sclient.subscribe("pppoe.ipv6_up");
   }
 }
 
