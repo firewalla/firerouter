@@ -61,6 +61,9 @@ class IGMPProxyPlugin extends Plugin {
 
   async updateIptables() {
     const altnets = this.networkConfig.altnets || [];
+    await exec(util.wrapIptables(`sudo iptables -w -A FR_IGMP -p 2 -d 224.0.0.0/4 -j ACCEPT`)).catch((err) => {
+      this.log.error(`Failed to add IGMP accept rule to FR_IGMP in iptables`, err.message);
+    });
     for (const altnet of altnets) {
       await exec(util.wrapIptables(`sudo iptables -w -A FR_IGMP -s ${altnet} -d 224.0.0.0/4 -j ACCEPT`)).catch((err) => {
         this.log.error(`Failed to add altnet ${altnet} to FR_IGMP in iptables`, err.message);
