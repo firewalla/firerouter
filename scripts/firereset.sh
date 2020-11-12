@@ -9,7 +9,7 @@ source $DIR/../platform/platform.sh
 run_host_light_until_paired() {
   type run_horse_light || return 1
   while [[ ! -e $LICENSE_FILE ]]; do
-    run_horse_light
+    run_horse_light 1 0
   done
 }
 
