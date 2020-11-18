@@ -29,9 +29,10 @@ class NatPlugin extends Plugin {
     }
 
     const iif = this.networkConfig.in;
+    const srcSubnets = this.networkConfig.srcSubnets;
     const oif = this.networkConfig.out;
 
-    if (!iif || !oif) {
+    if ((!iif && !srcSubnets) || !oif) {
       this.log.error(`Invalid config of ${this.name}`, this.networkConfig);
       return;
     }
@@ -45,6 +46,12 @@ class NatPlugin extends Plugin {
         this.log.error("Failed to get ip4 of incoming interface " + iif);
       }
     }
+
+    if (srcSubnets) {
+      for (const srcSubnet of srcSubnets) {
+        await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_SNAT -s ${srcSubnet} -o ${oif} -j MASQUERADE`));
+      }
+    }
   }
 
   async apply() {
@@ -54,10 +61,11 @@ class NatPlugin extends Plugin {
     }
 
     const iif = this.networkConfig.in;
+    const srcSubnets = this.networkConfig.srcSubnets;
     const oif = this.networkConfig.out;
 
-    if (!iif || !oif) {
-      this.fatal(`Missing in/out interface in config of ${this.name}`);
+    if ((!iif && !srcSubnets) || !oif) {
+      this.fatal(`Missing iif/oif or srcSubnets/oif in config of ${this.name}`);
       return;
     }
 
@@ -72,6 +80,12 @@ class NatPlugin extends Plugin {
       }
     } else {
       this.fatal("Cannot find interface plugin " + iif);
+    }
+
+    if (srcSubnets) {
+      for (const srcSubnet of srcSubnets) {
+        await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_SNAT -s ${srcSubnet} -o ${oif} -j MASQUERADE`));
+      }
     }
   }
 }
