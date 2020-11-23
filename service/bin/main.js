@@ -33,7 +33,7 @@ const pl = require('../../plugins/plugin_loader.js');
 const sl = require('../../sensors/sensor_loader.js');
 const ncm = require('../../core/network_config_mgr.js');
 const r = require('../../util/firerouter.js');
-const fwpclient = require('../util/redis_manager.js').getPublishClient();
+const fwpclient = require('../../util/redis_manager.js').getPublishClient();
 
 let server;
 
