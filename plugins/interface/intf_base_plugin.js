@@ -83,12 +83,12 @@ class InterfaceBasePlugin extends Plugin {
         await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6).catch((err) =>{});
-        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
+        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
-        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
           this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
       }
@@ -241,12 +241,12 @@ class InterfaceBasePlugin extends Plugin {
       await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/0xffff`, 6);
-      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
+      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
+      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
         this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
-      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/0xffff`)).catch((err) => {
+      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
         this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
     }
