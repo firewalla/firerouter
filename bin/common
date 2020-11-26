@@ -105,10 +105,11 @@ test_network() {
     fi
 
     while read testurl ; do
-        test -n "$testurl" || continue
-        test_curl_http_code $testurl || { _rc=5;break; }
+        test -n "$testurl" || continue # try another url if this test url is empty
+        test_curl_http_code $testurl || { _rc=5; continue; } # mark as fail if test fails, and try another one
+        _rc=0; break; # mark as success if any of url test succeeds
     done < <(echo "$TEST_URLS")
-    test $_rc -eq 5 && continue
+    test $_rc -eq 5 && continue # retry the whole test_network if the test url while-loop fails
 
     _rc=0
     break;
