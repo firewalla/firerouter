@@ -76,6 +76,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
             await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
           }
           await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_local`).catch((err) => {});
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_default`).catch((err) => {});
         }
       }
     }
@@ -83,7 +84,8 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   onEvent(e) {
     // stub implementation
-    this.log.info("Received event", e);
+    if (!event.isLoggingSuppressed(e))
+      this.log.info("Received event", e);
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IF_UP: 

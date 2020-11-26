@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# parameters: interface-name tty-device speed local-link-local-address remote-link-local-address ipparam
+INTF=$1
+LOCAL_IP=$4
+PEER_IP=$5
+
+redis-cli -n 1 publish "pppoe.ipv6_up" "$INTF"

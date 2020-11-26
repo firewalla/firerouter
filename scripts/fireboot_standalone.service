@@ -1,0 +1,11 @@
+[Unit]
+Description=FireBoot
+
+[Service]
+User=pi
+Type=oneshot
+WorkingDirectory=/home/pi/firerouter/
+ExecStart=/home/pi/firerouter/bin/fireboot
+
+[Install]
+WantedBy=multi-user.target

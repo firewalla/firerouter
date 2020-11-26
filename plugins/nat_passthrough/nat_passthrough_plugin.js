@@ -21,7 +21,9 @@ const util = require('../../util/util.js');
 
 class NATPassthroughPlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`sudo sysctl -w net.netfilter.nf_conntrack_helper=1`).catch((err) => {});
+    await exec(`sudo modprobe nf_conntrack`).then(() => {
+      return exec(`sudo sysctl -w net.netfilter.nf_conntrack_helper=1`);
+    }).catch((err) => {});
   }
 
   async flush() {
