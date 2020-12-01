@@ -132,6 +132,18 @@ class InterfaceBasePlugin extends Plugin {
       await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { });
       await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
     }
+
+    if (this.networkConfig.hwAddr) {
+      const permAddr = await exec(`sudo ethtool -P ${this.name} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+        this.log.error(`Failed to get permanent address of ${this.name}`, err.message);
+        return null;
+      });
+      if (permAddr) {
+        await exec(`sudo ip link set ${this.name} address ${permAddr}`).catch((err) => {
+          this.log.error(`Failed to revert hardware address of ${this.name} to ${permAddr}`, err.message);
+        });
+      }
+    }
   }
 
   async configure(networkConfig) {
