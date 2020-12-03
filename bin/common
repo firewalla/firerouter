@@ -11,7 +11,7 @@ init_network_config() {
   redis-cli set "fireboot:status" "apply_network"
   echo "Awaiting FireRouter API available ..."
   sleep 3
-  timeout=3
+  timeout=12
   api_ready=0
   while [[ timeout -gt 0 && api_ready -eq 0 ]]
   do

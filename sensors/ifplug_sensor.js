@@ -35,6 +35,7 @@ class IfPlugSensor extends Sensor {
     const ifaces = await ncm.getPhyInterfaceNames();
     const upDelay = this.config.up_delay || 5;
     for (let iface of ifaces) {
+      await exec(`sudo ip link set ${iface} up`).catch((err) => {});
       await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
       await exec(`sudo ifplugd -pq -i ${iface} -u ${upDelay}`).catch((err) => {
         this.log.error(`Failed to start ifplugd on ${iface}`);
