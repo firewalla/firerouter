@@ -60,6 +60,7 @@ class SSHDPlugin extends Plugin {
     this.log.info("Flushing SSHD", this.name);
     const confPath = this._getConfFilePath();
     await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
+    await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j DROP`)).catch((err) => {});
     await fs.unlinkAsync(confPath).catch((err) => {});
     await this.reloadSSHD().catch((err) => {});
   }
@@ -96,11 +97,13 @@ class SSHDPlugin extends Plugin {
     if (this.networkConfig.enabled) {
       await this.generateConfFile();
       await exec(util.wrapIptables(`sudo iptables -w -A FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j DROP`)).catch((err) => {});
       await this.reloadSSHD();
     } else {
       const confPath = this._getConfFilePath();
       await fs.unlinkAsync(confPath).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -A FR_SSH -i ${this.name} -p tcp --dport 22 -j DROP`)).catch((err) => {});
       await this.reloadSSHD();
     }
   }
