@@ -83,10 +83,8 @@ class SSHDPlugin extends Plugin {
       this.subscribeChangeFrom(ifacePlugin);
       const state = await ifacePlugin.state();
       if (state && state.ip4s) {
-        for (const ip4 of state.ip4s) {
-          const ipv4Addr = ip4.split("/")[0];
-          await fs.writeFileAsync(confPath, `ListenAddress ${ipv4Addr}`, {encoding: 'utf8'});
-        }
+        const entries = state.ip4s.map(ip => `ListenAddress ${ip.split("/")[0]}`);
+        await fs.writeFileAsync(confPath, entries.join('\\n')); // use escaped \\ on purpose, the reload_ssh.sh script will handle it properly
       } else {
         this.log.error("Failed to get ip4 of interface " + iface);
       }
