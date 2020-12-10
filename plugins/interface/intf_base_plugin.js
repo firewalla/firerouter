@@ -93,15 +93,18 @@ class InterfaceBasePlugin extends Plugin {
         });
       }
       // remove from lan_roubable anyway
-      if (this.networkConfig.ipv4) {
-        const addr = new Address4(this.networkConfig.ipv4);
-        if (addr.isValid()) {
-          const networkAddr = addr.startAddress();
-          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => { });
-          if (this.networkConfig.isolated !== true) {
-            // routable to/from other routable lans
-            await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+      if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
+        const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+        for (const addr4 of ipv4Addrs) {
+          const addr = new Address4(addr4);
+          if (addr.isValid()) {
+            const networkAddr = addr.startAddress();
+            const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+            await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => { });
+            if (this.networkConfig.isolated !== true) {
+              // routable to/from other routable lans
+              await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => { });
+            }
           }
         }
       }
@@ -372,10 +375,13 @@ class InterfaceBasePlugin extends Plugin {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
     } else {
-      if (this.networkConfig.ipv4) {
-        await exec(`sudo ip addr replace ${this.networkConfig.ipv4} dev ${this.name}`).catch((err) => {
-          this.fatal(`Failed to set ipv4 for interface ${this.name}: ${err.message}`);
-        });
+      if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
+        const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+        for (const addr4 of ipv4Addrs) {
+          await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
+            this.fatal(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
+          });
+        }
         // this can directly trigger downstream plugins to reapply config adapting to the static IP
         this.propagateConfigChanged(true);
       }
@@ -402,14 +408,17 @@ class InterfaceBasePlugin extends Plugin {
 
   async changeRoutingTables() {
     // if dhcp/dhcp6 is set, dhclient/dhcpcd6 should take care of local and default routing table
-    if (this.networkConfig.ipv4) {
-      const addr = new Address4(this.networkConfig.ipv4);
-      if (!addr.isValid())
-        this.fatal(`Invalid ipv4 address ${this.networkConfig.ipv4} for ${this.name}`);
-      const networkAddr = addr.startAddress();
-      const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-      await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`).catch((err) => {});
-      await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`).catch((err) => {});
+    if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
+      const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+      for (const addr4 of ipv4Addrs) {
+        const addr = new Address4(addr4);
+        if (!addr.isValid())
+          this.fatal(`Invalid ipv4 address ${addr4} for ${this.name}`);
+        const networkAddr = addr.startAddress();
+        const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+        await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`).catch((err) => {});
+        await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`).catch((err) => {});
+      }
     }
     if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
       const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
@@ -455,16 +464,19 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.isLAN()) {
       // considered as LAN interface, add to "lan_routable" and "wan_routable"
-      if (this.networkConfig.ipv4) {
-        const addr = new Address4(this.networkConfig.ipv4);
-        if (!addr.isValid())
-          this.fatal(`Invalid ipv4 address ${this.networkConfig.ipv4} for ${this.name}`);
-        const networkAddr = addr.startAddress();
-        const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-        await routing.addRouteToTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
-        if (this.networkConfig.isolated !== true) {
-          // routable to/from other routable lans
-          await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+      if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
+        const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+        for (const addr4 of ipv4Addrs) {
+          const addr = new Address4(addr4);
+          if (!addr.isValid())
+            this.fatal(`Invalid ipv4 address ${addr4} for ${this.name}`);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await routing.addRouteToTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+          if (this.networkConfig.isolated !== true) {
+            // routable to/from other routable lans
+            await routing.addRouteToTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
+          }
         }
       }
       if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
@@ -587,6 +599,9 @@ class InterfaceBasePlugin extends Plugin {
     let ip4 = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
+    let ip4s = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
+    if (ip4s)
+      ip4s = ip4s.split("\n").filter(l => l.length > 0).map(ip => ip.includes("/") ? ip : `${ip}/32`);
     let ip6 = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
@@ -596,7 +611,7 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     if (this.isWAN())
       wanConnState = this._getWANConnState(this.name);
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip6, gateway, gateway6, dns, rtid, wanConnState};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState};
   }
 
   onEvent(e) {
