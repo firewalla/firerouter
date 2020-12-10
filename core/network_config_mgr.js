@@ -21,6 +21,7 @@ const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
 const exec = require('child-process-promise').exec;
 const {Address4, Address6} = require('ip-address');
+const _ = require('lodash');
 
 class NetworkConfigManager {
   constructor() {
@@ -84,17 +85,21 @@ class NetworkConfigManager {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
         const iface = ifaces[name];
-        if (iface.ipv4) {
-          const addr = new Address4(iface.ipv4);
-          if (!addr.isValid())
-            return [`ipv4 of ${name} is not valid ${iface.ipv4}`];
-          // check ipv4 subnet conflict
-          for (const i in ifaceIp4PrefixMap) {
-            const addr2 = ifaceIp4PrefixMap[i];
-            if (addr.isInSubnet(addr2) || addr2.isInSubnet(addr))
-              return [`ipv4 of ${name} conflicts with ipv4 of ${i}`];
+        if (iface.ipv4 && (_.isString(iface.ipv4) || _.isArray(iface.ipv4))) {
+          const ipv4s = _.isString(iface.ipv4) ? [iface.ipv4] : iface.ipv4;
+          for (const ipv4 of ipv4s) {
+            const addr = new Address4(ipv4);
+            if (!addr.isValid())
+              return [`ipv4 of ${name} is not valid ${ipv4}`];
+            // check ipv4 subnet conflict
+            for (const prefix in ifaceIp4PrefixMap) {
+              const i = ifaceIp4PrefixMap[prefix];
+              const addr2 = new Address4(prefix);
+              if ((addr.isInSubnet(addr2) || addr2.isInSubnet(addr)) && name !== i)
+                return [`ipv4 of ${name} conflicts with ipv4 of ${i}`];
+            }
+            ifaceIp4PrefixMap[ipv4] = name;
           }
-          ifaceIp4PrefixMap[name] = addr;
         }
       }
     }

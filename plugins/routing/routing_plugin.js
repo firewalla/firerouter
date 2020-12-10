@@ -110,13 +110,15 @@ class RoutingPlugin extends Plugin {
     for (const srcIntf of Object.keys(this._wanStatus)) {
       const srcIntfPlugin = this._wanStatus[srcIntf].plugin;
       const state = await srcIntfPlugin.state();
-      if (state && state.ip4) {
-        const ip4Addr = state.ip4.split('/')[0];
-        for (const dstIntf of Object.keys(this._wanStatus)) {
-          if (dstIntf !== srcIntf) {
-            await exec(wrapIptables(`sudo iptables -t nat -A FR_OUTPUT_SNAT -s ${ip4Addr} -o ${dstIntf} -j MASQUERADE`)).catch((err) => {
-              this.log.error(`Failed to add output SNAT rule from ${ip4Addr} to ${dstIntf}`, err.message);
-            });
+      if (state && state.ip4s) {
+        for (const ip4 of state.ip4s) {
+          const ip4Addr = ip4.split('/')[0];
+          for (const dstIntf of Object.keys(this._wanStatus)) {
+            if (dstIntf !== srcIntf) {
+              await exec(wrapIptables(`sudo iptables -t nat -A FR_OUTPUT_SNAT -s ${ip4Addr} -o ${dstIntf} -j MASQUERADE`)).catch((err) => {
+                this.log.error(`Failed to add output SNAT rule from ${ip4Addr} to ${dstIntf}`, err.message);
+              });
+            }
           }
         }
       }
@@ -154,12 +156,14 @@ class RoutingPlugin extends Plugin {
                 activeIntfFound = true;
               // set a much lower priority for inactive WAN
               const metric = this._wanStatus[viaIntf].seq + (ready ? 0 : 100);
-              if (state && state.ip4) {
-                const addr = new Address4(state.ip4);
-                const networkAddr = addr.startAddress();
-                const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
-                await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
+              if (state && state.ip4s) {
+                for (const ip4 of state.ip4s) {
+                  const addr = new Address4(ip4);
+                  const networkAddr = addr.startAddress();
+                  const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
+                }
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
               }
@@ -214,12 +218,14 @@ class RoutingPlugin extends Plugin {
               const weight = this._wanStatus[viaIntf].weight || 50;
               const state = await viaIntfPlugin.state();
               this._wanStatus[viaIntf].active = ready;
-              if (state && state.ip4) {
-                const addr = new Address4(state.ip4);
-                const networkAddr = addr.startAddress();
-                const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
-                await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
+              if (state && state.ip4s) {
+                for (const ip4 of state.ip4s) {
+                  const addr = new Address4(ip4);
+                  const networkAddr = addr.startAddress();
+                  const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
+                }
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
               }
