@@ -85,8 +85,13 @@ class NetworkConfigManager {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
         const iface = ifaces[name];
-        if (iface.ipv4 && (_.isString(iface.ipv4) || _.isArray(iface.ipv4))) {
-          const ipv4s = _.isString(iface.ipv4) ? [iface.ipv4] : iface.ipv4;
+        if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
+          let ipv4s = [];
+          if (iface.ipv4 && _.isString(iface.ipv4))
+            ipv4s.push(iface.ipv4);
+          if (iface.ipv4s && _.isArray(iface.ipv4s))
+            Array.prototype.push.apply(ipv4s, iface.ipv4s);
+          ipv4s = ipv4s.filter((v, i, a) => a.indexOf(v) === i);
           for (const ipv4 of ipv4s) {
             const addr = new Address4(ipv4);
             if (!addr.isValid())
