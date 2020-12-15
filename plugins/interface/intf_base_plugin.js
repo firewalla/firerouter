@@ -93,8 +93,13 @@ class InterfaceBasePlugin extends Plugin {
         });
       }
       // remove from lan_roubable anyway
-      if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
-        const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+      if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
+        let ipv4Addrs = [];
+        if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4))
+          ipv4Addrs.push(this.networkConfig.ipv4);
+        if (this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s))
+          Array.prototype.push.apply(ipv4Addrs, this.networkConfig.ipv4s);
+        ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           const addr = new Address4(addr4);
           if (addr.isValid()) {
@@ -173,7 +178,7 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.meta && this.networkConfig.meta.type === "wan") {
       return true;
     }
-    if (this.networkConfig.dhcp || (this.networkConfig.ipv4 && this.networkConfig.gateway))
+    if (this.networkConfig.dhcp || ((this.networkConfig.ipv4 || this.networkConfig.ipv4s) && this.networkConfig.gateway))
       return true;
     return false;
   }
@@ -185,7 +190,7 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.meta && this.networkConfig.meta.type === "lan") {
       return true;
     }
-    if (this.networkConfig.ipv4 && (!this.networkConfig.dhcp && !this.networkConfig.gateway))
+    if ((this.networkConfig.ipv4 || this.networkConfig.ipv4s) && (!this.networkConfig.dhcp && !this.networkConfig.gateway))
       // ip address is set but neither dhcp nor gateway is set, considered as LAN interface
       return true;
     return false;
@@ -375,8 +380,13 @@ class InterfaceBasePlugin extends Plugin {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
     } else {
-      if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
-        const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+      if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
+        let ipv4Addrs = [];
+        if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4))
+          ipv4Addrs.push(this.networkConfig.ipv4);
+        if (this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s))
+          Array.prototype.push.apply(ipv4Addrs, this.networkConfig.ipv4s);
+        ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
             this.fatal(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
@@ -408,8 +418,13 @@ class InterfaceBasePlugin extends Plugin {
 
   async changeRoutingTables() {
     // if dhcp/dhcp6 is set, dhclient/dhcpcd6 should take care of local and default routing table
-    if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
-      const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+    if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
+      let ipv4Addrs = [];
+      if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4))
+        ipv4Addrs.push(this.networkConfig.ipv4);
+      if (this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s))
+        Array.prototype.push.apply(ipv4Addrs, this.networkConfig.ipv4s);
+      ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
       for (const addr4 of ipv4Addrs) {
         const addr = new Address4(addr4);
         if (!addr.isValid())
@@ -464,8 +479,13 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.isLAN()) {
       // considered as LAN interface, add to "lan_routable" and "wan_routable"
-      if (this.networkConfig.ipv4 && (_.isString(this.networkConfig.ipv4) || _.isArray(this.networkConfig.ipv4))) {
-        const ipv4Addrs = _.isString(this.networkConfig.ipv4) ? [this.networkConfig.ipv4] : this.networkConfig.ipv4;
+      if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
+        let ipv4Addrs = [];
+        if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4))
+          ipv4Addrs.push(this.networkConfig.ipv4);
+        if (this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s))
+          Array.prototype.push.apply(ipv4Addrs, this.networkConfig.ipv4s);
+        ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           const addr = new Address4(addr4);
           if (!addr.isValid())
