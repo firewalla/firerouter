@@ -32,7 +32,7 @@ class NetworkConfigManager {
   }
 
   async getPhyInterfaceNames() {
-    const intfs = await exec("ls -l /sys/class/net/ | tail -n +2 | grep -v virtual | awk '{print $9}'").then((result) => result.stdout.split("\n").filter(line => line.length > 0));
+    const intfs = await exec("ls -l /sys/class/net | awk '/^l/ && !/virtual/ {print $9}'").then((result) => result.stdout.split("\n").filter(line => line.length > 0));
     return intfs;
   }
 
