@@ -19,6 +19,7 @@ else
   test_network; rc=$?
 fi
 
+bootingComplete=$(redis-cli get bootingComplete)
 while [[ ! $rc -eq 0 ]]; do
   redis-cli set "fireboot:status" "network_down"
   redis-cli set "fireboot:network_down:code" $rc
@@ -26,8 +27,13 @@ while [[ ! $rc -eq 0 ]]; do
     # do not retry if there is error from network config apply
     exit $rc
   else
-    # retry if error is from test_network
-    test_network; rc=$?
+    if [[ $bootingComplete == "1" ]]; then
+      # retry if error is from test_network
+      test_network; rc=$?
+    else
+      # simply exit if this is initial setup
+      exit $rc
+    fi
   fi
 done
 redis-cli del "fireboot:network_down:code"

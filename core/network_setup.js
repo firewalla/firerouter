@@ -42,6 +42,8 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dhcpcd6`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    // copy rfc3442-classless-routes script
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/rfc3442-classless-routes /etc/dhcp/dhclient-exit-hooks.d/`);
     // redirect dhcpcd log to specific log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhcpcd.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();

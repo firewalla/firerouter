@@ -33,6 +33,7 @@ const pl = require('../../plugins/plugin_loader.js');
 const sl = require('../../sensors/sensor_loader.js');
 const ncm = require('../../core/network_config_mgr.js');
 const r = require('../../util/firerouter.js');
+const fwpclient = require('../../util/redis_manager.js').getPublishClient();
 
 let server;
 
@@ -43,6 +44,7 @@ async function pre_run() {
   const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
   await ncm.tryApplyConfig(activeConfig, true);
   await ncm.saveConfig(activeConfig);
+  await fwpclient.publishAsync("FIREWALLA:HEARTBEAT:UPDATE", JSON.stringify({"invoked-by":"firerouter"}));
   log.info("Booting setup complete.");
 }
 
