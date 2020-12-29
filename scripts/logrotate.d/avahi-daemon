@@ -2,6 +2,7 @@
 {
   rotate 7
   daily
+  maxsize 5M
   missingok
   notifempty
   compress

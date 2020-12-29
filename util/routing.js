@@ -26,7 +26,22 @@ const RT_STATIC = "static";
 const RT_WAN_ROUTABLE = "wan_routable";
 const RT_LAN_ROUTABLE = "lan_routable";
 
-async function createCustomizedRoutingTable(tableName) {
+const RT_TYPE_VC = "RT_TYPE_VC";
+const RT_TYPE_REG = "RT_TYPE_REG";
+const MASK_REG = "0x3ff";
+const MASK_VC = "0xfc00";
+
+const LOCK_FILE = "/tmp/rt_tables.lock";
+
+async function removeCustomizedRoutingTable(tableName) {
+  let cmd = `sudo bash -c 'flock ${LOCK_FILE} -c "sed -i -e \\"s/^[[:digit:]]\\+\\s\\+${tableName}$//g\\" /etc/iproute2/rt_tables"'`;
+  await exec(cmd);
+}
+
+async function createCustomizedRoutingTable(tableName, type = RT_TYPE_REG) {
+  // separate bits in fwmark for vpn client and regular WAN
+  const bitOffset = type === RT_TYPE_VC ? 10 : 0;
+  const maxTableId = type === RT_TYPE_VC ? 64 : 1024;
   let cmd = "cat /etc/iproute2/rt_tables | grep -v '#' | awk '{print $1,\"\\011\",$2}'";
   let result = await exec(cmd);
   if (result.stderr !== "") {
@@ -41,21 +56,26 @@ async function createCustomizedRoutingTable(tableName) {
     const name = line[1];
     usedTid.push(tid);
     if (name === tableName) {
-      log.debug("Table with same name already exists: " + tid);
-      return Number(tid);
+      if (Number(tid) >>> bitOffset === 0 || Number(tid) >>> bitOffset >= maxTableId) {
+        log.info(`Previous table id of ${tableName} is out of range ${tid}, removing old entry for ${tableName} ...`);
+        await removeCustomizedRoutingTable(tableName);
+      } else {
+        log.info("Table with same name already exists: " + tid);
+        return Number(tid);
+      }
     }
   }
-  // find unoccupied table id between 100-10000
-  let id = 100;
-  while (id < 10000) {
-    if (!usedTid.includes(id + "")) // convert number to string
+  // find unoccupied table id between 1 - maxTableId
+  let id = 1;
+  while (id < maxTableId) {
+    if (!usedTid.includes((id << bitOffset) + "")) // convert number to string
       break;
     id++;
   }
-  if (id == 10000) {
-    throw "Insufficient space to create routing table";
+  if (id == maxTableId) {
+    throw `Insufficient space to create routing table for ${tableName}, type ${type}`;
   }
-  cmd = `sudo bash -c 'flock /tmp/rt_tables.lock -c "echo -e ${id}\\\t${tableName} >> /etc/iproute2/rt_tables; \
+  cmd = `sudo bash -c 'flock ${LOCK_FILE} -c "echo -e ${id << bitOffset}\\\t${tableName} >> /etc/iproute2/rt_tables; \
     cat /etc/iproute2/rt_tables | sort | uniq > /etc/iproute2/rt_tables.new; \
     cp /etc/iproute2/rt_tables.new /etc/iproute2/rt_tables; \
     rm /etc/iproute2/rt_tables.new"'`;
@@ -65,7 +85,7 @@ async function createCustomizedRoutingTable(tableName) {
     log.error("Failed to create customized routing table.", result.stderr);
     throw result.stderr;
   }
-  return id;
+  return id << bitOffset;
 }
 
 async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, af = 4) {
@@ -279,6 +299,7 @@ async function getInterfaceGWIP(intf, af = 4) {
 
 module.exports = {
   createCustomizedRoutingTable: createCustomizedRoutingTable,
+  removeCustomizedRoutingTable: removeCustomizedRoutingTable,
   createPolicyRoutingRule: createPolicyRoutingRule,
   removePolicyRoutingRule: removePolicyRoutingRule,
   addRouteToTable: addRouteToTable,
@@ -298,5 +319,9 @@ module.exports = {
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
   RT_WAN_ROUTABLE: RT_WAN_ROUTABLE,
   RT_LAN_ROUTABLE: RT_LAN_ROUTABLE,
-  RT_STATIC: RT_STATIC
+  RT_STATIC: RT_STATIC,
+  RT_TYPE_REG,
+  RT_TYPE_VC,
+  MASK_REG,
+  MASK_VC
 }

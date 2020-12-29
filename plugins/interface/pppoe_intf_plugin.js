@@ -82,6 +82,8 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       .replace(/#LINKNAME#/g, linkname);
     if (this.networkConfig.dhcp6 || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
       config = `${config}\n+ipv6`;
+    if (this.networkConfig.serviceName)
+      config = `${config}\nrp_pppoe_service '${this.networkConfig.serviceName}'`;
     const intfPlugin = pl.getPluginInstance("interface", intf);
     if (intfPlugin) {
       this.subscribeChangeFrom(intfPlugin);
