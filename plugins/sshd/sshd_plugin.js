@@ -45,7 +45,7 @@ class SSHDPlugin extends Plugin {
     for (const alg of keyAlgorithms) {
       const keyFilePath = SSHDPlugin.getKeyFilePath(alg);
       await fs.accessAsync(keyFilePath, fs.constants.F_OK).then(() => {
-        return exec(`bash -c 'diff <( ssh-keygen -y -e -f ${keyFilePath} ) <( ssh-keygen -y -e -f ${keyFilePath}.pub )'`);  
+        return exec(`sudo bash -c 'diff <(cut -d" " -f 2 ${keyFilePath}.pub) <(ssh-keygen -y -f ${keyFilePath} | cut -d" " -f 2)'`);  
       }).catch((err) => {
         console.log(`Key verification on ${keyFilePath} failed`, err.message);
         return exec(`sudo bash -c 'ssh-keygen -f ${keyFilePath} -N "" -q -t ${alg} <<< y' 2>&1 > /dev/null`).catch((err) => {
@@ -60,6 +60,7 @@ class SSHDPlugin extends Plugin {
     this.log.info("Flushing SSHD", this.name);
     const confPath = this._getConfFilePath();
     await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
+    await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j DROP`)).catch((err) => {});
     await fs.unlinkAsync(confPath).catch((err) => {});
     await this.reloadSSHD().catch((err) => {});
   }
@@ -81,9 +82,9 @@ class SSHDPlugin extends Plugin {
     if (ifacePlugin) {
       this.subscribeChangeFrom(ifacePlugin);
       const state = await ifacePlugin.state();
-      if (state && state.ip4) {
-        const ipv4Addr = state.ip4.split("/")[0];
-        await fs.writeFileAsync(confPath, `ListenAddress ${ipv4Addr}`, {encoding: 'utf8'});
+      if (state && state.ip4s) {
+        const entries = state.ip4s.map(ip => `ListenAddress ${ip.split("/")[0]}`);
+        await fs.writeFileAsync(confPath, entries.join('\\n')); // use escaped \\ on purpose, the reload_ssh.sh script will handle it properly
       } else {
         this.log.error("Failed to get ip4 of interface " + iface);
       }
@@ -96,11 +97,13 @@ class SSHDPlugin extends Plugin {
     if (this.networkConfig.enabled) {
       await this.generateConfFile();
       await exec(util.wrapIptables(`sudo iptables -w -A FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j DROP`)).catch((err) => {});
       await this.reloadSSHD();
     } else {
       const confPath = this._getConfFilePath();
       await fs.unlinkAsync(confPath).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -D FR_SSH -i ${this.name} -p tcp --dport 22 -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -A FR_SSH -i ${this.name} -p tcp --dport 22 -j DROP`)).catch((err) => {});
       await this.reloadSSHD();
     }
   }

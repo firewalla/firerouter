@@ -116,6 +116,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
           const mask = localIp.split('/')[1] || "255.255.255.255";
           const subnet = ip.subnet(addr, mask);
           state.ip4 = `${addr}/${subnet.subnetMaskLength}`;
+          state.ip4s = [state.ip4];
         }
       }
     }
