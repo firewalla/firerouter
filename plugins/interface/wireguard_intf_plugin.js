@@ -35,11 +35,8 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
-
-    if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-      await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
-    }
+    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
+    await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
     await fs.unlinkAsync(this._getInterfaceConfPath()).catch((err) => {});
   }
 
