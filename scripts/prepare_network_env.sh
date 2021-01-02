@@ -9,6 +9,10 @@ sudo iptables -w -t nat -N FR_UPNP &> /dev/null
 sudo iptables -w -t nat -F FR_UPNP
 sudo iptables -w -t nat -A FR_PREROUTING -j FR_UPNP
 
+sudo iptables -w -t nat -N FR_WIREGUARD &> /dev/null
+sudo iptables -w -t nat -F FR_WIREGUARD
+sudo iptables -w -t nat -A FR_PREROUTING -j FR_WIREGUARD
+
 sudo iptables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo iptables -w -t nat -F FR_POSTROUTING
 sudo iptables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING
@@ -85,6 +89,10 @@ sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6t
 sudo ip6tables -w -t nat -N FR_UPNP &> /dev/null
 sudo ip6tables -w -t nat -F FR_UPNP
 sudo ip6tables -w -t nat -A FR_PREROUTING -j FR_UPNP
+
+sudo ip6tables -w -t nat -N FR_WIREGUARD &> /dev/null
+sudo ip6tables -w -t nat -F FR_WIREGUARD
+sudo ip6tables -w -t nat -A FR_PREROUTING -j FR_WIREGUARD
 
 sudo ip6tables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_POSTROUTING
