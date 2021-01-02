@@ -60,6 +60,12 @@ sudo iptables -w -F FR_SSH
 
 sudo iptables -w -A FR_INPUT -j FR_SSH
 
+# chain for wireguard
+sudo iptables -w -N FR_WIREGUARD &> /dev/null
+sudo iptables -w -F FR_WIREGUARD
+
+sudo iptables -w -A FR_INPUT -j FR_WIREGUARD
+
 sudo iptables -w -N FR_FORWARD &> /dev/null
 sudo iptables -w -F FR_FORWARD
 sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
@@ -118,6 +124,12 @@ sudo ip6tables -w -N FR_ICMP &> /dev/null
 sudo ip6tables -w -F FR_ICMP
 
 sudo ip6tables -w -A FR_INPUT -j FR_ICMP
+
+# chain for wireguard
+sudo ip6tables -w -N FR_WIREGUARD &> /dev/null
+sudo ip6tables -w -F FR_WIREGUARD
+
+sudo ip6tables -w -A FR_INPUT -j FR_WIREGUARD
 
 sudo ip6tables -w -N FR_FORWARD &> /dev/null
 sudo ip6tables -w -F FR_FORWARD
