@@ -22,6 +22,8 @@ const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const _ = require('lodash');
 const routing = require('../../util/routing.js');
+const util = require('../../util/util.js');
+
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -38,6 +40,10 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
     await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
     await fs.unlinkAsync(this._getInterfaceConfPath()).catch((err) => {});
+    if (this.networkConfig.listenPort) {
+      await exec(util.wrapIptables(`sudo iptables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+    }
   }
 
   _getInterfaceConfPath() {
@@ -51,8 +57,13 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     // [Interface] section
     const entries = ["[Interface]"];
     entries.push(`PrivateKey = ${this.networkConfig.privateKey}`);
-    if (this.networkConfig.listenPort)
+    if (this.networkConfig.listenPort) {
       entries.push(`ListenPort = ${this.networkConfig.listenPort}`);
+      if (this.networkConfig.enabled) {
+        await exec(util.wrapIptables(`sudo iptables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+      }
+    }
     entries.push('\n');
 
     if (_.isArray(this.networkConfig.peers)) {
