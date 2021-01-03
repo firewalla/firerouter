@@ -18,15 +18,6 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
-const r = require('../../util/firerouter.js');
-const fs = require('fs');
-const _ = require('lodash');
-const routing = require('../../util/routing.js');
-const util = require('../../util/util.js');
-
-
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
 
 class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
@@ -40,7 +31,7 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip tuntap add mode tun user ${this.networkConfig.user || "pi"} name ${this.name}`);
     await exec(`sudo ifconfig ${this.name} up`);
   }  
-  
+
 }
 
 module.exports = GenericTunInterfacePlugin;
