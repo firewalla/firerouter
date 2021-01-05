@@ -112,6 +112,26 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
   }
+
+  async state() {
+    const state = await super.state();
+    if (this.networkConfig.enabled) {
+      const allIPs = [];
+      if (this.networkConfig.ipv4)
+        allIPs.push(this.networkConfig.ipv4);
+      if (_.isArray(this.networkConfig.peers)) {
+        for (const peer of this.networkConfig.peers) {
+          if (peer.allowedIPs) {
+            Array.prototype.push.apply(allIPs, peer.allowedIPs);
+          }
+        }
+      }
+      state.ip4s = allIPs;
+    }
+    if (!state.mac)
+      state.mac = "02:01:22:22:22:22";
+    return state;
+  }
 }
 
 module.exports = WireguardInterfacePlugin;
