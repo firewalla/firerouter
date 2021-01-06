@@ -31,7 +31,15 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
   async prepareEnvironment() {
     await super.prepareEnvironment();
-    await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=0`); // ensure rp_filter is 0 so that response traffic can route back to the device correctly
+
+    if ("rp_filter" in this.networkConfig) {
+      await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=${this.networkConfig.rp_filter}`);
+    }
+
+    if ("all_rp_filter" in this.networkConfig) {
+      await exec(`sudo sysctl -w net.ipv4.conf.all.rp_filter=${this.networkConfig.all_rp_filter}`);
+
+    }
   }
 
   async createInterface() {
