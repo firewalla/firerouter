@@ -19,19 +19,21 @@ const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
 
+const routing = require('../../util/routing.js');
+
 class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
+    await routing.removePolicyRoutingRule("all", undefined, `${this.name}_default`, 1124, 129);
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
     await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
   }
 
   async createInterface() {
-    await exec(`sudo ip tuntap add mode tun user ${this.networkConfig.user || "pi"} name ${this.name}`);
-    await exec(`sudo ifconfig ${this.name} up`);
-  }  
-
+    const user = this.networkConfig.user || "pi";
+    await exec(`sudo ip tuntap add mode tun user ${user} name ${this.name}`);    
+  }
 }
 
 module.exports = GenericTunInterfacePlugin;
