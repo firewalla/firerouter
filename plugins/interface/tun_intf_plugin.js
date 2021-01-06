@@ -38,7 +38,6 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
     if ("all_rp_filter" in this.networkConfig) {
       await exec(`sudo sysctl -w net.ipv4.conf.all.rp_filter=${this.networkConfig.all_rp_filter}`);
-
     }
   }
 
