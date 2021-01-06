@@ -25,7 +25,6 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
-    await routing.removePolicyRoutingRule("all", undefined, `${this.name}_default`, 1124, 129);
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
     await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
   }
