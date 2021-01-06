@@ -29,9 +29,19 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
   }
 
+  async prepareEnvironment() {
+    await super.prepareEnvironment();
+    await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=0`); // ensure rp_filter is 0 so that response traffic can route back to the device correctly
+  }
+
   async createInterface() {
     const user = this.networkConfig.user || "pi";
-    await exec(`sudo ip tuntap add mode tun user ${user} name ${this.name}`);    
+    await exec(`sudo ip tuntap add mode tun user ${user} name ${this.name}`);
+  }
+
+  async changeRoutingTables() {
+    await super.changeRoutingTables();
+    await routing.addRouteToTable("default", null, this.name, `${this.name}_default`, null)
   }
 }
 
