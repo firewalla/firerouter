@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const log = require('../net2/logger.js')(__filename,"debug");
+const log = require('../logger.js')(__filename,"debug");
 
 const rclient = require('../util/redis_manager.js').getRedisClient();
 const pclient = require('../util/redis_manager.js').getPublishClient();
