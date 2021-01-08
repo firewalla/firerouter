@@ -28,7 +28,6 @@ const KEY_EVENT_REQUEST_CLEAN = "event:request:clean";
  * Supported APIs:
  * - add event : STATE or ACTION
  * - clean event
- * 
  */
 class EventRequestApi {
     constructor() {
@@ -115,4 +114,4 @@ class EventRequestApi {
 })();
 */
 
-export default new EventRequestApi();
+module.exports = new EventRequestApi();
