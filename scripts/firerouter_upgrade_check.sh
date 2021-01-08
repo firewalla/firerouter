@@ -3,6 +3,15 @@
 # This script will check if there is any upgrade available for firerouter
 #
 
+# Single running instance ONLY
+CMD=$(basename $0)
+LOCK_FILE=/var/lock/${CMD/.sh/.lock}
+exec {lock_fd} > $LOCK_FILE
+flock -x -n $lock_fd || {
+    err "Another instance of $CMD is already running, abort"
+    exit 1
+}
+
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
 source ${FIREROUTER_HOME}/bin/common
