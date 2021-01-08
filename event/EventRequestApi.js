@@ -14,11 +14,11 @@
  */
 'use strict';
 
-const log = require('../logger.js')(__filename,"debug");
+const log = require('../util/logger.js')(__filename,"debug");
 
 const rclient = require('../util/redis_manager.js').getRedisClient();
 const pclient = require('../util/redis_manager.js').getPublishClient();
-const eapi = require('./EventApi.js');
+import { listEvents as _listEvents } from './EventApi.js';
 
 const KEY_EVENT_REQUEST_STATE = "event:request:state";
 const KEY_EVENT_REQUEST_ACTION = "event:request:action";
@@ -116,7 +116,7 @@ class EventRequestApi {
         log.info("list events");
 
         try {
-            let result = await eapi.listEvents(begin,end,limit_offset,limit_count);
+            let result = await _listEvents(begin,end,limit_offset,limit_count);
             return result;
         } catch (err) {
             log.error(`failed to list events(${begin},${end}), ${err}`);
@@ -131,4 +131,4 @@ class EventRequestApi {
 })();
 */
 
-module.exports = new EventRequestApi();
+export default new EventRequestApi();
