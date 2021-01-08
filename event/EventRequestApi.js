@@ -16,23 +16,18 @@
 
 const log = require('../util/logger.js')(__filename,"debug");
 
-const rclient = require('../util/redis_manager.js').getRedisClient();
 const pclient = require('../util/redis_manager.js').getPublishClient();
-import { listEvents as _listEvents } from './EventApi.js';
 
 const KEY_EVENT_REQUEST_STATE = "event:request:state";
 const KEY_EVENT_REQUEST_ACTION = "event:request:action";
 const KEY_EVENT_REQUEST_CLEAN = "event:request:clean";
-const STATE_REQUIRED_FIELDS = [ "ts", "state_type", "state_key", "state_value"]
-const ACTION_REQUIRED_FIELDS = [ "ts", "action_type", "action_value"]
 
 /*
  * EventRequestApi send event requests onto redis channels for processing
  * 
  * Supported APIs:
- * - add event : STATE of ACTION
+ * - add event : STATE or ACTION
  * - clean event
- * - list events
  * 
  */
 class EventRequestApi {
@@ -109,17 +104,6 @@ class EventRequestApi {
             await pclient.publishAsync(KEY_EVENT_REQUEST_CLEAN,clean_json);
         } catch (err) {
             log.error(`failed to clean events(${event_json}), ${err}`);
-        }
-    }
-
-    async listEvents(begin=0, end=0, limit_offset, limit_count) {
-        log.info("list events");
-
-        try {
-            let result = await _listEvents(begin,end,limit_offset,limit_count);
-            return result;
-        } catch (err) {
-            log.error(`failed to list events(${begin},${end}), ${err}`);
         }
     }
 }
