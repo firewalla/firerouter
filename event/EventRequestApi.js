@@ -28,6 +28,8 @@ const KEY_EVENT_REQUEST_CLEAN = "event:request:clean";
  * Supported APIs:
  * - add event : STATE or ACTION
  * - clean event
+ * - list events
+ *
  */
 class EventRequestApi {
     constructor() {
@@ -60,7 +62,7 @@ class EventRequestApi {
             log.debug("event_json:",event_json);
             await pclient.publishAsync(KEY_EVENT_REQUEST_STATE,event_json);
         } catch (err) {
-            log.error(`failed to publish state event(${event_json}), ${err}`);
+            log.error(`failed to publish state event(${state_type} ${state_key} ${state_value}): ${err}`);
         }
     }
 
@@ -84,15 +86,15 @@ class EventRequestApi {
             const event_json = JSON.stringify(event_obj);
             await pclient.publishAsync(KEY_EVENT_REQUEST_ACTION,event_json);
         } catch (err) {
-            log.error(`failed to publish action event(${event_json}), ${err}`);
+            log.error(`failed to publish action event(${action_type} ${action_value}): ${err}`);
         }
     }
 
-    async cleanEvents(begin=0, end=0) {
-        log.info("clean events");
+    async cleanEventsByTime(begin=0, end=0) {
+        log.info(`clean events from ${begin} to ${end}`);
 
         try {
-            let clean_obj = {
+            const clean_obj = {
                 "begin": begin,
                 "end" : end
             }
@@ -102,7 +104,19 @@ class EventRequestApi {
             const clean_json = JSON.stringify(clean_obj);
             await pclient.publishAsync(KEY_EVENT_REQUEST_CLEAN,clean_json);
         } catch (err) {
-            log.error(`failed to clean events(${event_json}), ${err}`);
+            log.error(`failed to clean events from ${begin} to ${end}: ${err}`);
+        }
+    }
+
+    async cleanEventsByCount(count=1) {
+        log.info(`clean oldest ${count} events`);
+
+        try {
+            const clean_obj = { "count": count }
+            const clean_json = JSON.stringify(clean_obj);
+            await pclient.publishAsync(KEY_EVENT_REQUEST_CLEAN,clean_json);
+        } catch (err) {
+            log.error(`failed to clean oldest ${count} events: ${err}`);
         }
     }
 }
