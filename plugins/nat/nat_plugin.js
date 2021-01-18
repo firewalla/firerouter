@@ -74,6 +74,10 @@ class NatPlugin extends Plugin {
     const iifPlugin = pl.getPluginInstance("interface", iif);
     if (iifPlugin) {
       this.subscribeChangeFrom(iifPlugin);
+      if (!iifPlugin.networkConfig.enabled) {
+        this.log.warn(`Interface ${iif} is not enabled`);
+        return;
+      }
       const state = await iifPlugin.state();
       if (state && state.ip4s) {
         for (const ip4 of state.ip4s) {
