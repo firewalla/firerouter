@@ -62,6 +62,10 @@ class MDNSReflectorPlugin extends Plugin {
     const ifacePlugin = pl.getPluginInstance("interface", iface);
     if (ifacePlugin) {
       this.subscribeChangeFrom(ifacePlugin);
+      if (!ifacePlugin.networkConfig.enabled) {
+        this.log.warn(`Interface ${this.name} is not enabled`);
+        return;
+      }
       // create a dummy file which indicates mDNS reflector is enabled on this interface
       await fs.writeFileAsync(confPath, iface, {encoding: 'utf8'});
     } else {
