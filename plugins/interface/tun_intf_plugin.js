@@ -20,8 +20,6 @@ const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 
 const routing = require('../../util/routing.js');
-const log = require('../../util/logger')(__filename);
-
 
 class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
@@ -46,7 +44,7 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
   async createInterface() {
     const user = this.networkConfig.user || "pi";
     await exec(`ip a show ${this.name} || sudo ip tuntap add mode tun user ${user} name ${this.name}`).catch((err) => {
-      log.error(`Failed to create interface ${this.name}, err:`, err);
+      this.log.error(`Failed to create interface ${this.name}, err:`, err);
     }); // catch the error as it's likely not to be critical
   }
 
