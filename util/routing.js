@@ -293,7 +293,7 @@ async function removeInterfaceGlobalLocalRoutingRules(intf) {
 }
 
 async function getInterfaceGWIP(intf, af = 4) {
-  const nextHop = await exec(`ip -${af} r show table ${intf}_default | grep default | awk '{print $3}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
+  const nextHop = await exec(`ip -${af} r show table ${intf}_default | grep "^default via" | awk '{print $3}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
   return nextHop;
 }
 
