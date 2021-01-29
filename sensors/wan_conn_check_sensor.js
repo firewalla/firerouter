@@ -20,6 +20,7 @@ const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
+const era = require('../event/EventRequestApi.js');
 const _ = require('lodash');
 
 class WanConnCheckSensor extends Sensor {
@@ -75,6 +76,12 @@ class WanConnCheckSensor extends Sensor {
           this.log.error(`Ping test failed to all ping test targets on ${wanIntfPlugin.name}`);
           active = false;
         }
+        era.addStateEvent("ping",wanIntfPlugin.name,active?0:1,{
+          "wan_test_ips":pingTestIP,
+          "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+          "ping_test_count":pingTestCount,
+          "success_rate":pingSuccessRate
+        });
       });
       if (active && dnsTestEnabled) {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
@@ -86,6 +93,12 @@ class WanConnCheckSensor extends Sensor {
               this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
               active = false;
             }
+            era.addStateEvent("dns",nameserver,active?0:1,{
+              "wan_intf_name":wanIntfPlugin.name,
+              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "name_server":nameserver,
+              "dns_test_domain":dnsTestDomain
+            });
           }).catch((err) => {
             this.log.error(`Failed to do DNS test using ${nameserver} on ${wanIntfPlugin.name}`, err.message);
             active = false;
