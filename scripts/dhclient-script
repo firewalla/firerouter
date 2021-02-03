@@ -189,11 +189,13 @@ ipv6_link_up_and_dad() {
 # run given script
 run_hook() {
     local script="$1"
-    local exit_status=0
+    local exit_status=${2:-0}
 
     if [ -f $script ]; then
         . $script
-        exit_status=$?
+        if [ "$exit_status" -ne 0 ]; then
+            exit_status=$?
+        fi
     fi
 
     if [ -n "$exit_status" ] && [ "$exit_status" -ne 0 ]; then
@@ -206,11 +208,11 @@ run_hook() {
 # run scripts in given directory
 run_hookdir() {
     local dir="$1"
-    local exit_status=0
+    local exit_status=${2:-0}
 
     if [ -d "$dir" ]; then
         for script in $(run-parts --list $dir); do
-            run_hook $script
+            run_hook $script $exit_status
             exit_status=$((exit_status|$?))
         done
     fi
@@ -223,14 +225,13 @@ exit_with_hooks() {
     local exit_status=$1
 
     # Source the documented exit-hook script, if it exists
-    if ! run_hook /etc/dhcp/dhclient-exit-hooks; then
-        exit_status=$?
-    fi
+    run_hook /etc/dhcp/dhclient-exit-hooks $exit_status
+    exit_status=$((exit_status|$?))
+
 
     # Now run scripts in the Debian-specific directory.
-    if ! run_hookdir /etc/dhcp/dhclient-exit-hooks.d; then
-        exit_status=$?
-    fi
+    run_hookdir /etc/dhcp/dhclient-exit-hooks.d $exit_status
+    exit_status=$((exit_status|$?))
 
     exit $exit_status
 }
