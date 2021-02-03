@@ -64,8 +64,20 @@ class WanConnCheckSensor extends Sensor {
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.error(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
+            era.addStateEvent("ping",wanIntfPlugin.name,1,{
+              "wan_test_ip":ip,
+              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "ping_test_count":pingTestCount,
+              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+            });
             return false;
           } else
+            era.addStateEvent("ping",wanIntfPlugin.name,0,{
+              "wan_test_ip":ip,
+              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "ping_test_count":pingTestCount,
+              "success_rate":Number(result.stdout.trim())/pingTestCount
+            });
             return true;
         }).catch((err) => {
           this.log.error(`Failed to do ping test to ${ip} on ${wanIntfPlugin.name}`, err.message);
@@ -76,12 +88,6 @@ class WanConnCheckSensor extends Sensor {
           this.log.error(`Ping test failed to all ping test targets on ${wanIntfPlugin.name}`);
           active = false;
         }
-        era.addStateEvent("ping",wanIntfPlugin.name,active?0:1,{
-          "wan_test_ips":pingTestIP,
-          "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
-          "ping_test_count":pingTestCount,
-          "success_rate":pingSuccessRate
-        });
       });
       if (active && dnsTestEnabled) {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
