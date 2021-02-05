@@ -49,10 +49,16 @@ class IGMPProxyPlugin extends Plugin {
     lines.push("# Configuration for downstream interfaces");
     const downstream = config.downstream || {};
     for (const intf in downstream) {
-      if (downstream[intf] === true) {
-        lines.push(`phyint ${intf} downstream ratelimit 0 threshold 1`);
+      const ifacePlugin = pl.getPluginInstance("interface", intf);
+      if (ifacePlugin) {
+        this.subscribeChangeFrom(ifacePlugin);
+        if (downstream[intf] === true && ifacePlugin.networkConfig.enabled === true) {
+          lines.push(`phyint ${intf} downstream ratelimit 0 threshold 1`);
+        } else {
+          lines.push(`phyint ${intf} disabled`);
+        }
       } else {
-        lines.push(`phyint ${intf} disabled`);
+        this.log.error("Cannot find interface plugin " + intf);
       }
     }
     await fs.writeFileAsync(`${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, lines.join('\n'), {encoding: 'utf8'});

@@ -115,7 +115,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async state() {
     const state = await super.state();
-    if (this.networkConfig.enabled) {
+    if (this.networkConfig && this.networkConfig.enabled) {
       const allIPs = [];
       if (this.networkConfig.ipv4)
         allIPs.push(this.networkConfig.ipv4);
