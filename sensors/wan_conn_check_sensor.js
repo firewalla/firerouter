@@ -64,7 +64,7 @@ class WanConnCheckSensor extends Sensor {
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.error(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
-            era.addStateEvent("ping",wanIntfPlugin.name,1,{
+            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,1,{
               "wan_test_ip":ip,
               "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
               "ping_test_count":pingTestCount,
@@ -72,7 +72,7 @@ class WanConnCheckSensor extends Sensor {
             });
             return false;
           } else
-            era.addStateEvent("ping",wanIntfPlugin.name,0,{
+            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,0,{
               "wan_test_ip":ip,
               "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
               "ping_test_count":pingTestCount,
