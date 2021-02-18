@@ -16,6 +16,7 @@
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const event = require('../../core/event.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const ip = require('ip');
@@ -61,6 +62,7 @@ class IGMPProxyPlugin extends Plugin {
         this.log.error("Cannot find interface plugin " + intf);
       }
     }
+    lines.push(''); // add empty line at the end of the file;
     await fs.writeFileAsync(`${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, lines.join('\n'), {encoding: 'utf8'});
     await exec(`sudo cp ${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf /etc/igmpproxy.conf`);
   }
@@ -94,6 +96,20 @@ class IGMPProxyPlugin extends Plugin {
     }).catch((err) => {
       this.log.error("Failed to start igmpproxy", err.message);
     });
+  }
+
+  onEvent(e) {
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
+    const eventType = event.getEventType(e);
+    switch (eventType) {
+      case event.EVENT_IP_CHANGE: {
+        this._reapplyNeeded = true;
+        pl.scheduleReapply();
+        break;
+      }
+      default:
+    }
   }
 }
 
