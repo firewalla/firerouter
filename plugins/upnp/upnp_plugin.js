@@ -126,7 +126,7 @@ class UPnPPlugin extends Plugin {
 
     const uuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
     const internalCidrs = intState.ip4s.map(ip4 => ip.cidrSubnet(ip4));
-    const internalIPs = intState.ip4s.map(ip4 => ip4.split('/')[0]).sort().filter((v, i, a) => a.indexOf(v) === i);
+    const internalIPs = intState.ip4s.sort().filter((v, i, a) => a.indexOf(v) === i);
     const internalNetworks = internalCidrs.map(internalCidr => `${internalCidr.networkAddress}/${internalCidr.subnetMaskLength}`).sort().filter((v, i, a) => a.indexOf(v) === i);
     await this.generateConfig(uuid, extIntf, internalIPs, internalNetworks);
     await exec(`sudo systemctl restart firerouter_upnpd@${this.name}`);
