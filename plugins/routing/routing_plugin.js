@@ -29,6 +29,7 @@ const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
+const era = require('../../event/EventRequestApi.js');
 
 class RoutingPlugin extends Plugin {
    
@@ -615,8 +616,10 @@ class RoutingPlugin extends Plugin {
       this._applyActiveGlobalDefaultRouting(true).then(() => {
         const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
         this.propagateEvent(e);
+        const wanConnStates = this.getWANConnStates();
+        era.addActionEvent("dualwan_change",1,{"wan_conn_states":wanConnStates});
         if (changeDesc) {
-          changeDesc.currentStatus = this.getWANConnStates();
+          changeDesc.currentStatus = wanConnStates;
           this.schedulePublishWANConnChanged(changeDesc);
         }
       }).catch((err) => {
