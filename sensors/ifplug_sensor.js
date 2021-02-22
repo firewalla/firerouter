@@ -54,7 +54,7 @@ class IfPlugSensor extends Sensor {
             intfPlugin.propagateEvent(e);
           }
           // filter out VPN interface
-          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 1);
+          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 0);
           break;
         }
         case "ifdown": {
@@ -65,7 +65,7 @@ class IfPlugSensor extends Sensor {
             intfPlugin.propagateEvent(e);
           }
           // filter out VPN interface
-          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 0);
+          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 1);
           break;
         }
         default:
