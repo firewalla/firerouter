@@ -631,9 +631,10 @@ class RoutingPlugin extends Plugin {
       const result = {};
       for (const i of Object.keys(wanStatus).sort((a, b) => wanStatus[a].seq - wanStatus[b].seq)) {
         const ifacePlugin = pl.getPluginInstance("interface",i);
-        if (ifacePlugin && ifacePlugin.networkConfig && ifacePlugin.networkConfig.meta && ifacePlugin.networkConfig.meta.uuid) {
+        if (ifacePlugin && ifacePlugin.networkConfig && ifacePlugin.networkConfig.meta &&
+            ifacePlugin.networkConfig.meta.name && ifacePlugin.networkConfig.meta.uuid) {
           result[i] = {
-            wan_intf_name: i,
+            wan_intf_name: ifacePlugin.networkConfig.meta.name,
             wan_intf_uuid: ifacePlugin.networkConfig.meta.uuid,
             ready: wanStatus[i].ready,
             active: wanStatus[i].active
