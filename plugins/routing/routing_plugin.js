@@ -631,7 +631,7 @@ class RoutingPlugin extends Plugin {
       const result = {};
       for (const i of Object.keys(wanStatus).sort((a, b) => wanStatus[a].seq - wanStatus[b].seq)) {
         const ifacePlugin = pl.getPluginInstance("interface",i);
-        if (ifacePlugin.networkConfig && ifacePlugin.networkConfig.meta && ifacePlugin.networkConfig.meta.uuid) {
+        if (ifacePlugin && ifacePlugin.networkConfig && ifacePlugin.networkConfig.meta && ifacePlugin.networkConfig.meta.uuid) {
           result[i] = {
             wan_intf_uuid: ifacePlugin.networkConfig.meta.uuid,
             ready: wanStatus[i].ready,
@@ -659,7 +659,8 @@ class RoutingPlugin extends Plugin {
         this.log.error("failed to populate WAN status with IP:",err);
       });
       this.log.debug("enriched wanStatus:",enrichedWanStatus);
-      if (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) {
+      const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || 'single';
+      if ( type === 'single' ) {
         this.log.debug("dual WAN");
         // dual WAN switch
         if ( changeDesc.wanSwitched) {
