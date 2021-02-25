@@ -662,7 +662,7 @@ class RoutingPlugin extends Plugin {
       });
       this.log.debug("enriched wanStatus:",enrichedWanStatus);
       const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || 'single';
-      if ( type === 'single' ) {
+      if ( type !== 'single' ) {
         this.log.debug("dual WAN");
         // dual WAN switch
         if ( changeDesc.wanSwitched) {
