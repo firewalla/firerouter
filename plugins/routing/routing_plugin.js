@@ -591,9 +591,19 @@ class RoutingPlugin extends Plugin {
           } else {
             changeDesc.currentStatus = this.getWANConnStates();
             this.schedulePublishWANConnChanged(changeDesc);
+          }   
+        }
+        this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus => {
+          if (type !== 'single') {
+            this.log.debug("dual WAN");
+            const dualWanReady = Object.keys(enrichedWanStatus).reduce((acc, cur) => (acc || enrichedWanStatus[cur].ready), false);
+            era.addStateEvent("dualwan_state", "overall", dualWanReady ? 0 : 1, enrichedWanStatus);
           }
-            
-        } 
+          for (const intf of Object.keys(enrichedWanStatus)) {
+            this.log.debug("wan state", enrichedWanStatus[intf]);
+            era.addStateEvent("wan_state", intf, enrichedWanStatus[intf].ready ? 0 : 1, enrichedWanStatus[intf]);
+          }
+        }))
       }
       default:
     }
@@ -639,9 +649,9 @@ class RoutingPlugin extends Plugin {
             ready: wanStatus[i].ready,
             active: wanStatus[i].active
           };
-          const state = await ifacePlugin.state();
-          if (state && state.ip4s) {
-            result[i].ip4s = state.ip4s
+          const ip4s = await ifacePlugin.getIPv4Addresses();
+          if (ip4s) {
+            result[i].ip4s = ip4s
           }
         }
       };
@@ -657,33 +667,6 @@ class RoutingPlugin extends Plugin {
       clearTimeout(this.publishWANConnChangedTask);
     this.publishWANConnChangedTask = setTimeout(async () => {
       pclient.publishAsync("firerouter.wan_conn_changed", JSON.stringify(changeDesc)).catch((err) => {});
-      const enrichedWanStatus = await this.enrichWanStatus(changeDesc.currentStatus).catch((err)=>{
-        this.log.error("failed to populate WAN status with IP:",err);
-      });
-      this.log.debug("enriched wanStatus:",enrichedWanStatus);
-      const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || 'single';
-      if ( type !== 'single' ) {
-        this.log.debug("dual WAN");
-        // dual WAN switch
-        if ( changeDesc.wanSwitched) {
-          this.log.debug("wanSwitched");
-          const dualWanReady = Object.keys(changeDesc.currentStatus).reduce((acc,cur)=> (acc || changeDesc.currentStatus[cur].ready),false);
-          era.addStateEvent("dualwan_state","overall", dualWanReady ? 0:1, enrichedWanStatus);
-        }
-        // WAN state change
-        const changeIntf = changeDesc.intf;
-        const changeIntfWANStatus = enrichedWanStatus[changeIntf]
-        this.log.debug("wan state:",changeIntfWANStatus);
-        era.addStateEvent("wan_state",changeIntf,(changeIntfWANStatus.ready) ? 0:1,changeIntfWANStatus);
-      } else {
-        // single WAN
-        this.log.debug("single WAN");
-        for (const intf in enrichedWanStatus) {
-          // should have ONLY ONE
-          this.log.debug("wan state:",enrichedWanStatus[intf]);
-          era.addStateEvent("wan_state",intf,(enrichedWanStatus[intf].ready) ? 0:1,enrichedWanStatus[intf]);
-        }
-      }
     }, 10000);
   }
 }
