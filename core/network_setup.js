@@ -70,39 +70,39 @@ class NetworkSetup {
   async getWANs() {
     const allInterfacePlugins = pl.getPluginInstances("interface") || {};
     const wans = {};
-    for (let name in allInterfacePlugins) {
+    await Promise.all(Object.keys(allInterfacePlugins).map(async name => {
       const plugin = allInterfacePlugins[name];
       if (plugin && plugin.isWAN()) {
         const state = await plugin.state();
         wans[name] = {config: plugin.networkConfig, state: state};
       }
-    }
+    }));
     return wans;
   }
 
   async getLANs() {
     const allInterfacePlugins = pl.getPluginInstances("interface") || {};
     const lans = {};
-    for (let name in allInterfacePlugins) {
+    await Promise.all(Object.keys(allInterfacePlugins).map(async name => {
       const plugin = allInterfacePlugins[name];
       if (plugin && plugin.isLAN()) {
         const state = await plugin.state();
         lans[name] = {config: plugin.networkConfig, state: state};
       }
-    }
+    }));
     return lans;
   }
 
   async getInterfaces() {
     const allInterfacePlugins = pl.getPluginInstances("interface") || {};
     const interfaces = {};
-    for (let name in allInterfacePlugins) {
+    await Promise.all(Object.keys(allInterfacePlugins).map(async name => {
       const plugin = allInterfacePlugins[name];
       if (plugin) {
         const state = await plugin.state();
         interfaces[name] = {config: plugin.networkConfig, state: state};
       }
-    }
+    }));
     return interfaces;
   }
 
