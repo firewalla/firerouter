@@ -596,8 +596,30 @@ class RoutingPlugin extends Plugin {
         this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus => {
           if (type !== 'single') {
             this.log.debug("dual WAN");
-            const dualWanReady = Object.keys(enrichedWanStatus).reduce((acc, cur) => (acc || enrichedWanStatus[cur].ready), false);
-            era.addStateEvent("dualwan_state", "overall", dualWanReady ? 0 : 1, enrichedWanStatus);
+            const wanIntfs = Object.keys(enrichedWanStatus);
+            // calcuate state value based on active/ready status of both WANs
+            let dualWANStateValue =
+              (enrichedWanStatus[wanIntfs[0]].active ? 0:1) +
+              (enrichedWanStatus[wanIntfs[0]].ready ? 0:2) +
+              (enrichedWanStatus[wanIntfs[1]].active ? 0:4) +
+              (enrichedWanStatus[wanIntfs[1]].ready ? 0:8) ;
+            this.log.debug("original state value=",dualWANStateValue);
+            /*
+              * Normal state
+              * - Failover   : primary active but standby inactive, both ready
+              * - LoadBalance: both active and ready
+              */
+            let labels = {...enrichedWanStatus};
+            if (type === 'primary_standby') {
+              const primaryIntf = this.networkConfig["default"].viaIntf;
+              labels.primary = primaryIntf;
+              this.log.debug("primaryIntf=",primaryIntf);
+              if ((primaryIntf === wanIntfs[1] && dualWANStateValue === 1) ||
+                  (primaryIntf === wanIntfs[0] && dualWANStateValue === 4)) {
+                dualWANStateValue = 0;
+              }
+            }
+            era.addStateEvent("dualwan_state", type, dualWANStateValue, labels);
           }
           for (const intf of Object.keys(enrichedWanStatus)) {
             this.log.debug("wan state", enrichedWanStatus[intf]);
@@ -642,7 +664,8 @@ class RoutingPlugin extends Plugin {
       for (const i of Object.keys(wanStatus).sort((a, b) => wanStatus[a].seq - wanStatus[b].seq)) {
         const ifacePlugin = pl.getPluginInstance("interface",i);
         if (ifacePlugin && ifacePlugin.networkConfig && ifacePlugin.networkConfig.meta &&
-            ifacePlugin.networkConfig.meta.name && ifacePlugin.networkConfig.meta.uuid) {
+            ifacePlugin.networkConfig.meta.name && ifacePlugin.networkConfig.meta.uuid &&
+            ('ready' in wanStatus[i]) && ('active' in wanStatus[i]) ) {
           result[i] = {
             wan_intf_name: ifacePlugin.networkConfig.meta.name,
             wan_intf_uuid: ifacePlugin.networkConfig.meta.uuid,
