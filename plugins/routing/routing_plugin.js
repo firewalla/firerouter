@@ -435,6 +435,12 @@ class RoutingPlugin extends Plugin {
                       this.log.error(`dest and dev should be specified for global static route`);
                       continue;
                     }
+                    const ifacePlugin = pl.getPluginInstance("interface", dev);
+                    if (!ifacePlugin) {
+                      this.log.error(`Static route dest interface plugin ${dev} not found`);
+                    } else {
+                      this.subscribeChangeFrom(ifacePlugin);
+                    }
                     let iface = dev;
                     if (iface.includes(":")) {
                       // virtual interface, need to strip suffix
@@ -492,6 +498,12 @@ class RoutingPlugin extends Plugin {
                     if (!dest && !dev) {
                       this.log.error(`dest and dev should be specified for static route of ${this.name}`);
                       continue;
+                    }
+                    const ifacePlugin = pl.getPluginInstance("interface", dev);
+                    if (!ifacePlugin) {
+                      this.log.error(`Static route dest interface plugin ${dev} not found`);
+                    } else {
+                      this.subscribeChangeFrom(ifacePlugin);
                     }
                     let iface = dev;
                     if (iface.includes(":")) {
