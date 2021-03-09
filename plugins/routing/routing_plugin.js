@@ -20,6 +20,7 @@ const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const routing = require('../../util/routing.js');
 const event = require('../../core/event.js');
+const Message = require('../../core/Message.js');
 const {Address4, Address6} = require('ip-address');
 const AsyncLock = require('async-lock');
 const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
@@ -743,7 +744,7 @@ class RoutingPlugin extends Plugin {
     if (this.publishWANConnChangedTask)
       clearTimeout(this.publishWANConnChangedTask);
     this.publishWANConnChangedTask = setTimeout(async () => {
-      pclient.publishAsync("firerouter.wan_conn_changed", JSON.stringify(changeDesc)).catch((err) => {});
+      pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
     }, 10000);
   }
 }

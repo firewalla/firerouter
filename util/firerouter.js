@@ -162,6 +162,10 @@ function getInterfacePDCacheDirectory(iface) {
   return `${getRuntimeFolder()}/dhcpcd/${iface}`;
 }
 
+function getInterfaceSysFSDirectory(iface) {
+  return `/sys/class/net/${iface}`
+}
+
 function getVersion() {
   if(!version) {
     let cmd = "git describe --tags";
@@ -241,5 +245,6 @@ module.exports = {
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
   getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
   getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
+  getInterfaceSysFSDirectory: getInterfaceSysFSDirectory,
   switchBranch: switchBranch
 };
