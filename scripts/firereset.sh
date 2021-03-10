@@ -15,4 +15,5 @@ run_host_light_until_paired() {
 
 run_host_light_until_paired &
 
-sudo $FW_PLATFORM_CUR_DIR/bin/firereset
+FIRERESET_BINARY=$(get_firereset_path)
+sudo $FIRERESET_BINARY
