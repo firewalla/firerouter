@@ -16,6 +16,7 @@
 const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const event = require('../../core/event.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const ip = require('ip');
@@ -49,12 +50,19 @@ class IGMPProxyPlugin extends Plugin {
     lines.push("# Configuration for downstream interfaces");
     const downstream = config.downstream || {};
     for (const intf in downstream) {
-      if (downstream[intf] === true) {
-        lines.push(`phyint ${intf} downstream ratelimit 0 threshold 1`);
+      const ifacePlugin = pl.getPluginInstance("interface", intf);
+      if (ifacePlugin) {
+        this.subscribeChangeFrom(ifacePlugin);
+        if (downstream[intf] === true && ifacePlugin.networkConfig.enabled === true) {
+          lines.push(`phyint ${intf} downstream ratelimit 0 threshold 1`);
+        } else {
+          lines.push(`phyint ${intf} disabled`);
+        }
       } else {
-        lines.push(`phyint ${intf} disabled`);
+        this.log.error("Cannot find interface plugin " + intf);
       }
     }
+    lines.push(''); // add empty line at the end of the file;
     await fs.writeFileAsync(`${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, lines.join('\n'), {encoding: 'utf8'});
     await exec(`sudo cp ${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf /etc/igmpproxy.conf`);
   }
@@ -88,6 +96,20 @@ class IGMPProxyPlugin extends Plugin {
     }).catch((err) => {
       this.log.error("Failed to start igmpproxy", err.message);
     });
+  }
+
+  onEvent(e) {
+    if (!event.isLoggingSuppressed(e))
+      this.log.info(`Received event on ${this.name}`, e);
+    const eventType = event.getEventType(e);
+    switch (eventType) {
+      case event.EVENT_IP_CHANGE: {
+        this._reapplyNeeded = true;
+        pl.scheduleReapply();
+        break;
+      }
+      default:
+    }
   }
 }
 
