@@ -8,4 +8,7 @@
   compress
   delaycompress
   nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
 }

@@ -34,6 +34,7 @@ class IfPlugSensor extends Sensor {
   async run() {
     const ifaces = await ncm.getPhyInterfaceNames();
     const upDelay = this.config.up_delay || 5;
+    const era = require('../event/EventRequestApi');
     for (let iface of ifaces) {
       await exec(`sudo ip link set ${iface} up`).catch((err) => {});
       await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
@@ -43,6 +44,7 @@ class IfPlugSensor extends Sensor {
     }
 
     sclient.on("message", (channel, message) => {
+      const EVENT_STATE_TYPE = "ethernet_state";
       switch (channel) {
         case "ifup": {
           const iface = message;
@@ -51,6 +53,8 @@ class IfPlugSensor extends Sensor {
             const e = event.buildEvent(event.EVENT_IF_UP, {intf: iface});
             intfPlugin.propagateEvent(e);
           }
+          // filter out VPN interface
+          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 0);
           break;
         }
         case "ifdown": {
@@ -60,6 +64,8 @@ class IfPlugSensor extends Sensor {
             const e = event.buildEvent(event.EVENT_IF_DOWN, {intf: iface});
             intfPlugin.propagateEvent(e);
           }
+          // filter out VPN interface
+          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 1);
           break;
         }
         default:
