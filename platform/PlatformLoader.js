@@ -77,7 +77,7 @@ class PlatformLoader {
           return null;
         }
       }
-
+      break;
     }
     default:
       return null;
