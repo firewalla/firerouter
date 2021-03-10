@@ -10,6 +10,12 @@ redis-cli del "fireboot:network_down:code"
 source ${FIREROUTER_HOME}/bin/common
 source ${FIREROUTER_HOME}/platform/platform.sh
 
+NODE_MODULES_PATH=$(get_node_modules_dir)
+if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
+  rm ${FIREROUTER_HOME}/node_modules
+  ln -s $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+fi
+
 # step 1 - init network config
 rc=0
 

@@ -10,9 +10,13 @@ fi
 
 PIDS=""
 
+source %FIREROUTER_HOME%/platform/platform.sh
+
+DNSMASQ_BINARY=$(get_dnsmasq_path)
+
 for CONF_FILE in %FIREROUTER_HOME%/etc/dnsmasq.dns.*.conf; do
   if [[ -e $CONF_FILE ]]; then
-    %DNSMASQ_BINARY% -k --clear-on-reload -u pi -C $CONF_FILE &
+    $DNSMASQ_BINARY -k --clear-on-reload -u pi -C $CONF_FILE &
     PIDS="$PIDS $!"
   fi
 done;

@@ -61,7 +61,6 @@ class DNSPlugin extends Plugin {
   static async installDNSScript() {
     let content = await fs.readFileAsync(dnsScriptTemplate, {encoding: 'utf8'});
     content = content.replace(/%FIREROUTER_HOME%/g, r.getFireRouterHome());
-    content = content.replace(/%DNSMASQ_BINARY%/g, r.getFireRouterHome() + "/bin/dnsmasq");
     const targetFile = r.getTempFolder() + "/dns.sh";
     await fs.writeFileAsync(targetFile, content);
   }
