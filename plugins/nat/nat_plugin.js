@@ -84,7 +84,7 @@ class NatPlugin extends Plugin {
           await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_SNAT -s ${ip4} -o ${oif} -j MASQUERADE`));
         }
       } else {
-        this.fatal("Failed to get ip4 of incoming interface " + iif);
+        this.log.error("Failed to get ip4 of incoming interface " + iif);
       }
     } else {
       this.fatal("Cannot find interface plugin " + iif);

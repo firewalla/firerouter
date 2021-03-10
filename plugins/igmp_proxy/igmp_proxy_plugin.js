@@ -53,6 +53,10 @@ class IGMPProxyPlugin extends Plugin {
       const ifacePlugin = pl.getPluginInstance("interface", intf);
       if (ifacePlugin) {
         this.subscribeChangeFrom(ifacePlugin);
+        if (await ifacePlugin.isInterfacePresent() === false) {
+          this.log.warn(`Downstream interface ${intf} is not present yet`);
+          continue;
+        }
         if (downstream[intf] === true && ifacePlugin.networkConfig.enabled === true) {
           lines.push(`phyint ${intf} downstream ratelimit 0 threshold 1`);
         } else {
@@ -87,6 +91,10 @@ class IGMPProxyPlugin extends Plugin {
     if (!intfPlugin)
       this.fatal(`Instance plugin ${this.name} is not found`);
     this.subscribeChangeFrom(intfPlugin);
+    if (await intfPlugin.isInterfacePresent() === false) {
+      this.log.warn(`Upstream interface ${this.name} is not present yet`);
+      return;
+    }
 
     await this.generateConfFile();
     await this.updateIptables();

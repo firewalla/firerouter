@@ -136,6 +136,12 @@
         "ping_success_rate": 0.5,
         "dns_test_domain": "github.com"
       }
+    },
+    {
+      "file_path": "./if_presence_sensor.js",
+      "config": {
+        
+      }
     }
   ]
 }

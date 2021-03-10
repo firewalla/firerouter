@@ -30,12 +30,18 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async createInterface() {
+    const presentInterfaces = [];
     for (const intf of this.networkConfig.intf) {
-      await exec(`sudo ip addr flush dev ${intf}`);
+      await exec(`sudo ip addr flush dev ${intf}`).catch((err) => {});
       const intfPlugin = pl.getPluginInstance("interface", intf);
       if (intfPlugin) {
         // this is useful if it is a passthrough bridge
         this.subscribeChangeFrom(intfPlugin);
+        if (await intfPlugin.isInterfacePresent() === false) {
+          this.log.warn(`Interface ${intf} is not present yet`);
+          continue;
+        }
+        presentInterfaces.push(intf);
       } else {
         this.fatal(`Lower interface plugin not found ${intf}`);
       }
@@ -51,9 +57,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         this.log.error(`Failed to ${this.networkConfig.stp === false ? "disable" : "enable"} stp on bridge interface ${this.name}`, err.message);
       });
     }
-    await exec(`sudo brctl addif ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {
-      this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
-    });
+    if (presentInterfaces.length > 0)
+      await exec(`sudo brctl addif ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
+        this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
+      });
   }
 }
 
