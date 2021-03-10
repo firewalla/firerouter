@@ -175,6 +175,10 @@ class DNSPlugin extends Plugin {
       if (!this._intfUuid)
         this.fatal(`Cannot find interface uuid for ${this.name}`);
       this.subscribeChangeFrom(intfPlugin);
+      if (await intfPlugin.isInterfacePresent() === false) {
+        this.log.warn(`Interface ${this.name} is not present yet`);
+        return;
+      }
       if (!intfPlugin.networkConfig.enabled) {
         this.log.warn(`Interface ${this.name} is not enabled`);
         return;

@@ -17,6 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
+const pl = require('../plugin_loader.js');
 
 class BondInterfacePlugin extends InterfaceBasePlugin {
 
@@ -33,15 +34,30 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async createInterface() {
+    const presentInterfaces = [];
     for (const intf of this.networkConfig.intf) {
-      await exec(`sudo ip addr flush dev ${intf}`);
+      await exec(`sudo ip addr flush dev ${intf}`).catch((err) => {});
+      const intfPlugin = pl.getPluginInstance("interface", intf);
+      if (intfPlugin) {
+        this.subscribeChangeFrom(intfPlugin);
+        if (await intfPlugin.isInterfacePresent() === false) {
+          this.log.warn(`Interface ${intf} is not present yet`);
+          continue;
+        }
+        presentInterfaces.push(intf);
+      } else {
+        this.fatal(`Lower interface plugin is not found ${intf}`);
+      }
     }
 
     // supported mode list: balance-rr, active-backup, balance-xor, broadcast, 802.3ad, balance-tlb, balance-alb
     // default to balance-rr
     const mode = this.networkConfig.mode || "balance-rr";
     await exec(`sudo ip link add ${this.name} type bond mode ${mode}`);
-    await exec(`sudo ifenslave ${this.name} ${this.networkConfig.intf.join(" ")}`);
+    if (presentInterfaces.length > 0)
+      await exec(`sudo ifenslave ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
+        this.log.error(`Failed to add interfaces to bond ${this.name}`, err.message);
+      });
   }
 }
 
