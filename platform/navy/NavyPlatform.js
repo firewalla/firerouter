@@ -1,4 +1,4 @@
-/*    Copyright 2016-2020 Firewalla Inc.
+/*    Copyright 2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -13,22 +13,12 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-'use strict';
+const Platform = require('../Platform.js');
 
-const fs = require('fs');
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
-
-class Platform {
+class NavyPlatform extends Platform {
   getName() {
-  }
-
-  getType() {
-  }
-
-  getDefaultNetworkJsonFile() {
-    return `${__dirname}/../network/default_setup.json`;
+    return "navy";
   }
 }
 
-module.exports = Platform;
+module.exports = NavyPlatform;
