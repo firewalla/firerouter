@@ -45,3 +45,7 @@ function get_dnsmasq_path {
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }
+
+function get_hostapd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
+}
