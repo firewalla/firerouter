@@ -68,12 +68,16 @@ class HostapdPlugin extends Plugin {
     const parameters = {};
     const params = this.networkConfig.params || {};
     parameters.interface = this.name;
+    const intfPlugin = pl.getPluginInstance("interface", this.name);
+    if (!intfPlugin)
+      this.fatal(`Cannot find interface plugin ${this.name}`);
+    this.subscribeChangeFrom(intfPlugin);
     if (this.networkConfig.bridge) {
-      const intfPlugin = pl.getPluginInstance("interface", this.networkConfig.bridge);
-      if (!intfPlugin)
+      const bridgeIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.bridge);
+      if (!bridgeIntfPlugin)
         this.fatal(`Cannot find bridge interface plugin ${this.networkConfig.bridge}`);
-      this.subscribeChangeFrom(intfPlugin);
-      if (await intfPlugin.isInterfacePresent() === false) {
+      this.subscribeChangeFrom(bridgeIntfPlugin);
+      if (await bridgeIntfPlugin.isInterfacePresent() === false) {
         this.log.warn(`Bridge interface ${this.networkConfig.bridge} is not present yet`);
         return;
       }
