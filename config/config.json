@@ -113,6 +113,12 @@
       "config_path": "icmp",
       "category": "icmp",
       "init_seq": 9
+    },
+    {
+      "file_path": "./hostapd/hostapd_plugin.js",
+      "config_path": "hostapd",
+      "category": "hostapd",
+      "init_seq": 9
     }
   ],
   "sensors": [
