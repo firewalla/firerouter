@@ -71,7 +71,7 @@ class NatPlugin extends Plugin {
         this.fatal("Failed to get ip4 of incoming interface " + iif);
       }
     } else {
-      this.fatal("Cannot find interface plugin " + iif);
+      this.log.error("Cannot find interface plugin " + iif);
     }
   }
 }
