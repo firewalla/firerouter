@@ -30,7 +30,6 @@ const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
-const era = require('../../event/EventRequestApi.js');
 
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
@@ -648,39 +647,6 @@ class RoutingPlugin extends Plugin {
             this.schedulePublishWANConnChanged(changeDesc);
           }   
         }
-        this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus => {
-          if (type !== 'single') {
-            this.log.debug("dual WAN");
-            const wanIntfs = Object.keys(enrichedWanStatus);
-            // calcuate state value based on active/ready status of both WANs
-            let dualWANStateValue =
-              (enrichedWanStatus[wanIntfs[0]].active ? 0:1) +
-              (enrichedWanStatus[wanIntfs[0]].ready ? 0:2) +
-              (enrichedWanStatus[wanIntfs[1]].active ? 0:4) +
-              (enrichedWanStatus[wanIntfs[1]].ready ? 0:8) ;
-            this.log.debug("original state value=",dualWANStateValue);
-            /*
-              * Normal state
-              * - Failover   : primary active but standby inactive, both ready
-              * - LoadBalance: both active and ready
-              */
-            let labels = {...enrichedWanStatus};
-            if (type === 'primary_standby') {
-              const primaryIntf = this.networkConfig["default"].viaIntf;
-              labels.primary = primaryIntf;
-              this.log.debug("primaryIntf=",primaryIntf);
-              if ((primaryIntf === wanIntfs[1] && dualWANStateValue === 1) ||
-                  (primaryIntf === wanIntfs[0] && dualWANStateValue === 4)) {
-                dualWANStateValue = 0;
-              }
-            }
-            era.addStateEvent("dualwan_state", type, dualWANStateValue, labels);
-          }
-          for (const intf of Object.keys(enrichedWanStatus)) {
-            this.log.debug("wan state", enrichedWanStatus[intf]);
-            era.addStateEvent("wan_state", intf, enrichedWanStatus[intf].ready ? 0 : 1, enrichedWanStatus[intf]);
-          }
-        }))
       }
       default:
     }
