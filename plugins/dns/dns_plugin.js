@@ -169,8 +169,10 @@ class DNSPlugin extends Plugin {
   async apply() {
     if (this.name !== "default") {
       const intfPlugin = pl.getPluginInstance("interface", this.name);
-      if (!intfPlugin)
-        this.fatal(`Cannot find interface plugin for ${this.name}`);
+      if (!intfPlugin) {
+        this.log.error(`Cannot find interface plugin for ${this.name}`);
+        return;
+      }
       this._intfUuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
       if (!this._intfUuid)
         this.fatal(`Cannot find interface uuid for ${this.name}`);

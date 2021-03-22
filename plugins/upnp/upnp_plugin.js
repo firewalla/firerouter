@@ -96,8 +96,10 @@ class UPnPPlugin extends Plugin {
       return;
     }
     const intfPlugin = pl.getPluginInstance("interface", this.name);
-    if (!intfPlugin)
-      this.fatal(`Internal interface plugin ${this.name} is not found on upnp ${this.name}`);
+    if (!intfPlugin) {
+      this.log.error(`Internal interface plugin ${this.name} is not found on upnp ${this.name}`);
+      return;
+    }
     this.subscribeChangeFrom(intfPlugin);
 
     const intState = await intfPlugin.state();
