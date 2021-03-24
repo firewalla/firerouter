@@ -9,3 +9,5 @@ down)
 	redis-cli -n 1 publish "ifdown" "$1"
 	;;
 esac
+
+exit 0
