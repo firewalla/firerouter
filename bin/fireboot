@@ -1,5 +1,7 @@
 #!/bin/bash
 
+bash /home/pi/firewalla/scripts/clean_log.sh || true
+
 sleep 3
 
 redis-cli del "fireboot:status"
