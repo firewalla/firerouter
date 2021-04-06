@@ -95,7 +95,7 @@ class InterfaceBasePlugin extends Plugin {
         await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
           this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
-        await this.unmarkOutputConnection().catch((err) => {
+        await this.unmarkOutputConnection(rtid).catch((err) => {
           this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
         });
       }
@@ -563,7 +563,7 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
-  async unmarkOutputConnection() {
+  async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
         await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
