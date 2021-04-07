@@ -167,6 +167,9 @@ class DNSPlugin extends Plugin {
   }
 
   async apply() {
+    const confPath = this._getConfFilePath();
+    await fs.unlinkAsync(confPath).catch((err) => {});
+    await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
     if (this.name !== "default") {
       const intfPlugin = pl.getPluginInstance("interface", this.name);
       if (!intfPlugin) {

@@ -2,9 +2,13 @@
 {
   rotate 7
   daily
+  maxsize 5M
   missingok
   notifempty
   compress
   delaycompress
   nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
 }

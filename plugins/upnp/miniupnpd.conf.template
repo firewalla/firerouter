@@ -1,7 +1,7 @@
 # WAN network interface
 ext_ifname=%EXTERNAL_INTERFACE%
 
-listening_ip=%LISTENING_IP%
+%LISTENING_IP%
 
 minissdpdsocket=/var/run/minissdpd.%INTERNAL_INTERFACE%.sock
 
@@ -29,5 +29,5 @@ uuid=%UUID%
 deny 1194 0.0.0.0/0 0-65535
 deny 8833-8834 0.0.0.0/0 0-65535
 deny 8837 0.0.0.0/0 0-65535
-allow 1024-65535 %INTERNAL_NETWORK% 1024-65535
+%ALLOW_NETWORK%
 deny 0-65535 0.0.0.0/0 0-65535
