@@ -20,6 +20,7 @@ const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
+const era = require('../event/EventRequestApi.js');
 const _ = require('lodash');
 
 class WanConnCheckSensor extends Sensor {
@@ -63,8 +64,20 @@ class WanConnCheckSensor extends Sensor {
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.error(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
+            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,1,{
+              "wan_test_ip":ip,
+              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "ping_test_count":pingTestCount,
+              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+            });
             return false;
           } else
+            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,0,{
+              "wan_test_ip":ip,
+              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "ping_test_count":pingTestCount,
+              "success_rate":Number(result.stdout.trim())/pingTestCount
+            });
             return true;
         }).catch((err) => {
           this.log.error(`Failed to do ping test to ${ip} on ${wanIntfPlugin.name}`, err.message);
@@ -78,14 +91,22 @@ class WanConnCheckSensor extends Sensor {
       });
       if (active && dnsTestEnabled) {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
-        if (_.isArray(nameservers) && nameservers.length !== 0) {
+        const ip4s = await wanIntfPlugin.getIPv4Addresses();
+        if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
           const nameserver = nameservers[0];
-          const cmd = `dig -4 +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
+          const srcIP = ip4s[0].split('/')[0];
+          const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
           await exec(cmd).then((result) => {
             if (!result || !result.stdout || result.stdout.trim().length === 0) {
               this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
               active = false;
             }
+            era.addStateEvent("dns",nameserver,active?0:1,{
+              "wan_intf_name":wanIntfPlugin.name,
+              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "name_server":nameserver,
+              "dns_test_domain":dnsTestDomain
+            });
           }).catch((err) => {
             this.log.error(`Failed to do DNS test using ${nameserver} on ${wanIntfPlugin.name}`, err.message);
             active = false;
