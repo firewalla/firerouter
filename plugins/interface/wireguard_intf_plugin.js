@@ -91,6 +91,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
     await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    return true;
   }
 
   async changeRoutingTables() {

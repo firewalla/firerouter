@@ -58,6 +58,7 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
       await exec(`sudo ifenslave ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
         this.log.error(`Failed to add interfaces to bond ${this.name}`, err.message);
       });
+    return true;
   }
 }
 
