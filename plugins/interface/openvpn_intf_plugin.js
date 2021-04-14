@@ -45,6 +45,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
     // a tricky to change enabled status of networkConfig in memory, other plugins that are dependent on this plugin can read this change
     this.networkConfig.enabled = up;
+    return true;
   }
 
   async interfaceUpDown() {

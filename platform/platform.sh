@@ -49,3 +49,7 @@ function get_firereset_path {
 function get_hostapd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
 }
+
+function get_wpa_supplicant_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
+}
