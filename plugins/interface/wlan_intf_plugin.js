@@ -57,7 +57,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async flush() {
     await super.flush();
 
-    if (this.networkConfig && this.networkConfig.enabled && this.networkConfig.baseIntf) {
+    if (this.networkConfig && this.networkConfig.baseIntf) {
       await exec(`sudo iw dev ${this.name} del`).catch((err) => {});
     }
 
