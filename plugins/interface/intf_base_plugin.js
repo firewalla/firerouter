@@ -204,7 +204,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async createInterface() {
-
+    return true;
   }
 
   async interfaceUpDown() {
@@ -609,7 +609,11 @@ class InterfaceBasePlugin extends Plugin {
         return;
     }
 
-    await this.createInterface();
+    const ifCreated = await this.createInterface();
+    if (!ifCreated) {
+      this.log.warn(`Unable to create interface ${this.name}`);
+      return;
+    }
 
     await this.prepareEnvironment();
 
