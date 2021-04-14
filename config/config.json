@@ -13,6 +13,12 @@
       "init_seq": 2
     },
     {
+      "file_path": "./interface/wlan_intf_plugin.js",
+      "config_path": "interface.wlan",
+      "category": "interface",
+      "init_seq": 2
+    },
+    {
       "file_path": "./interface/pppoe_intf_plugin.js",
       "config_path": "interface.pppoe",
       "category": "interface",

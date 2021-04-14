@@ -65,7 +65,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     // create config file instead
     if (!this.networkConfig || !this.networkConfig.username || !this.networkConfig.password) {
       this.log.error("username or password is not specified for pppoe", this.name);
-      return;
+      return false;
     }
     let config = await fs.readFileAsync(pppoeTemplateFilePath, {encoding: "utf8"});
     const username = this.networkConfig.username;
@@ -91,6 +91,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     } else {
       this.fatal(`Failed to find interface plugin ${intf}`);
     }
+    return true;
   }
 
   async interfaceUpDown() {
