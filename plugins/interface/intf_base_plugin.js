@@ -597,6 +597,17 @@ class InterfaceBasePlugin extends Plugin {
       });
   }
 
+  async setSysOpts() {
+    if (this.networkConfig.sysOpts) {
+      for (const key of Object.keys(this.networkConfig.sysOpts)) {
+        const value = this.networkConfig.sysOpts[key];
+        await exec(`sudo bash -c 'echo ${value} > /sys/class/net/${this.name}/${key}'`).catch((err) => {
+          this.log.error(`Failed to set sys opt ${key} of ${this.name} to ${value}`, err.message);
+        });
+      }
+    }
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -636,6 +647,8 @@ class InterfaceBasePlugin extends Plugin {
 
       await this.markOutputConnection();
     }
+
+    await this.setSysOpts();
   }
 
   async _getSysFSClassNetValue(key) {
