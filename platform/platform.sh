@@ -30,6 +30,8 @@ case "$UNAME" in
     ;;
 esac
 
+export DP_SO_PATH="$FW_PLATFORM_CUR_DIR/bin/libdnsproxy.so"
+
 function get_node_modules_dir {
   echo "${FW_PLATFORM_CUR_DIR}/node_modules"
 }
