@@ -130,6 +130,11 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
         this.log.error(`Failed to apply IPv6 settings on ${this.name}`, err.message);
       });
     }
+    if (eventType === event.EVENT_IP_CHANGE) {
+      this.setSysOpts().catch((err) => {
+        this.log.error(`Failed to set sys opts on ${this.name}`, err.message);
+      });
+    }
   }
 }
 
