@@ -1,11 +1,17 @@
 #!/bin/bash
 
+TEST_URLS='
+    https://check.firewalla.com 204
+    http://clients3.google.com/generate_204 204
+    https://www.gstatic.com/generate_204 204
+'
+
 init_network_config() {
   _rc=0
   redis-cli set "fireboot:status" "apply_network"
   echo "Awaiting FireRouter API available ..."
   sleep 3
-  timeout=3
+  timeout=12
   api_ready=0
   while [[ timeout -gt 0 && api_ready -eq 0 ]]
   do
@@ -54,11 +60,27 @@ init_network_config() {
   test_network
 }
 
-test_network() {
-  redis-cli set "fireboot:status" "test_network"
-  echo "Testing network connectivity ..."
+test_curl_http_code() {
+    url=$1
+    test -n "$url" || return 1
+    http_code_expect=${2:-200}
+    echo "Testing URL($url) and expecting http code($http_code_expect) ..."
+    http_code_actual=$(curl -sqL -m30 -o /dev/null -w "%{http_code}" "$url")
+    if [[ -n $http_code_actual && $http_code_actual -eq $http_code_expect ]]
+    then
+        echo OK
+        return 0
+    else
+        echo "fail($http_code_actual)"
+        return 1
+    fi
+}
 
-  retry=30
+test_network() {
+  echo "Testing network connectivity ..."
+  redis-cli set "fireboot:status" "test_network"
+
+  retry=30;_rc=0
   while [[ $retry -gt 0 ]]; do
     redis-cli set "fireboot:status:code" $retry
     sleep 3;
@@ -81,6 +103,13 @@ test_network() {
           continue
         fi
     fi
+
+    while read testurl ; do
+        test -n "$testurl" || continue # try another url if this test url is empty
+        test_curl_http_code $testurl || { _rc=5; continue; } # mark as fail if test fails, and try another one
+        _rc=0; break; # mark as success if any of url test succeeds
+    done < <(echo "$TEST_URLS")
+    test $_rc -eq 5 && continue # retry the whole test_network if the test url while-loop fails
 
     _rc=0
     break;

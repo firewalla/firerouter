@@ -37,6 +37,18 @@
       "init_seq": 4
     },
     {
+      "file_path": "./interface/wireguard_intf_plugin.js",
+      "config_path": "interface.wireguard",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
+      "file_path": "./interface/tun_intf_plugin.js",
+      "config_path": "interface.tun",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
