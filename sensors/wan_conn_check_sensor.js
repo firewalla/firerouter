@@ -93,23 +93,32 @@ class WanConnCheckSensor extends Sensor {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
         const ip4s = await wanIntfPlugin.getIPv4Addresses();
         if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
-          const nameserver = nameservers[0];
           const srcIP = ip4s[0].split('/')[0];
-          const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
-          await exec(cmd).then((result) => {
-            if (!result || !result.stdout || result.stdout.trim().length === 0) {
-              this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
-              active = false;
-            }
-            era.addStateEvent("dns",nameserver,active?0:1,{
+          await Promise.all(nameservers.map(async (nameserver) => {
+            const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
+            const result = await exec(cmd).then((result) => {
+              if (!result || !result.stdout || result.stdout.trim().length === 0)  {
+                this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
+                return false;
+              } else {
+                return true;
+              }
+            }).catch((err) => {
+              this.log.error(`Failed to do DNS test using ${nameserver} on ${wanIntfPlugin.name}`, err.message);
+              return false;
+            });
+            era.addStateEvent("dns", nameserver, result ? 0 : 1, {
               "wan_intf_name":wanIntfPlugin.name,
               "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
               "name_server":nameserver,
               "dns_test_domain":dnsTestDomain
             });
-          }).catch((err) => {
-            this.log.error(`Failed to do DNS test using ${nameserver} on ${wanIntfPlugin.name}`, err.message);
-            active = false;
+            return result;
+          })).then(results => {
+            if (!results.some(result => result === true)) {
+              this.log.error(`DNS test failed on all nameservers on ${wanIntfPlugin.name}`);
+              active = false;
+            }
           });
         }
       }
