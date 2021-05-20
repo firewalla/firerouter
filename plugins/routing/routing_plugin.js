@@ -591,6 +591,7 @@ class RoutingPlugin extends Plugin {
         const intf = payload.intf;
         const active = payload.active || false;
         const forceState = payload.forceState;
+        const failures = payload.failures;
         if (!this._wanStatus[intf]) {
           this.log.warn(`Interface ${intf} is not defined in global routing plugin, ignore event`, e);
           return;
@@ -613,7 +614,8 @@ class RoutingPlugin extends Plugin {
           changeDesc = {
             intf: intf,
             ready: false,
-            wanSwitched: changeActiveWanNeeded
+            wanSwitched: changeActiveWanNeeded,
+            failures: failures
           };
         }
         if (!currentStatus.ready && (forceState !== false && (currentStatus.successCount >= OFF_ON_THRESHOLD || (currentStatus.successCount >= FAST_OFF_ON_THRESHOLD && this.getActiveWANPlugins().length === 0)) || forceState === true)) {
@@ -636,7 +638,8 @@ class RoutingPlugin extends Plugin {
           changeDesc = {
             intf: intf,
             ready: true,
-            wanSwitched: changeActiveWanNeeded
+            wanSwitched: changeActiveWanNeeded,
+            failures: failures
           };
         }
         if (changeDesc) {
