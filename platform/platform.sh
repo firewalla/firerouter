@@ -51,3 +51,7 @@ function get_hostapd_path {
 function get_wpa_supplicant_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
 }
+
+function get_pppoe_rps_cpus {
+  echo "f"
+}
