@@ -6,6 +6,7 @@
 # WILL PREVENT UPGRADES!
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
+: ${FIREWALLA_HOME:=/home/pi/firewalla}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
 
 source ${FIREROUTER_HOME}/platform/platform.sh
@@ -38,8 +39,6 @@ timeout_check() {
 
 /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Starting FIRST "+`date`
 
-TIME_THRESHOLD="2019-10-14"
-
 function sync_time() {
     time_website=$1
     logger "Syncing time from ${time_website}..."
@@ -62,11 +61,18 @@ function sync_time() {
 }
 
 logger "FIREROUTER.UPGRADE.DATE.SYNC"
-tsWebsite=$(sync_time status.github.com || sync_time google.com || sync_time live.com || sync_time facebook.com)
-tsSystem=$(date +%s)
-if [ "0$tsWebsite" -ge "0$tsSystem" ]; # prefix 0 as tsWebsite could be empty
+FW_SYNC_TIME_SCRIPT=$FIREWALLA_HOME/scripts/sync_time.sh
+if [[ -e $FW_SYNC_TIME_SCRIPT ]]
 then
-    sudo date +%s -s "@$tsWebsite";
+    SYNC_ONCE=true $FW_SYNC_TIME_SCRIPT
+else
+    TIME_THRESHOLD="2020-05-21"
+    tsWebsite=$(sync_time status.github.com || sync_time google.com || sync_time live.com || sync_time facebook.com)
+    tsSystem=$(date +%s)
+    if [ "0$tsWebsite" -ge "0$tsSystem" ]; # prefix 0 as tsWebsite could be empty
+    then
+        sudo date +%s -s "@$tsWebsite";
+    fi
 fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync

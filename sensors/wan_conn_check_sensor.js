@@ -51,6 +51,7 @@ class WanConnCheckSensor extends Sensor {
       let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
       let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
       const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
+      const wanName = wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.name;
       const wanUUID = wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid;
       if (_.isString(pingTestIP))
         pingTestIP = [pingTestIP];
@@ -69,6 +70,7 @@ class WanConnCheckSensor extends Sensor {
             failures.push({type: "ping", target: ip});
             era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,1,{
               "wan_test_ip":ip,
+              "wan_intf_name":wanName,
               "wan_intf_uuid":wanUUID,
               "ping_test_count":pingTestCount,
               "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
@@ -77,7 +79,8 @@ class WanConnCheckSensor extends Sensor {
           } else
             era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,0,{
               "wan_test_ip":ip,
-              "wan_intf_uuid":wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid,
+              "wan_intf_name":wanName,
+              "wan_intf_uuid":wanUUID,
               "ping_test_count":pingTestCount,
               "success_rate":Number(result.stdout.trim())/pingTestCount
             });
@@ -114,7 +117,7 @@ class WanConnCheckSensor extends Sensor {
               return false;
             });
             era.addStateEvent("dns", nameserver, result ? 0 : 1, {
-              "wan_intf_name":wanIntfPlugin.name,
+              "wan_intf_name":wanName,
               "wan_intf_uuid":wanUUID,
               "name_server":nameserver,
               "dns_test_domain":dnsTestDomain
