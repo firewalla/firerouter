@@ -322,6 +322,7 @@ class RoutingPlugin extends Plugin {
       lock.acquire(LOCK_SHARED, async (done) => {
         const lastWanStatus = this._wanStatus || {};
         this._wanStatus = {};
+        this._pendingChangeDescs = [];
         const wanStatus = {};
 
         switch (this.name) {
@@ -656,6 +657,8 @@ class RoutingPlugin extends Plugin {
   }
 
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
+    this._pendingChangeDescs = this._pendingChangeDescs || [];
+    this._pendingChangeDescs.push(changeDesc);
     if (this.applyActiveGlobalDefaultRoutingTask)
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
@@ -672,10 +675,13 @@ class RoutingPlugin extends Plugin {
       this._applyActiveGlobalDefaultRouting(true).then(() => {
         const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
         this.propagateEvent(e);
-        if (changeDesc) {
-          changeDesc.currentStatus = this.getWANConnStates();
-          this.schedulePublishWANConnChanged(changeDesc);
+        if (!_.isEmpty(this._pendingChangeDescs)) {
+          for (const desc of this._pendingChangeDescs) {
+            desc.currentStatus = this.getWANConnStates();
+            this.schedulePublishWANConnChanged(desc);
+          }
         }
+        this._pendingChangeDescs = [];
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
@@ -710,9 +716,7 @@ class RoutingPlugin extends Plugin {
   schedulePublishWANConnChanged(changeDesc) {
     this.log.info("schedule publish WAN :",changeDesc);
     // publish to redis db used by Firewalla
-    if (this.publishWANConnChangedTask)
-      clearTimeout(this.publishWANConnChangedTask);
-    this.publishWANConnChangedTask = setTimeout(async () => {
+    setTimeout(async () => {
       pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
     }, 10000);
   }
