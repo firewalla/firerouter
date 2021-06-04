@@ -5,6 +5,10 @@ FW_PLATFORM_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 UNAME=$(uname -m)
 NETWORK_SETUP=yes
 
+function get_pppoe_rps_cpus {
+  echo "f"
+}
+
 case "$UNAME" in
   "x86_64")
     source $FW_PLATFORM_DIR/gold/platform.sh
@@ -50,8 +54,4 @@ function get_hostapd_path {
 
 function get_wpa_supplicant_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
-}
-
-function get_pppoe_rps_cpus {
-  echo "f"
 }
