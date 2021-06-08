@@ -322,7 +322,7 @@ class RoutingPlugin extends Plugin {
       lock.acquire(LOCK_SHARED, async (done) => {
         const lastWanStatus = this._wanStatus || {};
         this._wanStatus = {};
-        this._pendingChangeDescs = [];
+        this._pendingChangeDescs = this._pendingChangeDescs || [];
         const wanStatus = {};
 
         switch (this.name) {
