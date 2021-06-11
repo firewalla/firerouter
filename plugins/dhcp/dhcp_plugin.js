@@ -78,7 +78,7 @@ class DHCPPlugin extends Plugin {
     this._restartService();
   }
 
-  async writeDHCPConfFile(iface, tags, from, to, subnetMask, leaseTime, gateway, nameservers, searchDomains) {
+  async writeDHCPConfFile(iface, tags, from, to, subnetMask, leaseTime, gateway, nameservers, searchDomains, extraOptions = {}) {
     tags = tags || [];
     nameservers = nameservers || [];
     searchDomains = searchDomains || [];
@@ -95,6 +95,12 @@ class DHCPPlugin extends Plugin {
       dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}6,${nameservers.join(",")}`);
     if (searchDomains.length > 0)
       dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}119,${searchDomains.join(",")}`);
+
+    if (Object.keys(extraOptions).length > 0) {
+      for (const key of Object.keys(extraOptions)) {
+        dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}${key},${extraOptions[key]}`);
+      }
+    }
     
     const content = `${dhcpRange}\n${dhcpOptions.join("\n")}`;
     await fs.writeFileAsync(this._getConfFilePath(), content);
@@ -127,7 +133,7 @@ class DHCPPlugin extends Plugin {
       return;
     }
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
-      this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain);
+      this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain, this.networkConfig.extraOptions);
     this._restartService();
   }
 }
