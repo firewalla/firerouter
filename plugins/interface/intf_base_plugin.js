@@ -480,6 +480,10 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
     }
+    if (this.isWAN()) {
+      // add an unreachable route with lower preference in IPv6 routing table to prevent IPv6 traffic from falling through to other WAN's routing table
+      await routing.addRouteToTable("default", null, null, `${this.name}_default`, 65536, 6, false, "unreachable").catch((err) => {});
+    }
     if (this.networkConfig.gateway6) {
       await routing.addRouteToTable("default", this.networkConfig.gateway6, this.name, `${this.name}_default`, null, 6).catch((err) => {});
     }
