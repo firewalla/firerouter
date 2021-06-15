@@ -20,6 +20,7 @@ const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const routing = require('../../util/routing.js');
 const event = require('../../core/event.js');
+const Message = require('../../core/Message.js');
 const {Address4, Address6} = require('ip-address');
 const AsyncLock = require('async-lock');
 const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
@@ -321,6 +322,7 @@ class RoutingPlugin extends Plugin {
       lock.acquire(LOCK_SHARED, async (done) => {
         const lastWanStatus = this._wanStatus || {};
         this._wanStatus = {};
+        this._pendingChangeDescs = this._pendingChangeDescs || [];
         const wanStatus = {};
 
         switch (this.name) {
@@ -590,6 +592,7 @@ class RoutingPlugin extends Plugin {
         const intf = payload.intf;
         const active = payload.active || false;
         const forceState = payload.forceState;
+        const failures = payload.failures;
         if (!this._wanStatus[intf]) {
           this.log.warn(`Interface ${intf} is not defined in global routing plugin, ignore event`, e);
           return;
@@ -612,7 +615,8 @@ class RoutingPlugin extends Plugin {
           changeDesc = {
             intf: intf,
             ready: false,
-            wanSwitched: changeActiveWanNeeded
+            wanSwitched: changeActiveWanNeeded,
+            failures: failures
           };
         }
         if (!currentStatus.ready && (forceState !== false && (currentStatus.successCount >= OFF_ON_THRESHOLD || (currentStatus.successCount >= FAST_OFF_ON_THRESHOLD && this.getActiveWANPlugins().length === 0)) || forceState === true)) {
@@ -635,7 +639,8 @@ class RoutingPlugin extends Plugin {
           changeDesc = {
             intf: intf,
             ready: true,
-            wanSwitched: changeActiveWanNeeded
+            wanSwitched: changeActiveWanNeeded,
+            failures: failures
           };
         }
         if (changeDesc) {
@@ -652,6 +657,8 @@ class RoutingPlugin extends Plugin {
   }
 
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
+    this._pendingChangeDescs = this._pendingChangeDescs || [];
+    this._pendingChangeDescs.push(changeDesc);
     if (this.applyActiveGlobalDefaultRoutingTask)
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
@@ -668,10 +675,13 @@ class RoutingPlugin extends Plugin {
       this._applyActiveGlobalDefaultRouting(true).then(() => {
         const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
         this.propagateEvent(e);
-        if (changeDesc) {
-          changeDesc.currentStatus = this.getWANConnStates();
-          this.schedulePublishWANConnChanged(changeDesc);
+        if (!_.isEmpty(this._pendingChangeDescs)) {
+          for (const desc of this._pendingChangeDescs) {
+            desc.currentStatus = this.getWANConnStates();
+            this.schedulePublishWANConnChanged(desc);
+          }
         }
+        this._pendingChangeDescs = [];
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
@@ -706,10 +716,8 @@ class RoutingPlugin extends Plugin {
   schedulePublishWANConnChanged(changeDesc) {
     this.log.info("schedule publish WAN :",changeDesc);
     // publish to redis db used by Firewalla
-    if (this.publishWANConnChangedTask)
-      clearTimeout(this.publishWANConnChangedTask);
-    this.publishWANConnChangedTask = setTimeout(async () => {
-      pclient.publishAsync("firerouter.wan_conn_changed", JSON.stringify(changeDesc)).catch((err) => {});
+    setTimeout(async () => {
+      pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
     }, 10000);
   }
 }

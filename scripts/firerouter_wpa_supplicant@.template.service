@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter Wireless Station Daemon on %i
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/bin/bash %WPA_SUPPLICANT_DIRECTORY%/wpa_supplicant.sh %i
+RemainAfterExit=true

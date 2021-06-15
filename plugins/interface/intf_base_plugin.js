@@ -38,6 +38,10 @@ const routing = require('../../util/routing.js');
 
 class InterfaceBasePlugin extends Plugin {
 
+  async isInterfacePresent() {
+    return fs.accessAsync(r.getInterfaceSysFSDirectory(this.name), fs.constants.F_OK).then(() => true).catch((err) => false);
+  }
+
   async flushIP() {
     await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
       this.log.error(`Failed to flush ip address of ${this.name}`, err);
@@ -85,13 +89,13 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
-        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
-        await this.unmarkOutputConnection().catch((err) => {
+        await this.unmarkOutputConnection(rtid).catch((err) => {
           this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
         });
       }
@@ -200,7 +204,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async createInterface() {
-
+    return true;
   }
 
   async interfaceUpDown() {
@@ -266,10 +270,10 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
-      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
+      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
         this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
-      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
         this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
     }
@@ -315,47 +319,51 @@ class InterfaceBasePlugin extends Plugin {
         if (!parentIntfPlugin)
           this.fatal(`IPv6 delegate from interface ${fromIface} is not found for ${this.name}`);
         this.subscribeChangeFrom(parentIntfPlugin);
-        const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
-        const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
-          this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
-          return null;
-        });
-        // assign sub prefix id for this interface
-        const subPrefixId = await this._findSubPrefixId(fromIface);
-        if (subPrefixId >= 0) {
-          // clear previously assigned prefixes in the cache file
-          await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`).catch((err) =>{});
-          if (prefixes && _.isArray(prefixes)) {
-            const subPrefixes = [];
-            let ipChanged = false;
-            for (const prefixMask of prefixes) {
-              const subPrefix = this._calculateSubPrefix(prefixMask, subPrefixId);
-              if (!subPrefix) {
-                this.log.error(`Failed to calculate sub prefix from ${prefixMask} and id ${subPrefixId} for ${this.name}`);
-              } else {
-                // add link local route to interface local and default routing table
-                await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
-                await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-                const addr = new Address6(subPrefix);
-                if (!addr.isValid()) {
-                  this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
+        if (await parentIntfPlugin.isInterfacePresent() === false) {
+          this.log.warn(`Interface ${fromIface} is not present yet`);
+        } else {
+          const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
+          const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
+            this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
+            return null;
+          });
+          // assign sub prefix id for this interface
+          const subPrefixId = await this._findSubPrefixId(fromIface);
+          if (subPrefixId >= 0) {
+            // clear previously assigned prefixes in the cache file
+            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`).catch((err) =>{});
+            if (prefixes && _.isArray(prefixes)) {
+              const subPrefixes = [];
+              let ipChanged = false;
+              for (const prefixMask of prefixes) {
+                const subPrefix = this._calculateSubPrefix(prefixMask, subPrefixId);
+                if (!subPrefix) {
+                  this.log.error(`Failed to calculate sub prefix from ${prefixMask} and id ${subPrefixId} for ${this.name}`);
                 } else {
-                  // the suffix of the delegated interface is always 1
-                  await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                    this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
-                  });
-                  subPrefixes.push(subPrefix);
-                  ipChanged = true;
+                  // add link local route to interface local and default routing table
+                  await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+                  await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
+                  const addr = new Address6(subPrefix);
+                  if (!addr.isValid()) {
+                    this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
+                  } else {
+                    // the suffix of the delegated interface is always 1
+                    await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
+                      this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+                    });
+                    subPrefixes.push(subPrefix);
+                    ipChanged = true;
+                  }
                 }
               }
-            }
-            if (subPrefixes.length > 0) {
-              // write newly assigned prefixes to the cache file
-              await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`, subPrefixes.join("\n"), { encoding: 'utf8' }).catch((err) => { });
-            }
-            // trigger reapply of downstream plugins that are dependent on this interface
-            if (ipChanged) {
-              this.propagateConfigChanged(true);
+              if (subPrefixes.length > 0) {
+                // write newly assigned prefixes to the cache file
+                await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`, subPrefixes.join("\n"), { encoding: 'utf8' }).catch((err) => { });
+              }
+              // trigger reapply of downstream plugins that are dependent on this interface
+              if (ipChanged) {
+                this.propagateConfigChanged(true);
+              }
             }
           }
         }
@@ -472,6 +480,10 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
     }
+    if (this.isWAN()) {
+      // add an unreachable route with lower preference in IPv6 routing table to prevent IPv6 traffic from falling through to other WAN's routing table
+      await routing.addRouteToTable("default", null, null, `${this.name}_default`, 65536, 6, false, "unreachable").catch((err) => {});
+    }
     if (this.networkConfig.gateway6) {
       await routing.addRouteToTable("default", this.networkConfig.gateway6, this.name, `${this.name}_default`, null, 6).catch((err) => {});
     }
@@ -555,10 +567,10 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
-  async unmarkOutputConnection() {
+  async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
-        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
       }
@@ -573,7 +585,7 @@ class InterfaceBasePlugin extends Plugin {
       const srcIPs = [];
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
-        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
         srcIPs.push(ip4Addr);
@@ -589,13 +601,34 @@ class InterfaceBasePlugin extends Plugin {
       });
   }
 
+  async setSysOpts() {
+    if (this.networkConfig.sysOpts) {
+      for (const key of Object.keys(this.networkConfig.sysOpts)) {
+        const value = this.networkConfig.sysOpts[key];
+        await exec(`sudo bash -c 'echo ${value} > /sys/class/net/${this.name}/${key}'`).catch((err) => {
+          this.log.error(`Failed to set sys opt ${key} of ${this.name} to ${value}`, err.message);
+        });
+      }
+    }
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
       return;
     }
 
-    await this.createInterface();
+    if (this.networkConfig.allowHotplug === true) {
+      const ifRegistered = await this.isInterfacePresent();
+      if (!ifRegistered)
+        return;
+    }
+
+    const ifCreated = await this.createInterface();
+    if (!ifCreated) {
+      this.log.warn(`Unable to create interface ${this.name}`);
+      return;
+    }
 
     await this.prepareEnvironment();
 
@@ -618,6 +651,8 @@ class InterfaceBasePlugin extends Plugin {
 
       await this.markOutputConnection();
     }
+
+    await this.setSysOpts();
   }
 
   async _getSysFSClassNetValue(key) {
@@ -659,9 +694,9 @@ class InterfaceBasePlugin extends Plugin {
       this._getSysFSClassNetValue("statistics/tx_bytes"),
       this._getSysFSClassNetValue("statistics/rx_bytes"),
       routing.createCustomizedRoutingTable(`${this.name}_default`),
-      exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null,
+      exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
       this.getIPv4Addresses(),
-      exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null,
+      exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDNSNameservers()
@@ -685,6 +720,16 @@ class InterfaceBasePlugin extends Plugin {
         if (this.isWAN()) {
           // WAN interface plugged, need to reapply WAN interface config
           this._reapplyNeeded = true;
+          pl.scheduleReapply();
+        }
+        break;
+      }
+      case event.EVENT_IF_PRESENT:
+      case event.EVENT_IF_DISAPPEAR: {
+        if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+          this._reapplyNeeded = true;
+          // trigger downstream plugins to reapply config
+          this.propagateConfigChanged(true);
           pl.scheduleReapply();
         }
         break;

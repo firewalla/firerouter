@@ -23,6 +23,7 @@ const fs = require('fs');
 const _ = require('lodash');
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const {Address4, Address6} = require('ip-address');
 
 
 const Promise = require('bluebird');
@@ -90,6 +91,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
     await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    return true;
   }
 
   async changeRoutingTables() {
@@ -100,12 +102,12 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
           for (const allowedIP of peer.allowedIPs) {
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
           }
         }
@@ -116,17 +118,27 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
   async state() {
     const state = await super.state();
     if (this.networkConfig && this.networkConfig.enabled) {
-      const allIPs = [];
+      const allIP4s = [];
+      const allIP6s = [];
       if (this.networkConfig.ipv4)
-        allIPs.push(this.networkConfig.ipv4);
+        allIP4s.push(this.networkConfig.ipv4);
+      if (_.isArray(this.networkConfig.ipv6))
+        Array.prototype.push.apply(allIP6s, this.networkConfig.ipv6);
       if (_.isArray(this.networkConfig.peers)) {
         for (const peer of this.networkConfig.peers) {
           if (peer.allowedIPs) {
-            Array.prototype.push.apply(allIPs, peer.allowedIPs);
+            for (const allowedIP of peer.allowedIPs) {
+              if (new Address4(allowedIP).isValid())
+                allIP4s.push(allowedIP);
+              else
+                allIP6s.push(allowedIP);
+            }
           }
         }
       }
-      state.ip4s = allIPs;
+      state.ip4s = allIP4s;
+      if (allIP6s.length > 0)
+        state.ip6 = allIP6s;
     }
     if (!state.mac)
       state.mac = "02:01:22:22:22:22";

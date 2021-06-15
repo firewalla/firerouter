@@ -22,6 +22,8 @@ const ns = require('./network_setup.js');
 const exec = require('child-process-promise').exec;
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
+const pl = require('../platform/PlatformLoader.js');
+const platform = pl.getPlatform();
 
 class NetworkConfigManager {
   constructor() {
@@ -71,7 +73,8 @@ class NetworkConfigManager {
   }
 
   async getDefaultConfig() {
-    const config = require('../network/default_setup.json');
+    const defaultConfigJson = platform.getDefaultNetworkJsonFile();
+    const config = require(defaultConfigJson);
     return config;
   }
 

@@ -15,4 +15,12 @@ run_host_light_until_paired() {
 
 run_host_light_until_paired &
 
-sudo $FW_PLATFORM_CUR_DIR/bin/firereset
+# use this user firereset binary if configured, for debugging purpose only
+USER_FIRERESET=/home/pi/.firewalla/run/firereset
+if [[ -e $USER_FIRERESET ]]; then
+  sudo $USER_FIRERESET
+  exit 0
+fi
+
+FIRERESET_BINARY=$(get_firereset_path)
+sudo $FIRERESET_BINARY

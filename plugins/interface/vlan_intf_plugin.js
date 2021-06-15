@@ -47,6 +47,7 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     } else {
       this.fatal(`Lower interface plugin not found ${this.networkConfig.intf}`);
     }
+    return true;
   }
 }
 

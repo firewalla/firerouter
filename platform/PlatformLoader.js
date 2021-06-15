@@ -36,6 +36,17 @@ class PlatformLoader {
     return this.platformName;
   }
 
+  getBoardName() {
+    if (!this.boardName) {
+      try {
+        this.boardName = execSync("awk -F= '/BOARD=/ {print $2}' /etc/firewalla-release",{encoding:'utf8'}).trim();
+      } catch (err) {
+        this.boardName = 'unknown';
+      }
+    }
+    return this.boardName
+  }
+
   getPlatform() {
     if (this.platform) {
       return this.platform;
@@ -48,6 +59,20 @@ class PlatformLoader {
       const GoldPlatform = require('./gold/GoldPlatform.js');
       this.platform = new GoldPlatform();
       break;
+    }
+    case "aarch64": {
+      const boardName = this.getBoardName();
+      switch (boardName) {
+        case "navy": {
+          const NavyPlatform = require('./navy/NavyPlatform.js');
+          this.platform = new NavyPlatform();
+          break;
+        }
+        default: {
+          return null;
+        }
+      }
+
     }
     default:
       return null;

@@ -62,7 +62,6 @@ class DNSPlugin extends Plugin {
   static async installDNSScript() {
     let content = await fs.readFileAsync(dnsScriptTemplate, {encoding: 'utf8'});
     content = content.replace(/%FIREROUTER_HOME%/g, r.getFireRouterHome());
-    content = content.replace(/%DNSMASQ_BINARY%/g, r.getFireRouterHome() + "/bin/dnsmasq");
     const targetFile = r.getTempFolder() + "/dns.sh";
     await fs.writeFileAsync(targetFile, content);
   }
@@ -179,6 +178,10 @@ class DNSPlugin extends Plugin {
       if (!this._intfUuid)
         this.fatal(`Cannot find interface uuid for ${this.name}`);
       this.subscribeChangeFrom(intfPlugin);
+      if (await intfPlugin.isInterfacePresent() === false) {
+        this.log.warn(`Interface ${this.name} is not present yet`);
+        return;
+      }
       if (!intfPlugin.networkConfig.enabled) {
         this.log.warn(`Interface ${this.name} is not enabled`);
         return;

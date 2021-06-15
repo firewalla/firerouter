@@ -1,4 +1,4 @@
-/*    Copyright 2016-2020 Firewalla Inc.
+/*    Copyright 2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -15,20 +15,12 @@
 
 'use strict';
 
-const fs = require('fs');
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
+const MSG_FR_CHANGE_APPLIED = "firerouter.change_applied";
+const MSG_FR_IFACE_CHANGE_APPLIED = "firerouter.iface_change_applied";
+const MSG_FR_WAN_CONN_CHANGED = "firerouter.wan_conn_changed";
 
-class Platform {
-  getName() {
-  }
-
-  getType() {
-  }
-
-  getDefaultNetworkJsonFile() {
-    return `${__dirname}/../network/default_setup.json`;
-  }
+module.exports = {
+  MSG_FR_CHANGE_APPLIED,
+  MSG_FR_IFACE_CHANGE_APPLIED,
+  MSG_FR_WAN_CONN_CHANGED
 }
-
-module.exports = Platform;
