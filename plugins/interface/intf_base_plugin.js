@@ -89,10 +89,10 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
-        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
         await this.unmarkOutputConnection(rtid).catch((err) => {
@@ -270,10 +270,10 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
-      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
+      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
         this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
-      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_REG} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
         this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
     }
@@ -480,6 +480,10 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
     }
+    if (this.isWAN()) {
+      // add an unreachable route with lower preference in IPv6 routing table to prevent IPv6 traffic from falling through to other WAN's routing table
+      await routing.addRouteToTable("default", null, null, `${this.name}_default`, 65536, 6, false, "unreachable").catch((err) => {});
+    }
     if (this.networkConfig.gateway6) {
       await routing.addRouteToTable("default", this.networkConfig.gateway6, this.name, `${this.name}_default`, null, 6).catch((err) => {});
     }
@@ -566,7 +570,7 @@ class InterfaceBasePlugin extends Plugin {
   async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
-        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
       }
@@ -581,7 +585,7 @@ class InterfaceBasePlugin extends Plugin {
       const srcIPs = [];
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
-        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_REG}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
         srcIPs.push(ip4Addr);

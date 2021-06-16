@@ -32,6 +32,7 @@ const RT_TYPE_VC = "RT_TYPE_VC";
 const RT_TYPE_REG = "RT_TYPE_REG";
 const MASK_REG = "0x3ff";
 const MASK_VC = "0xfc00";
+const MASK_ALL = "0xffff";
 
 const LOCK_RT_TABLES = "LOCK_RT_TABLES";
 const LOCK_FILE = "/tmp/rt_tables.lock";
@@ -175,15 +176,18 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   }
 }
 
-async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false) {
-  let cmd = null;
+async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false, type = "unicast") {
   dest = dest || "default";
+  let cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${type} ${dest}`;
   tableName = tableName || "main";
-  if (gateway) {
-    cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${dest} via ${gateway} dev ${intf} table ${tableName}`;
-  } else {
-    cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${dest} dev ${intf} table ${tableName}`;
+  if (intf) {
+    if (gateway) {
+      cmd = `${cmd} via ${gateway} dev ${intf}`;
+    } else {
+      cmd = `${cmd} dev ${intf}`;
+    }
   }
+  cmd = `${cmd} table ${tableName}`;
   if (preference)
     cmd = `${cmd} preference ${preference}`;
   let result = await exec(cmd);
@@ -217,11 +221,10 @@ async function addMultiPathRouteToTable(dest, tableName, af = 4, ...multipathDes
   }
 }
 
-async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4) {
-  let cmd = null;
+async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type = "unicast") {
   dest = dest || "default";
   tableName = tableName || "main";
-  cmd = `sudo ip -${af} route del ${dest}`;
+  cmd = `sudo ip -${af} route del ${type} ${dest}`;
   if (gateway) {
     cmd = `${cmd} via ${gateway}`;
   }
@@ -338,5 +341,6 @@ module.exports = {
   RT_TYPE_REG,
   RT_TYPE_VC,
   MASK_REG,
-  MASK_VC
+  MASK_VC,
+  MASK_ALL
 }
