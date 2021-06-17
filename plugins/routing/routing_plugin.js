@@ -53,11 +53,23 @@ class RoutingPlugin extends Plugin {
             await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
             await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
             await routing.flushRoutingTable(routing.RT_STATIC);
-            // execute twice to ensure dual wan is removed
-            await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
-            await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
-            await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => {});
-            await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => {});
+            // remove all default route in main table
+            let routeRemoved = false;
+            do {
+              await routing.removeRouteFromTable("default", null, null, "main").then(() => {
+                routeRemoved = true;
+              }).catch((err) => {
+                routeRemoved = false;
+              });
+            } while (routeRemoved);
+            
+            do {
+              await routing.removeRouteFromTable("default", null, null, "main", 6).then(() => {
+                routeRemoved = true;
+              }).catch((err) => {
+                routeRemoved = false;
+              });
+            } while (routeRemoved);
             // remove DNS specific routes
             if (_.isArray(this._dnsRoutes)) {
               for (const dnsRoute of this._dnsRoutes)
@@ -136,11 +148,23 @@ class RoutingPlugin extends Plugin {
       lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async (done) => {
         // flush global default routing table, no need to touch global local and global static routing table here
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
-        // execute twice to ensure dual wan is removed
-        await routing.removeRouteFromTable("default", null, null, "main").catch((err) => { });
-        await routing.removeRouteFromTable("default", null, null, "main").catch((err) => { });
-        await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => { });
-        await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => { });
+        // remove all default route in main table
+        let routeRemoved = false;
+        do {
+          await routing.removeRouteFromTable("default", null, null, "main").then(() => {
+            routeRemoved = true;
+          }).catch((err) => {
+            routeRemoved = false;
+          });
+        } while (routeRemoved)
+        
+        do {
+          await routing.removeRouteFromTable("default", null, null, "main", 6).then(() => {
+            routeRemoved = true;
+          }).catch((err) => {
+            routeRemoved = false;
+          });
+        } while (routeRemoved)
         // remove DNS specific routes
         if (_.isArray(this._dnsRoutes)) {
           for (const dnsRoute of this._dnsRoutes)
@@ -195,6 +219,15 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
+                    let dnsRouteRemoved = false;
+                    // remove all dns routes via the same interface but with different metrics in main table
+                    do {
+                      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, "main").then(() => {
+                        dnsRouteRemoved = true;
+                      }).catch((err) => {
+                        dnsRouteRemoved = false;
+                      })
+                    } while (dnsRouteRemoved)
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
@@ -264,6 +297,15 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
+                    let dnsRouteRemoved = false;
+                    // remove all dns routes via the same interface but with different metrics in main table
+                    do {
+                      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, "main").then(() => {
+                        dnsRouteRemoved = true;
+                      }).catch((err) => {
+                        dnsRouteRemoved = false;
+                      })
+                    } while (dnsRouteRemoved)
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
