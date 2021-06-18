@@ -44,8 +44,8 @@ class WanConnCheckSensor extends Sensor {
     const defaultPingTestCount = this.config.ping_test_count || 8;
     const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
-    const failures = [];
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
+      const failures = [];
       let active = true;
       const extraConf = wanIntfPlugin && wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.extra;
       let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
