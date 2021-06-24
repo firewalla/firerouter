@@ -95,7 +95,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       for (const network of networks) {
         entries.push("network={");
         for (const key of Object.keys(network)) {
-          entries.push(`\t${key}="${network[key]}"`);
+          entries.push(`\t${key}=${network[key]}`);
         }
         entries.push("}");
         entries.push('\n');
