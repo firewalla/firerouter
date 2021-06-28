@@ -117,29 +117,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async state() {
     const state = await super.state();
-    if (this.networkConfig && this.networkConfig.enabled) {
-      const allIP4s = [];
-      const allIP6s = [];
-      if (this.networkConfig.ipv4)
-        allIP4s.push(this.networkConfig.ipv4);
-      if (_.isArray(this.networkConfig.ipv6))
-        Array.prototype.push.apply(allIP6s, this.networkConfig.ipv6);
-      if (_.isArray(this.networkConfig.peers)) {
-        for (const peer of this.networkConfig.peers) {
-          if (peer.allowedIPs) {
-            for (const allowedIP of peer.allowedIPs) {
-              if (new Address4(allowedIP).isValid())
-                allIP4s.push(allowedIP);
-              else
-                allIP6s.push(allowedIP);
-            }
-          }
-        }
-      }
-      state.ip4s = allIP4s;
-      if (allIP6s.length > 0)
-        state.ip6 = allIP6s;
-    }
     if (!state.mac)
       state.mac = "02:01:22:22:22:22";
     return state;
