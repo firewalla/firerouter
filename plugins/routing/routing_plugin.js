@@ -462,6 +462,21 @@ class RoutingPlugin extends Plugin {
                         }
                         seq++;
                       }
+                      const hashPolicy = settings.hashPolicy || "l3";
+                      switch (hashPolicy) {
+                        case "l4": {
+                          await exec(`sudo sysctl -w net.ipv4.fib_multipath_hash_policy=1`).catch((err) => {});
+                          // ipv6 multipath configuration is not supported yet in our image, but it will be supported in later kernel version
+                          await exec(`sudo sysctl -w net.ipv6.fib_multipath_hash_policy=1`).catch((err) => {});
+                          break;
+                        }
+                        case "l3":
+                        default: {
+                          await exec(`sudo sysctl -w net.ipv4.fib_multipath_hash_policy=0`).catch((err) => {});
+                          // ipv6 multipath configuration is not supported yet in our image, but it will be supported in later kernel version
+                          await exec(`sudo sysctl -w net.ipv6.fib_multipath_hash_policy=0`).catch((err) => {});
+                        }
+                      }
                       break;
                     }
                   }
