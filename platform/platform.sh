@@ -25,6 +25,10 @@ case "$UNAME" in
         source $FW_PLATFORM_DIR/navy/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/navy
         ;;
+      purple)
+        source $FW_PLATFORM_DIR/purple/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/purple
+        ;;
       *)
         unset FW_PLATFORM_CUR_DIR
         ;;
