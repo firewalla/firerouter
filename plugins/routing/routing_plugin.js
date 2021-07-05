@@ -183,8 +183,8 @@ class RoutingPlugin extends Plugin {
               this._wanStatus[viaIntf].active = ready && !activeIntfFound;
               if (this._wanStatus[viaIntf].active === true)
                 activeIntfFound = true;
-              // set a much lower priority for inactive WAN
-              const metric = this._wanStatus[viaIntf].seq + (ready ? 0 : 100);
+              // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
+              const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100);
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
                   const addr = new Address4(ip4);
@@ -282,11 +282,11 @@ class RoutingPlugin extends Plugin {
               const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
               if (gw) {
                 // add a default route with higher metric if it is inactive. A default route is needed for WAN connectivity check, e.g., ping -I eth0 1.1.1.1
-                let metric = this._wanStatus[viaIntf].seq;
+                let metric = this._wanStatus[viaIntf].seq + 1;
                 if (ready) {
                   multiPathDesc.push({ nextHop: gw, dev: viaIntf, weight: weight });
                 } else {
-                  metric = this._wanStatus[viaIntf].seq + 100;
+                  metric = this._wanStatus[viaIntf].seq + 1 + 100;
                   await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
                   await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 }
