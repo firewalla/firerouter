@@ -58,9 +58,12 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       });
     }
     if (presentInterfaces.length > 0)
-      await exec(`sudo brctl addif ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
-        this.log.error(`Failed to add interfaces to bridge ${this.name}`, err.message);
-      });
+      // add interfaces one at a time. Otherwise, if one interface cannot be added to bridge, the interfaces behind it will be skipped
+      for (const iface of presentInterfaces) {
+        await exec(`sudo brctl addif ${this.name} ${iface}`).catch((err) => {
+          this.log.error(`Failed to add interface ${iface} to bridge ${this.name}`, err.message);
+        })
+      }
     return true;
   }
 }
