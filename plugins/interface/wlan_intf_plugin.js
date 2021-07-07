@@ -128,9 +128,12 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async state() {
-    let s = await super.state();
-    s.vendor = await platform.getWlanVendor();
-    return s;
+    const state = await super.state();
+    const essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+    const vendor = await platform.getWlanVendor();
+    state.essid = essid;
+    state.vendor = vendor;
+    return state;
   }
 
 }
