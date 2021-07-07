@@ -24,6 +24,9 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+const pl = require('../platform/PlatformLoader.js');
+const platform = pl.getPlatform();
+
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
