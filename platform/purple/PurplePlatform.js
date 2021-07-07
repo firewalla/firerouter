@@ -29,9 +29,11 @@ class PurplePlatform extends Platform {
   }
 
   async getWlanVendor() {
-    const procCmdline = await fs.readFileAsync("/proc/cmdline", {encoding: 'utf8'});
-    const vendor = procCmdline.match(' wifi_rev=([0-9a-z]*) ')[1];
-    return vendor;
+    if ( this.vendor === null || this.vendor === '' ) {
+      const procCmdline = await fs.readFileAsync("/proc/cmdline", {encoding: 'utf8'});
+      this.vendor = procCmdline.match(' wifi_rev=([0-9a-z]*) ')[1];
+    }
+    return this.vendor;
   }
 }
 
