@@ -130,7 +130,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async state() {
     const state = await super.state();
     const essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-    const vendor = await platform.getWlanVendor().catch( err => this.log.error("Failed to get WLAN vendor:",err) );
+    const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     state.essid = essid;
     state.vendor = vendor;
     return state;
