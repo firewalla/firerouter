@@ -125,6 +125,13 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async state() {
+    const state = await super.state();
+    const essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+    state.essid = essid;
+    return state;
+  }
+
 }
 
 module.exports = WLANInterfacePlugin;
