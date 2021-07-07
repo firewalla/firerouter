@@ -125,6 +125,12 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async state() {
+    const basicState = await super.state();
+    const vendor = await platform.getWlanVendor();
+    return [ ...basicState, vendor];
+  }
+
 }
 
 module.exports = WLANInterfacePlugin;

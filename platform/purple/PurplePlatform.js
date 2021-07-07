@@ -13,6 +13,10 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+const fs = require('fs');
+const Promise = require('bluebird');
+Promise.promisifyAll(fs);
+
 const Platform = require('../Platform.js');
 
 class PurplePlatform extends Platform {
@@ -22,6 +26,12 @@ class PurplePlatform extends Platform {
 
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
+  }
+
+  async getWlanVendor() {
+    const procCmdline = await fs.readFileAsync("/proc/cmdline", {encoding: 'utf8'});
+    const vendor = procCmdline.match(' wifi_rev=([0-9a-z]*) ')[1];
+    return vendor;
   }
 }
 
