@@ -79,6 +79,13 @@ class NetworkConfigManager {
         const ln = line.trimStart() // don't trim end in case SSID has trailing spaces
 
         if (ln.startsWith('signal:')) {
+          // https://git.kernel.org/pub/scm/linux/kernel/git/jberg/iw.git/tree/nl80211.h
+          // * @NL80211_BSS_SIGNAL_MBM: signal strength of probe response/beacon
+          // *  in mBm (100 * dBm) (s32)
+          // * @NL80211_BSS_SIGNAL_UNSPEC: signal strength of the probe response/beacon
+          // *  in unspecified units, scaled to 0..100 (u8)
+          //
+          // if unspecified unit, it's be positive number, while it's negative in dBm
           wlan.signal = Number(ln.substring(8).split(' ')[0])
         }
         else if (ln.startsWith('freq:')) {
