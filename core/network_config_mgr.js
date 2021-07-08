@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,7 +19,8 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const exec = require('child-process-promise').exec;
+const { exec, spawn } = require('child-process-promise')
+const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
 const pl = require('../platform/PlatformLoader.js');
@@ -56,6 +57,64 @@ class NetworkConfigManager {
 
   async getInterface(intf) {
     return ns.getInterface(intf);
+  }
+
+  async getWlanAvailable(intf) {
+    const promise = spawn('sudo', ['timeout', '30s', 'iw', 'dev', intf, 'scan'])
+    const cp = promise.childProcess
+    const rl = readline.createInterface({input: cp.stdout});
+
+    const results = []
+    let wlan, ie
+
+    for await (const line of rl) {
+      try {
+        if (line.startsWith('BSS ')) {
+          wlan && results.push(wlan)
+
+          const mac = line.substring(4, 21).toUpperCase()
+          wlan = { mac }
+        }
+
+        const ln = line.trimStart() // don't trim end in case SSID has trailing spaces
+
+        if (ln.startsWith('signal:')) {
+          wlan.signal = ln.substring(8)
+        }
+        else if (ln.startsWith('freq:')) {
+          wlan.freq = Number(ln.substring(6))
+        }
+        else if (ln.startsWith('SSID:')) {
+          wlan.ssid = ln.substring(6)
+        }
+        else if (ln.startsWith('RSN:')) {
+          const index = ln.indexOf('Version:')
+          ie = { ver: Number(ln.substring(index + 8)) }
+          wlan.rsn = ie
+        }
+        else if (ln.startsWith('WPA:')) {
+          const index = ln.indexOf('Version:')
+          ie = { ver: Number(ln.substring(index + 8)) }
+          wlan.wpa = ie
+        }
+        else if (ln.startsWith('* Group cipher:')) {
+          ie.group = ln.substring(16)
+        }
+        else if (ln.startsWith('* Pairwise ciphers:')) {
+          ie.pairwises = ln.substring(20).trim().split(' ')
+        }
+        else if (ln.startsWith('* Authentication suites:')) {
+          ie.suites = ln.substring(25).trim().split(' ')
+        }
+      } catch(err) {
+        log.error('Error parsing line', line, '\n', err)
+      }
+    }
+
+    await promise
+
+    results.push(wlan)
+    return results
   }
 
   async getActiveConfig() {
