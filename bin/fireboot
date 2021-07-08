@@ -84,7 +84,7 @@ touch /home/pi/.firewalla/managed_reboot
 sudo systemctl start firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"
-
+redis-cli HINCRBY "stats:systemd:restart" FireBoot 1
 update_timezone
 
 exit 0
