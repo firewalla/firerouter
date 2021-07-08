@@ -42,6 +42,8 @@ module.exports = {
   isLoggingSuppressed: isLoggingSuppressed,
   EVENT_IF_UP: "ifup",
   EVENT_IF_DOWN: "ifdown",
+  EVENT_WLAN_UP: "wlan_ip",
+  EVENT_WLAN_DOWN: "wlan_down",
   EVENT_IP_CHANGE: "ipchange",
   EVENT_PD_CHANGE: "pdchange",
   EVENT_PPPOE_IPV6_UP: "pppoe_ipv6_up",
