@@ -29,6 +29,10 @@ class Platform {
   getDefaultNetworkJsonFile() {
     return `${__dirname}/../network/default_setup.json`;
   }
+
+  async getWlanVendor() {
+    return '';
+  }
 }
 
 module.exports = Platform;
