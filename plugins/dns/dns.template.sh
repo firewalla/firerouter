@@ -21,6 +21,8 @@ for CONF_FILE in %FIREROUTER_HOME%/etc/dnsmasq.dns.*.conf; do
   fi
 done;
 
+redis-cli HINCRBY "stats:systemd:restart" firerouter_dns 1
+
 if [[ -n $PIDS ]]; then
   wait -n
   # considered as failure if any child process exits
