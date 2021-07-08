@@ -79,7 +79,7 @@ class NetworkConfigManager {
         const ln = line.trimStart() // don't trim end in case SSID has trailing spaces
 
         if (ln.startsWith('signal:')) {
-          wlan.signal = ln.substring(8)
+          wlan.signal = Number(ln.substring(8).split(' ')[0])
         }
         else if (ln.startsWith('freq:')) {
           wlan.freq = Number(ln.substring(6))
