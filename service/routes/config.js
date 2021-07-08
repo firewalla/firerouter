@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -43,6 +43,14 @@ router.get('/lans', async (req, res, next) => {
   await ncm.getLANs().then((lans) => {
     res.status(200).json(lans);
   }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+router.get('/wlan/:intf/available', async (req, res, _next) => {
+  await ncm.getWlanAvailable(req.params.intf).then(lans => {
+    res.status(200).json(lans);
+  }).catch(err => {
     res.status(500).json({errors: [err.message]});
   });
 });
