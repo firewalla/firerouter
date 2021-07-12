@@ -24,6 +24,8 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
+
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
@@ -123,6 +125,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
 
     return true;
+  }
+
+  async state() {
+    const state = await super.state();
+    const essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+    const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
+    state.essid = essid;
+    state.vendor = vendor;
+    return state;
   }
 
 }

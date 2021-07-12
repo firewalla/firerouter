@@ -50,7 +50,14 @@ class IfPlugSensor extends Sensor {
           const iface = message;
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
-            const e = event.buildEvent(event.EVENT_IF_UP, {intf: iface});
+            let e = null;
+            switch (intfPlugin.constructor.name) {
+              case "WLANInterfacePlugin":
+                e = event.buildEvent(event.EVENT_WLAN_UP, {intf: iface});
+                break;
+              default:
+                e = event.buildEvent(event.EVENT_IF_UP, {intf: iface});
+            }
             intfPlugin.propagateEvent(e);
           }
           // filter out VPN interface
@@ -61,7 +68,14 @@ class IfPlugSensor extends Sensor {
           const iface = message;
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
-            const e = event.buildEvent(event.EVENT_IF_DOWN, {intf: iface});
+            let e = null;
+            switch (intfPlugin.constructor.name) {
+              case "WLANInterfacePlugin":
+                e = event.buildEvent(event.EVENT_WLAN_DOWN, {intf: iface});
+                break;
+              default:
+                e = event.buildEvent(event.EVENT_IF_DOWN, {intf: iface});
+            }
             intfPlugin.propagateEvent(e);
           }
           // filter out VPN interface
