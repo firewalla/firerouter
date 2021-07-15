@@ -310,8 +310,6 @@ class InterfaceBasePlugin extends Plugin {
             this.fatal(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
-        // this can directly trigger downstream plugins to reapply config adapting to the static IP
-        this.propagateConfigChanged(true);
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
@@ -376,6 +374,13 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhclient/${this.name}.conf`;
   }
 
+  isStaticIP() {
+    // either IPv4 or IPv6 is static
+    if (this.networkConfig.ipv4 || (this.networkConfig.ipv4s && this.networkConfig.ipv4s.length > 0) || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
+      return true;
+    return false;
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
       const dhcpOptions = [];
@@ -403,8 +408,6 @@ class InterfaceBasePlugin extends Plugin {
             this.fatal(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
-        // this can directly trigger downstream plugins to reapply config adapting to the static IP
-        this.propagateConfigChanged(true);
       }
     }
 
@@ -721,6 +724,10 @@ class InterfaceBasePlugin extends Plugin {
         if (this.isWAN()) {
           // WAN interface plugged, need to reapply WAN interface config
           this._reapplyNeeded = true;
+          // reapply all plugins on the dependency chain if either IPv4 or IPv6 is static IP. 
+          // otherwise, only reapply the WAN interface plugin itself. Downstream plugins, e.g., routing, will be triggered by events, e.g., IP_CHANGE from dhclient
+          if (this.isStaticIP())
+            this.propagateConfigChanged(true);
           pl.scheduleReapply();
         }
         break;
