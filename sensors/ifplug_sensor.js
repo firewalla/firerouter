@@ -38,7 +38,7 @@ class IfPlugSensor extends Sensor {
     for (let iface of ifaces) {
       await exec(`sudo ip link set ${iface} up`).catch((err) => {});
       await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
-      await exec(`sudo ifplugd -pq -i ${iface} -u ${upDelay}`).catch((err) => {
+      await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay}`).catch((err) => {
         this.log.error(`Failed to start ifplugd on ${iface}`);
       });
     }

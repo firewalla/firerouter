@@ -50,5 +50,7 @@ module.exports = {
   EVENT_WAN_CONN_CHECK: "wan_conn_check",
   EVENT_WAN_SWITCHED: "wan_switched",
   EVENT_IF_PRESENT: "if_present",
-  EVENT_IF_DISAPPEAR: "if_disappear"
+  EVENT_IF_DISAPPEAR: "if_disappear",
+  EVENT_WPA_CONNECTED: "wpa_connected",
+  EVENT_WPA_DISCONNECTED: "wpa_disconnected"
 };

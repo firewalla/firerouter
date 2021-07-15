@@ -154,6 +154,12 @@
       "config": {
         
       }
+    },
+    {
+      "file_path": "./wpa_connection_sensor.js",
+      "config": {
+        
+      }
     }
   ]
 }
