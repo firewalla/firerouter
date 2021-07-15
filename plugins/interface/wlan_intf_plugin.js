@@ -23,6 +23,7 @@ const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+const event = require('../../core/event.js');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
@@ -132,6 +133,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return state;
   }
 
+  onEvent(e) {
+    super.onEvent(e);
+    const eventType = event.getEventType(e);
+    if (eventType === event.EVENT_WPA_CONNECTED) {
+      this.applyIpSettings().catch((err) => {
+        this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
+      });
+    }
+  }
 }
 
 module.exports = WLANInterfacePlugin;
