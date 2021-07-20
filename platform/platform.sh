@@ -5,6 +5,10 @@ FW_PLATFORM_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 UNAME=$(uname -m)
 NETWORK_SETUP=yes
 
+function run_horse_light {
+  echo "nothing to do"
+}
+
 function get_pppoe_rps_cpus {
   echo "f"
 }

@@ -3,7 +3,6 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 LICENSE_FILE=/home/pi/.firewalla/license
 
-source /home/pi/firewalla/platform/platform.sh
 source $DIR/../platform/platform.sh
 
 run_host_light_until_paired() {
