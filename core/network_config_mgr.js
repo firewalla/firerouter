@@ -74,7 +74,7 @@ class NetworkConfigManager {
     const wpaCliPath = platform.getWpaCliBinPath();
     const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
     const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} list_networks | tail +3`).then(result => result.stdout.trim().split('\n').map(line => {
-      const [id, ssid, bssid, flags] = line.split(/\s+/g, 4);
+      const [id, ssid, bssid, flags] = line.split('\t', 4);
       return {id, ssid, bssid, flags};
     })).catch(err => []);
     const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
@@ -87,7 +87,7 @@ class NetworkConfigManager {
     return new Promise((resolve, reject) => {
       const t1 = Date.now() / 1000;
       const checkTask = setInterval(async () => {
-        const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("COMPLETED")).catch((err) => false);
+        const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
         if (state === true) {
           clearInterval(checkTask);
           for (const network of networks) {
@@ -100,9 +100,10 @@ class NetworkConfigManager {
           const t2 = Date.now() / 1000;
           if (t2 - t1 > 15) {
             clearInterval(checkTask);
-            // switch back to previous ssid
-            if (currentNetwork)
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`);
+            if (currentNetwork) // switch back to previous ssid
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => {});
+            else // deselect ssid
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} disable_network ${selectedNetwork.id}`).catch((err) => {});
             for (const network of networks) {
               // select_network will disable all other ssids, re-enable other ssid
               if (!currentNetwork || network.id !== currentNetwork.id)
