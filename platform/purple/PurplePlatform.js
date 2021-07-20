@@ -35,6 +35,10 @@ class PurplePlatform extends Platform {
     }
     return this.vendor;
   }
+
+  getWpaCliBinPath() {
+    return `${__dirname}/bin/wpa_cli`;
+  }
 }
 
 module.exports = PurplePlatform;

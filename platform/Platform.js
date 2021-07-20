@@ -33,6 +33,10 @@ class Platform {
   async getWlanVendor() {
     return '';
   }
+
+  getWpaCliBinPath() {
+    return null;
+  }
 }
 
 module.exports = Platform;
