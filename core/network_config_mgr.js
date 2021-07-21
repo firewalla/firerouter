@@ -25,6 +25,7 @@ const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
 const pl = require('../platform/PlatformLoader.js');
 const platform = pl.getPlatform();
+const r = require('../util/firerouter.js');
 
 class NetworkConfigManager {
   constructor() {
@@ -57,6 +58,62 @@ class NetworkConfigManager {
 
   async getInterface(intf) {
     return ns.getInterface(intf);
+  }
+
+  async switchWifi(intf, ssid) {
+    const iface = await ns.getInterface(intf);
+    if (!iface)
+      return [`Interface ${intf} is not found`];
+    const config = iface.config;
+    if (config.enabled !== true)
+      return [`Interface ${intf} is not enabled`];
+    if (config.meta.type !== "wan")
+      return [`Interface ${intf} is not a WAN interface`];
+    if (!config.wpaSupplicant)
+      return [`wpa_supplicant is not configured on ${intf}`];
+    const wpaCliPath = platform.getWpaCliBinPath();
+    const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
+    const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} list_networks | tail +3`).then(result => result.stdout.trim().split('\n').map(line => {
+      const [id, ssid, bssid, flags] = line.split('\t', 4);
+      return {id, ssid, bssid, flags};
+    })).catch(err => []);
+    const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
+    const selectedNetwork = networks.find(n => n.ssid === ssid);
+    if (!selectedNetwork)
+      return [`ssid ${ssid} is not configured in ${intf} settings`];
+    let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
+    if (error)
+      return [error];
+    return new Promise((resolve, reject) => {
+      const t1 = Date.now() / 1000;
+      const checkTask = setInterval(async () => {
+        const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+        if (state === true) {
+          clearInterval(checkTask);
+          for (const network of networks) {
+            // select_network will disable all other ssids, re-enable other ssid
+            if (network.id !== selectedNetwork.id)
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => {});
+          }
+          resolve([]);
+        } else {
+          const t2 = Date.now() / 1000;
+          if (t2 - t1 > 15) {
+            clearInterval(checkTask);
+            if (currentNetwork) // switch back to previous ssid
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => {});
+            else // deselect ssid
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} disable_network ${selectedNetwork.id}`).catch((err) => {});
+            for (const network of networks) {
+              // select_network will disable all other ssids, re-enable other ssid
+              if (!currentNetwork || network.id !== currentNetwork.id)
+                await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => {});
+            }
+            resolve([`Failed to switch to ${ssid}`])
+          }
+        }
+      }, 3000);
+    });
   }
 
   async getWlanAvailable(intf) {

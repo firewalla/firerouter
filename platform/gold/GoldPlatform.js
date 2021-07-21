@@ -23,6 +23,10 @@ class GoldPlatform extends Platform {
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
   }
+
+  getWpaCliBinPath() {
+    return `${__dirname}/bin/wpa_cli`;
+  }
 }
 
 module.exports = GoldPlatform;
