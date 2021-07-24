@@ -66,7 +66,7 @@ router.post('/wlan/switch_wifi/:intf',
       res.status(400).json({errors: ['"ssid" is not specified.']});
       return;
     }
-    const errors = await ncm.switchWifi(intf, config.ssid);
+    const errors = await ncm.switchWifi(intf, config.ssid).catch((err) => [err.message]);
     if (errors && errors.length != 0) {
       log.error(`Failed to switch to ssid ${config.ssid} on ${intf}`, errors);
       res.status(400).json({errors: errors});
