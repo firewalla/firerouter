@@ -25,6 +25,7 @@ const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
 const {Address4, Address6} = require('ip-address');
 
+const bindIntfRulePriority = 5001;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -46,6 +47,11 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+
+      if(this.networkConfig.bindIntf) {
+        const cmd = `sudo ip rule del pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+        await exec(cmd).catch((err) => {});
+      }
     }
   }
 
@@ -112,6 +118,12 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
           }
         }
       }
+    }
+
+    // add specific routing for wireguard port
+    if(this.networkConfig.bindIntf && this.networkConfig.listenPort) {
+      const cmd = `sudo ip rule add pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+      await exec(cmd).catch((err) => {});
     }
   }
 
