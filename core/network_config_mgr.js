@@ -60,7 +60,7 @@ class NetworkConfigManager {
   }
 
   async getWlanAvailable(intf) {
-    const promise = spawn('sudo', ['timeout', '30s', 'iw', 'dev', intf, 'scan'])
+    const promise = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
     const cp = promise.childProcess
     const rl = readline.createInterface({input: cp.stdout});
 
@@ -94,6 +94,12 @@ class NetworkConfigManager {
         else if (ln.startsWith('SSID:')) {
           wlan.ssid = ln.substring(6)
         }
+        // else if (ln.startsWith('HT Operation:')) {
+        //   ie = { }
+        // }
+        else if (ln.startsWith('* primary channel:')) {
+          wlan.channel = Number(ln.substring(19))
+        }
         else if (ln.startsWith('RSN:')) {
           const index = ln.indexOf('Version:')
           ie = { ver: Number(ln.substring(index + 8)) }
@@ -121,7 +127,8 @@ class NetworkConfigManager {
     await promise
 
     results.push(wlan)
-    return results
+
+    return _.sortBy(results, 'channel')
   }
 
   async getActiveConfig() {
