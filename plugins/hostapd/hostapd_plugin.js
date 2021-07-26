@@ -28,12 +28,9 @@ const exec = require('child-process-promise').exec;
 const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
 
-class HostapdPlugin extends Plugin {
-  constructor() {
-    super()
+const pluginConfig = require('./config.json')
 
-    this.config = require('./config.json')
-  }
+class HostapdPlugin extends Plugin {
 
   static async preparePlugin() {
     await this.createDirectories();
@@ -70,7 +67,7 @@ class HostapdPlugin extends Plugin {
   }
 
   async apply() {
-    const parameters = this.config.default ? JSON.parse(JSON.stringify(this.config.default)) : {};
+    const parameters = pluginConfig.default ? JSON.parse(JSON.stringify(pluginConfig.default)) : {};
     const params = this.networkConfig.params || {};
     parameters.interface = this.name;
     const intfPlugin = pl.getPluginInstance("interface", this.name);
@@ -96,12 +93,12 @@ class HostapdPlugin extends Plugin {
     parameters.ht_capab = new Set(parameters.ht_capab)
 
     if (!parameters.channel) {
-      const availableChannels = this.config.vendor[await platform.getWlanVendor()].channels
+      const availableChannels = pluginConfig.vendor[await platform.getWlanVendor()].channels
 
       const scores = {}
       const availableWLANs = await ncm.getWlanAvailable(this.name)
       for (const network of availableWLANs) {
-        const channelConfig = this.config.channel[network.channel]
+        const channelConfig = pluginConfig.channel[network.channel]
         if (!channelConfig) continue
 
         // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
@@ -125,7 +122,7 @@ class HostapdPlugin extends Plugin {
       parameters.channel = bestChannel
     }
 
-    const channelConfig = this.config.channel[parameters.channel]
+    const channelConfig = pluginConfig.channel[parameters.channel]
     if (channelConfig.ht_capab) {
       channelConfig.ht_capab.default && channelConfig.ht_capab.default.forEach(c => parameters.ht_capab.add(c))
       channelConfig.ht_capab.not && channelConfig.ht_capab.not.forEach(c => parameters.ht_capab.delete(c))
