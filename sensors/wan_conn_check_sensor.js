@@ -66,7 +66,7 @@ class WanConnCheckSensor extends Sensor {
         let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
-            this.log.error(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
+            this.log.warn(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
             failures.push({type: "ping", target: ip});
             era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,1,{
               "wan_test_ip":ip,
@@ -105,7 +105,7 @@ class WanConnCheckSensor extends Sensor {
             const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
             const result = await exec(cmd).then((result) => {
               if (!result || !result.stdout || result.stdout.trim().length === 0)  {
-                this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
+                this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
                 failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
                 return false;
               } else {
