@@ -23,7 +23,9 @@ const fs = require('fs');
 const _ = require('lodash');
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const {Address4, Address6} = require('ip-address');
 
+const bindIntfRulePriority = 5001;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -45,6 +47,11 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+
+      if(this.networkConfig.bindIntf) {
+        const cmd = `sudo ip rule del pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+        await exec(cmd).catch((err) => {});
+      }
     }
   }
 
@@ -90,6 +97,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
     await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    return true;
   }
 
   async changeRoutingTables() {
@@ -100,34 +108,27 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
           for (const allowedIP of peer.allowedIPs) {
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
           }
         }
       }
+    }
+
+    // add specific routing for wireguard port
+    if(this.networkConfig.bindIntf && this.networkConfig.listenPort) {
+      const cmd = `sudo ip rule add pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+      await exec(cmd).catch((err) => {});
     }
   }
 
   async state() {
     const state = await super.state();
-    if (this.networkConfig && this.networkConfig.enabled) {
-      const allIPs = [];
-      if (this.networkConfig.ipv4)
-        allIPs.push(this.networkConfig.ipv4);
-      if (_.isArray(this.networkConfig.peers)) {
-        for (const peer of this.networkConfig.peers) {
-          if (peer.allowedIPs) {
-            Array.prototype.push.apply(allIPs, peer.allowedIPs);
-          }
-        }
-      }
-      state.ip4s = allIPs;
-    }
     if (!state.mac)
       state.mac = "02:01:22:22:22:22";
     return state;

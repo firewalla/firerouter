@@ -9,6 +9,6 @@ else
   # Use system one
   NODE=$(which node)
 fi
-
+redis-cli HINCRBY "stats:systemd:restart" FireRouter 1
 $NODE "$@"
   

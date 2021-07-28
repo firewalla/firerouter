@@ -13,6 +13,12 @@
       "init_seq": 2
     },
     {
+      "file_path": "./interface/wlan_intf_plugin.js",
+      "config_path": "interface.wlan",
+      "category": "interface",
+      "init_seq": 2
+    },
+    {
       "file_path": "./interface/pppoe_intf_plugin.js",
       "config_path": "interface.pppoe",
       "category": "interface",
@@ -113,6 +119,12 @@
       "config_path": "icmp",
       "category": "icmp",
       "init_seq": 9
+    },
+    {
+      "file_path": "./hostapd/hostapd_plugin.js",
+      "config_path": "hostapd",
+      "category": "hostapd",
+      "init_seq": 9
     }
   ],
   "sensors": [
@@ -135,6 +147,18 @@
         "ping_test_count": 8,
         "ping_success_rate": 0.5,
         "dns_test_domain": "github.com"
+      }
+    },
+    {
+      "file_path": "./if_presence_sensor.js",
+      "config": {
+        
+      }
+    },
+    {
+      "file_path": "./wpa_connection_sensor.js",
+      "config": {
+        
       }
     }
   ]

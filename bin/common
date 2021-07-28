@@ -65,12 +65,15 @@ test_curl_http_code() {
     test -n "$url" || return 1
     http_code_expect=${2:-200}
     echo "Testing URL($url) and expecting http code($http_code_expect) ..."
-    http_code_actual=$(curl -sqL -m30 -o /dev/null -w "%{http_code}" "$url")
+    http_code_actual=$(curl -sq -m30 -o /dev/null -w "%{http_code}" "$url")
     if [[ -n $http_code_actual && $http_code_actual -eq $http_code_expect ]]
     then
         echo OK
         return 0
     else
+        if [[ $http_code_actual == "302" ]]; then
+          redirect_url=$(curl -Lqs -w "%{url_effective}" -o /dev/null "$url")
+        fi
         echo "fail($http_code_actual)"
         return 1
     fi
@@ -78,7 +81,10 @@ test_curl_http_code() {
 
 test_network() {
   echo "Testing network connectivity ..."
-  redis-cli set "fireboot:status" "test_network"
+  # if fireboot:status is network_down, this function will be invoked in an infinite loop in fireboot, do not override network_down in such case
+  if [[ $(redis-cli get fireboot:status) != "network_down" ]]; then
+    redis-cli set "fireboot:status" "test_network"
+  fi
 
   retry=30;_rc=0
   while [[ $retry -gt 0 ]]; do
@@ -104,11 +110,17 @@ test_network() {
         fi
     fi
 
+    redirect_url=""
     while read testurl ; do
         test -n "$testurl" || continue # try another url if this test url is empty
         test_curl_http_code $testurl || { _rc=5; continue; } # mark as fail if test fails, and try another one
         _rc=0; break; # mark as success if any of url test succeeds
     done < <(echo "$TEST_URLS")
+    if [[ -n $redirect_url ]]; then
+      redis-cli set "fireboot:status:redirect_url" $redirect_url
+    else
+      redis-cli del "fireboot:status:redirect_url"
+    fi
     test $_rc -eq 5 && continue # retry the whole test_network if the test url while-loop fails
 
     _rc=0

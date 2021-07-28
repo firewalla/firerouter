@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter Wireless AP Daemon on %i
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/bin/bash %HOSTAPD_DIRECTORY%/hostapd.sh %i
+RemainAfterExit=true
