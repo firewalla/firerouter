@@ -4,6 +4,7 @@ set -e
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
+source ${FIREROUTER_HOME}/platform/platform.sh
 CMD=$(basename $0)
 
 usage() {
@@ -36,11 +37,12 @@ switch_branch() {
     if [[ "$cur_branch" == "$tgt_branch" ]]; then
       exit 0
     fi
+    remote_branch=$(map_target_branch $tgt_branch)
     # firerouter repo
     ( cd $FIREROUTER_HOME
-    git config remote.origin.fetch "+refs/heads/$tgt_branch:refs/remotes/origin/$tgt_branch"
-    $MGIT fetch origin $tgt_branch
-    git checkout -f -B $tgt_branch origin/$tgt_branch
+    git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
+    $MGIT fetch origin $remote_branch
+    git checkout -f -B $tgt_branch origin/$remote_branch
     )
 }
 
@@ -81,4 +83,4 @@ switch_branch $cur_branch $branch || exit 1
 rm -f /dev/shm/firerouter.prepared
 
 sync
-logger "REBOOT: SWITCH branch from $cur_branch to $branch"
+logger "FireRouter: SWITCH branch from $cur_branch to $branch"
