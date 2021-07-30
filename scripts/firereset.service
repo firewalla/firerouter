@@ -9,6 +9,9 @@ Restart=always
 RestartSec=5
 WorkingDirectory=/home/pi/firerouter
 ExecStart=/bin/bash -c "sudo chown pi /home/pi/.forever/firereset.log; /home/pi/firerouter/scripts/firereset.sh 2>&1 | tee -a /home/pi/.forever/firereset.log &>/dev/null"
+# firereset should only be started when box is ready for pairing
+ExecStartPost=/bin/bash -c "source /home/pi/firewalla/platform/platform.sh; led_boot_state ready4pairing"
+ExecStop=/bin/bash -c "source /home/pi/firewalla/platform/platform.sh; led_boot_state paired"
 
 [Install]
 WantedBy=multi-user.target
