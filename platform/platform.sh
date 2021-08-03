@@ -13,6 +13,10 @@ function get_pppoe_rps_cpus {
   echo "f"
 }
 
+function map_target_branch {
+  echo $1
+}
+
 case "$UNAME" in
   "x86_64")
     source $FW_PLATFORM_DIR/gold/platform.sh
