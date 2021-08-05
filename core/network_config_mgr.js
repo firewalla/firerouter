@@ -291,7 +291,7 @@ class NetworkConfigManager {
     if (this.bgsaveTask)
       clearTimeout(this.bgsaveTask);
     this.bgsaveTask = setTimeout(() => {
-      rclient.bgsaveAsync().catch((err) => {
+      rclient.bgsaveAsync().then(() => exec("sync")).catch((err) => {
         log.error("Redis background save returns error", err.message);
       });
     }, 3000);
