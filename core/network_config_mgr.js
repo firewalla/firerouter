@@ -283,7 +283,18 @@ class NetworkConfigManager {
     const configString = JSON.stringify(networkConfig);
     if (configString) {
       await rclient.setAsync("sysdb:networkConfig", configString);
+      this._scheduleRedisBackgroundSave();
     }
+  }
+
+  _scheduleRedisBackgroundSave() {
+    if (this.bgsaveTask)
+      clearTimeout(this.bgsaveTask);
+    this.bgsaveTask = setTimeout(() => {
+      rclient.bgsaveAsync().catch((err) => {
+        log.error("Redis background save returns error", err.message);
+      });
+    }, 3000);
   }
 }
 
