@@ -110,7 +110,7 @@ git config "branch.$branch.merge" "refs/heads/$remote_branch"
 $MGIT fetch
 
 current_hash=$(git rev-parse HEAD)
-latest_hash=$(git rev-parse origin/$branch)
+latest_hash=$(git rev-parse origin/$remote_branch)
 
 if [ "$current_hash" == "$latest_hash" ]; then
    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
