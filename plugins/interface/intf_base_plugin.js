@@ -133,10 +133,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
-        const subPrefixId = await this._findSubPrefixId(fromIface);
-        if (subPrefixId >= 0) {
-          await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`).catch((err) =>{});
-        }
+        await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
       }
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
@@ -227,31 +224,44 @@ class InterfaceBasePlugin extends Plugin {
     return `${subPrefix.correctForm()}/64`;
   }
 
-  async _findSubPrefixId(fromIface) {
+  async _findSubPrefix(fromIface, prefixes) {
     const pdCacheDir = r.getInterfacePDCacheDirectory(fromIface);
-    let nextId = -1;
-    await fs.readdirAsync(pdCacheDir).then((files) => {
-      const existingId = files.filter(f => f.endsWith(`.${this.name}`));
-      if (existingId.length > 0) {
-        nextId = existingId[0].split('.')[0];
-        return;
-      }
-      for (let i = 0; true; i +=1) {
-        if (files.filter(f => f.startsWith(`${i}.`)).length == 0) {
-          nextId = i;
-          return;
+    if (!_.isArray(prefixes))
+      return null;
+    const prefixIfaceMap = {};
+    const files = await fs.readdirAsync(pdCacheDir);
+    for (const file of files) {
+      const addr = await fs.readFileAsync(`${pdCacheDir}/${file}`, { encoding: 'utf8' }).then(r => r.trim());
+      if (addr) {
+        const addr6 = new Address6(addr);
+        if (addr6.isValid()) {
+          prefixIfaceMap[addr] = file;
+          if (file === this.name
+            && prefixes.some(p => {
+              const prefix6 = new Address6(p);
+              return prefix6.isValid() && addr6.isInSubnet(prefix6)
+            })
+          ) {
+            return addr;
+          }
         }
       }
-    }).catch((err) => {
-      this.log.error(`Failed to get next id for prefix delegation from ${fromIface} for ${this.name}`, err.message);
-      nextId = -1;
-    });
-    return nextId;
+    }
+    for (const prefix of prefixes) {
+      for (let i = 0; true; i++) {
+        const addr = this._calculateSubPrefix(prefix, i);
+        if (!addr)
+          break;
+        if (!prefixIfaceMap.hasOwnProperty(addr))
+          return addr;
+      }
+    }
+    return null;
   }
 
   async prepareEnvironment() {
     // create runtime directory
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/dhcpcd/${this.name}`).catch((err) => {});
+    await exec(`mkdir -p ${r.getInterfacePDCacheDirectory(this.name)}`).catch((err) => {});
     // create routing tables and add rules for interface
     if (this.isWAN() || this.isLAN()) {
       await routing.initializeInterfaceRoutingTables(this.name);
@@ -292,11 +302,16 @@ class InterfaceBasePlugin extends Plugin {
       if (pdSize > 64)
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
-      content = content.replace(/%PD_SIZE%/g, pdSize);
+      const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
+      const pdOpts = [];
+      for (let i = 1; i <= numOfPDs; i++) {
+        pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
+      }
+      content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
-        this.fatal(`Failed to enable dhcpv6 client on interfacer ${this.name}: ${err.message}`);
+        this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
       });
       // TODO: do not support dns nameservers from DHCPv6 currently
     } else {
@@ -320,48 +335,35 @@ class InterfaceBasePlugin extends Plugin {
         if (await parentIntfPlugin.isInterfacePresent() === false) {
           this.log.warn(`Interface ${fromIface} is not present yet`);
         } else {
+          // assign sub prefix id for this interface
           const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
           const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
             this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
             return null;
           });
-          // assign sub prefix id for this interface
-          const subPrefixId = await this._findSubPrefixId(fromIface);
-          if (subPrefixId >= 0) {
+          const subPrefix = await this._findSubPrefix(fromIface, prefixes);
+          let ipChanged = false;
+          if (subPrefix) {
             // clear previously assigned prefixes in the cache file
-            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`).catch((err) =>{});
-            if (prefixes && _.isArray(prefixes)) {
-              const subPrefixes = [];
-              let ipChanged = false;
-              for (const prefixMask of prefixes) {
-                const subPrefix = this._calculateSubPrefix(prefixMask, subPrefixId);
-                if (!subPrefix) {
-                  this.log.error(`Failed to calculate sub prefix from ${prefixMask} and id ${subPrefixId} for ${this.name}`);
-                } else {
-                  // add link local route to interface local and default routing table
-                  await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
-                  await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-                  const addr = new Address6(subPrefix);
-                  if (!addr.isValid()) {
-                    this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
-                  } else {
-                    // the suffix of the delegated interface is always 1
-                    await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                      this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
-                    });
-                    subPrefixes.push(subPrefix);
-                    ipChanged = true;
-                  }
-                }
-              }
-              if (subPrefixes.length > 0) {
-                // write newly assigned prefixes to the cache file
-                await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`, subPrefixes.join("\n"), { encoding: 'utf8' }).catch((err) => { });
-              }
+            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+            // add link local route to interface local and default routing table
+            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => { });
+            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => { });
+            const addr = new Address6(subPrefix);
+            if (!addr.isValid()) {
+              this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
+            } else {
+              // the suffix of the delegated interface is always 1
+              await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
+                this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+              });
+              ipChanged = true;
+            }
+            if (ipChanged) {
+              // write newly assigned prefixes to the cache file
+              await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
               // trigger reapply of downstream plugins that are dependent on this interface
-              if (ipChanged) {
-                this.propagateConfigChanged(true);
-              }
+              this.propagateConfigChanged(true);
             }
           }
         }
@@ -463,8 +465,7 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.networkConfig.ipv6DelegateFrom) {
       // read delegated sub prefixes from cache file
-      const subPrefixId = await this._findSubPrefixId(this.networkConfig.ipv6DelegateFrom);
-      const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${subPrefixId}.${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
+      const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
         this.log.error(`Failed to read sub prefixes for ${this.name}`, err.message);
         return [];
       });
@@ -534,8 +535,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         // read delegated sub prefixes from cache file
-        const subPrefixId = await this._findSubPrefixId(this.networkConfig.ipv6DelegateFrom);
-        const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${subPrefixId}.${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
+        const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
           this.log.error(`Failed to read sub prefixes for ${this.name}`, err.message);
           return [];
         });
