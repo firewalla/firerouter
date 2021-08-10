@@ -38,6 +38,6 @@ require dhcp_server_identifier
 #slaac private
 
 # Dummy prefix delegation entry to simply get prefix to delegate without configuring any interface, evil!
-ia_pd 1/::/%PD_SIZE% not_exist/1
+%IA_PD_OPTS%
 
 ia_na
