@@ -21,6 +21,7 @@ const exec = require('child-process-promise').exec;
 const ncm = require('../core/network_config_mgr.js');
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
+const EventConstants = require('../event/EventConstants.js');
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 
@@ -44,7 +45,6 @@ class IfPlugSensor extends Sensor {
     }
 
     sclient.on("message", (channel, message) => {
-      const EVENT_STATE_TYPE = "ethernet_state";
       switch (channel) {
         case "ifup": {
           const iface = message;
@@ -61,7 +61,8 @@ class IfPlugSensor extends Sensor {
             intfPlugin.propagateEvent(e);
           }
           // filter out VPN interface
-          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 0);
+          if (intfPlugin.constructor.name === "PhyInterfacePlugin")
+            era.addStateEvent(EventConstants.EVENT_ETHER_STATE, iface, 0);
           break;
         }
         case "ifdown": {
@@ -78,8 +79,9 @@ class IfPlugSensor extends Sensor {
             }
             intfPlugin.propagateEvent(e);
           }
-          // filter out VPN interface
-          if ( iface !== 'tun_fwvpn') era.addStateEvent(EVENT_STATE_TYPE, iface, 1);
+          // ethernet state change only generated on physical interfaces
+          if (intfPlugin.constructor.name === "PhyInterfacePlugin")
+            era.addStateEvent(EventConstants.EVENT_ETHER_STATE, iface, 1);
           break;
         }
         default:
