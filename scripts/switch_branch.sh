@@ -88,6 +88,8 @@ if [[ $NETWORK_SETUP == "yes" ]]; then
 else
   sudo cp /home/pi/firerouter/scripts/fireboot_standalone.service /etc/systemd/system/fireboot.service
 fi
+sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
+sudo systemctl daemon-reload
 
 sync
 logger "FireRouter: SWITCH branch from $cur_branch to $branch"
