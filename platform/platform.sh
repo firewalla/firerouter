@@ -6,11 +6,15 @@ UNAME=$(uname -m)
 NETWORK_SETUP=yes
 
 function run_horse_light {
-  echo "nothing to do"
+  return
 }
 
 function get_pppoe_rps_cpus {
   echo "f"
+}
+
+function map_target_branch {
+  echo $1
 }
 
 case "$UNAME" in

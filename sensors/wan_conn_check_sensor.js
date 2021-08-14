@@ -21,6 +21,7 @@ const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
 const era = require('../event/EventRequestApi.js');
+const EventConstants = require('../event/EventConstants.js');
 const _ = require('lodash');
 
 class WanConnCheckSensor extends Sensor {
@@ -66,9 +67,9 @@ class WanConnCheckSensor extends Sensor {
         let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
-            this.log.error(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
+            this.log.warn(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
             failures.push({type: "ping", target: ip});
-            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,1,{
+            era.addStateEvent(EventConstants.EVENT_PING_STATE, wanIntfPlugin.name+"-"+ip, 1, {
               "wan_test_ip":ip,
               "wan_intf_name":wanName,
               "wan_intf_uuid":wanUUID,
@@ -77,7 +78,7 @@ class WanConnCheckSensor extends Sensor {
             });
             return false;
           } else
-            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,0,{
+            era.addStateEvent(EventConstants.EVENT_PING_STATE, wanIntfPlugin.name+"-"+ip, 0, {
               "wan_test_ip":ip,
               "wan_intf_name":wanName,
               "wan_intf_uuid":wanUUID,
@@ -105,7 +106,7 @@ class WanConnCheckSensor extends Sensor {
             const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
             const result = await exec(cmd).then((result) => {
               if (!result || !result.stdout || result.stdout.trim().length === 0)  {
-                this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
+                this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
                 failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
                 return false;
               } else {
@@ -116,7 +117,7 @@ class WanConnCheckSensor extends Sensor {
               failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
               return false;
             });
-            era.addStateEvent("dns", nameserver, result ? 0 : 1, {
+            era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, result ? 0 : 1, {
               "wan_intf_name":wanName,
               "wan_intf_uuid":wanUUID,
               "name_server":nameserver,
