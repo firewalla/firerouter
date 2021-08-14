@@ -17,6 +17,14 @@ function map_target_branch {
   echo $1
 }
 
+function led_report_network_down {
+  return
+}
+
+function led_report_network_up {
+  return
+}
+
 case "$UNAME" in
   "x86_64")
     source $FW_PLATFORM_DIR/gold/platform.sh

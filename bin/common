@@ -92,6 +92,11 @@ test_network() {
     sleep 3;
     (( retry-- ))
 
+    # report down if already retried for 10 times
+    if [[ $retry -eq 20 ]]; then
+      led_report_network_down
+    fi
+
     if ! nc -w 5 -z 1.1.1.1 443; then
         echo "Unable to reach 1.1.1.1, trying 8.8.8.8 ..."
         if ! nc -w 5 -z 8.8.8.8 53; then
@@ -127,6 +132,7 @@ test_network() {
     break;
   done
   test $_rc -eq 0 || return $_rc
+  led_report_network_up
   echo "Network connectivity test succeeded"
 }
 
