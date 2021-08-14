@@ -23,3 +23,11 @@ function map_target_branch {
     ;;
   esac
 }
+
+function led_report_network_down {
+  curl 'http://127.0.0.1:9966/fire?name=firerouter&type=network_down'
+}
+
+function led_report_network_up {
+  curl 'http://127.0.0.1:9966/resolve?name=firerouter&type=network_down'
+}
