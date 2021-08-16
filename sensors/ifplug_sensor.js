@@ -23,12 +23,15 @@ const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const firestatusBaseURL = "http://127.0.0.1:9966";
+const rp = require('request-promise');
 
 class IfPlugSensor extends Sensor {
 
   static async prepare() {
     await exec(`sudo rm -rf /etc/ifplugd/action.d/*`).catch((err) => {});
     await exec(`sudo cp ${ifupdownPublishScript} /etc/ifplugd/action.d/`).catch((err) => {});
+    this.ethernetConnections = {}
   }
 
   async run() {
@@ -48,6 +51,12 @@ class IfPlugSensor extends Sensor {
       switch (channel) {
         case "ifup": {
           const iface = message;
+          this.ethernetConnections[iface] = "up"
+          if ( this.ethernetConnections.eth0 === "up" || this.ethernetConnections.eth1 === "up" ) {
+            await rp(`${firestatusBaseURL}/resolve?name=wan&type=normal_visible`).catch((err) => {
+              log.error("Failed to set LED as WAN not normal visible");
+            });
+          }
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
@@ -66,6 +75,12 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
+          this.ethernetConnections[iface] = "down"
+          if ( this.ethernetConnections.eth0 === "down" && this.ethernetConnections.eth1 === "down" ) {
+            await rp(`${firestatusBaseURL}/fire?name=wan&type=normal_visible`).catch((err) => {
+              log.error("Failed to set LED as WAN normal visible");
+            });
+          }
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
