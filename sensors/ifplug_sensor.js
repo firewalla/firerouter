@@ -21,10 +21,10 @@ const exec = require('child-process-promise').exec;
 const ncm = require('../core/network_config_mgr.js');
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
+const PlatformLoader = require('../platform/PlatformLoader.js')
+const platform = PlatformLoader.getPlatform()
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
-const firestatusBaseURL = "http://127.0.0.1:9966";
-const rp = require('request-promise');
 
 class IfPlugSensor extends Sensor {
 
@@ -53,9 +53,7 @@ class IfPlugSensor extends Sensor {
           const iface = message;
           this.ethernetConnections[iface] = "up"
           if ( this.ethernetConnections.eth0 === "up" || this.ethernetConnections.eth1 === "up" ) {
-            await rp(`${firestatusBaseURL}/resolve?name=wan&type=normal_visible`).catch((err) => {
-              log.error("Failed to set LED as WAN not normal visible");
-            });
+              platform.ledNormalVisibleStop();
           }
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
@@ -77,9 +75,7 @@ class IfPlugSensor extends Sensor {
           const iface = message;
           this.ethernetConnections[iface] = "down"
           if ( this.ethernetConnections.eth0 === "down" && this.ethernetConnections.eth1 === "down" ) {
-            await rp(`${firestatusBaseURL}/fire?name=wan&type=normal_visible`).catch((err) => {
-              log.error("Failed to set LED as WAN normal visible");
-            });
+            platform.ledNormalVisibleStart();
           }
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {

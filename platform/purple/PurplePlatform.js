@@ -19,6 +19,10 @@ Promise.promisifyAll(fs);
 
 const Platform = require('../Platform.js');
 
+const rp = require('request-promise');
+const cpuProfilePath = "/etc/default/cpufrequtils";
+
+const firestatusBaseURL = "http://127.0.0.1:9966";
 class PurplePlatform extends Platform {
   getName() {
     return "purple";
@@ -44,6 +48,19 @@ class PurplePlatform extends Platform {
   getWpaCliBinPath() {
     return `${__dirname}/bin/wpa_cli`;
   }
+
+  async ledNormalVisibleStart() {
+    await rp(`${firestatusBaseURL}/fire?name=firerouter&type=normal_visible`).catch((err) => {
+      log.error("Failed to set LED as WAN normal visible");
+    });
+  }
+
+  async ledNormalVisibleStop() {
+    await rp(`${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible`).catch((err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
 }
 
 module.exports = PurplePlatform;
