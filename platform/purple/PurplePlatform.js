@@ -20,6 +20,7 @@ Promise.promisifyAll(fs);
 const Platform = require('../Platform.js');
 
 const firestatusBaseURL = "http://127.0.0.1:9966";
+const exec = require('child-process-promise').exec;
 
 class PurplePlatform extends Platform {
   getName() {
