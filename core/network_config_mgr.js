@@ -86,7 +86,7 @@ class NetworkConfigManager {
         } 
         const wpaCliPath = platform.getWpaCliBinPath();
         const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
-        const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} list_networks | tail +3`).then(result => result.stdout.trim().split('\n').map(line => {
+        const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} list_networks | tail -n +3`).then(result => result.stdout.trim().split('\n').map(line => {
           const [id, ssid, bssid, flags] = line.split('\t', 4);
           return {id, ssid, bssid, flags};
         })).catch(err => []);

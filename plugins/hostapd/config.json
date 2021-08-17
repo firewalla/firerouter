@@ -9,11 +9,6 @@
     "ieee80211d": 1,
     "ieee80211n": 1,
     "ieee80211ac": 1,
-    "wpa": 2,
-    "rsn_pairwise": "CCMP",
-    "auth_algs": 1,
-    "wpa_pairwise": "TKIP",
-    "wpa_key_mgmt": "WPA-PSK",
     "max_num_sta": 10,
     "beacon_int": 500,
     "wmm_enabled": 1
