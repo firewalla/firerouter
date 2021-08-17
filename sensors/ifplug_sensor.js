@@ -25,13 +25,20 @@ const PlatformLoader = require('../platform/PlatformLoader.js')
 const platform = PlatformLoader.getPlatform()
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
-const ethernetConnections = {}
+const ifStates = {}
 
 class IfPlugSensor extends Sensor {
 
   static async prepare() {
     await exec(`sudo rm -rf /etc/ifplugd/action.d/*`).catch((err) => {});
     await exec(`sudo cp ${ifupdownPublishScript} /etc/ifplugd/action.d/`).catch((err) => {});
+    try {
+        ifStates.eth0 = await exec("ip --br link show dev eth0|awk '{print $2}'").then(result => result.stdout.trim());
+        ifStates.eth1 = await exec("ip --br link show dev eth1|awk '{print $2}'").then(result => result.stdout.trim());
+    } catch (err) {
+        this.log.error("Failed to get initial state of eth0 or eth1",err);
+    }
+    this.log.info("initial ifStates:",ifStates);
   }
 
   async run() {
@@ -51,8 +58,9 @@ class IfPlugSensor extends Sensor {
       switch (channel) {
         case "ifup": {
           const iface = message;
-          ethernetConnections[iface] = "up"
-          if ( ethernetConnections.eth0 === "up" || ethernetConnections.eth1 === "up" ) {
+          ifStates[iface] = "UP"
+          this.log.info("ifStates:",ifStates);
+          if ( ifStates.eth0 === "UP" || ifStates.eth1 === "UP" ) {
               platform.ledNormalVisibleStop();
           }
           const intfPlugin = pl.getPluginInstance("interface", iface);
@@ -73,8 +81,9 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
-          ethernetConnections[iface] = "down"
-          if ( ethernetConnections.eth0 === "down" && ethernetConnections.eth1 === "down" ) {
+          ifStates[iface] = "DOWN"
+          this.log.info("ifStates:",ifStates);
+          if ( ifStates.eth0 === "DOWN" && ifStates.eth1 === "DOWN" ) {
             platform.ledNormalVisibleStart();
           }
           const intfPlugin = pl.getPluginInstance("interface", iface);
