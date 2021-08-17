@@ -32,13 +32,6 @@ class IfPlugSensor extends Sensor {
   static async prepare() {
     await exec(`sudo rm -rf /etc/ifplugd/action.d/*`).catch((err) => {});
     await exec(`sudo cp ${ifupdownPublishScript} /etc/ifplugd/action.d/`).catch((err) => {});
-    try {
-        ifStates.eth0 = await exec("ip --br link show dev eth0|awk '{print $2}'").then(result => result.stdout.trim());
-        ifStates.eth1 = await exec("ip --br link show dev eth1|awk '{print $2}'").then(result => result.stdout.trim());
-    } catch (err) {
-        this.log.error("Failed to get initial state of eth0 or eth1",err);
-    }
-    this.log.info("initial ifStates:",ifStates);
   }
 
   async run() {
@@ -52,6 +45,13 @@ class IfPlugSensor extends Sensor {
         this.log.error(`Failed to start ifplugd on ${iface}`);
       });
     }
+    try {
+        ifStates.eth0 = await exec("ip --br link show dev eth0|awk '{print $2}'").then(result => result.stdout.trim());
+        ifStates.eth1 = await exec("ip --br link show dev eth1|awk '{print $2}'").then(result => result.stdout.trim());
+    } catch (err) {
+        this.log.error("Failed to get initial state of eth0 or eth1",err);
+    }
+    this.log.info("initial ifStates:",ifStates);
 
     sclient.on("message", (channel, message) => {
       const EVENT_STATE_TYPE = "ethernet_state";
