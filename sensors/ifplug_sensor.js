@@ -25,13 +25,13 @@ const PlatformLoader = require('../platform/PlatformLoader.js')
 const platform = PlatformLoader.getPlatform()
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const ethernetConnections = {}
 
 class IfPlugSensor extends Sensor {
 
   static async prepare() {
     await exec(`sudo rm -rf /etc/ifplugd/action.d/*`).catch((err) => {});
     await exec(`sudo cp ${ifupdownPublishScript} /etc/ifplugd/action.d/`).catch((err) => {});
-    this.ethernetConnections = {}
   }
 
   async run() {
@@ -51,8 +51,8 @@ class IfPlugSensor extends Sensor {
       switch (channel) {
         case "ifup": {
           const iface = message;
-          this.ethernetConnections[iface] = "up"
-          if ( this.ethernetConnections.eth0 === "up" || this.ethernetConnections.eth1 === "up" ) {
+          ethernetConnections[iface] = "up"
+          if ( ethernetConnections.eth0 === "up" || ethernetConnections.eth1 === "up" ) {
               platform.ledNormalVisibleStop();
           }
           const intfPlugin = pl.getPluginInstance("interface", iface);
@@ -73,8 +73,8 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
-          this.ethernetConnections[iface] = "down"
-          if ( this.ethernetConnections.eth0 === "down" && this.ethernetConnections.eth1 === "down" ) {
+          ethernetConnections[iface] = "down"
+          if ( ethernetConnections.eth0 === "down" && ethernetConnections.eth1 === "down" ) {
             platform.ledNormalVisibleStart();
           }
           const intfPlugin = pl.getPluginInstance("interface", iface);
