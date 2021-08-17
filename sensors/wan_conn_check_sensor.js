@@ -63,6 +63,23 @@ class WanConnCheckSensor extends Sensor {
       const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
       const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
       const forceState = (extraConf && extraConf.forceState) || undefined;
+
+      const carrierState = await wanIntfPlugin.carrierState();
+
+      if (carrierState === 0) {
+        this.log.error(`Carrier is not connected on interface ${wanIntfPlugin.name}, directly mark as non-active`);
+        active = false;
+        failures.push({type: "carrier"});
+        const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK,
+                                   {intf: wanIntfPlugin.name,
+                                    active: active,
+                                    forceState: forceState,
+                                    failures: failures});
+        event.suppressLogging(e);
+        wanIntfPlugin.propagateEvent(e);
+        return;
+      }
+      
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
@@ -97,6 +114,7 @@ class WanConnCheckSensor extends Sensor {
           active = false;
         }
       });
+
       if (active && dnsTestEnabled) {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
         const ip4s = await wanIntfPlugin.getIPv4Addresses();
