@@ -21,9 +21,12 @@ const exec = require('child-process-promise').exec;
 const ncm = require('../core/network_config_mgr.js');
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
+const PlatformLoader = require('../platform/PlatformLoader.js')
+const platform = PlatformLoader.getPlatform()
 const EventConstants = require('../event/EventConstants.js');
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const ifStates = {}
 
 class IfPlugSensor extends Sensor {
 
@@ -43,11 +46,23 @@ class IfPlugSensor extends Sensor {
         this.log.error(`Failed to start ifplugd on ${iface}`);
       });
     }
+    try {
+        ifStates.eth0 = await exec("ip --br link show dev eth0|awk '{print $2}'").then(result => result.stdout.trim());
+        ifStates.eth1 = await exec("ip --br link show dev eth1|awk '{print $2}'").then(result => result.stdout.trim());
+    } catch (err) {
+        this.log.error("Failed to get initial state of eth0 or eth1",err);
+    }
+    this.log.info("initial ifStates:",ifStates);
 
     sclient.on("message", (channel, message) => {
       switch (channel) {
         case "ifup": {
           const iface = message;
+          ifStates[iface] = "UP"
+          this.log.info("ifStates:",ifStates);
+          if ( ifStates.eth0 === "UP" || ifStates.eth1 === "UP" ) {
+              platform.ledNormalVisibleStop();
+          }
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
@@ -67,6 +82,11 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
+          ifStates[iface] = "DOWN"
+          this.log.info("ifStates:",ifStates);
+          if ( ifStates.eth0 === "DOWN" && ifStates.eth1 === "DOWN" ) {
+            platform.ledNormalVisibleStart();
+          }
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
