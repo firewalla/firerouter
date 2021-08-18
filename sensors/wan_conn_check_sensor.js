@@ -63,40 +63,52 @@ class WanConnCheckSensor extends Sensor {
       const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
       const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
       const forceState = (extraConf && extraConf.forceState) || undefined;
-      await Promise.all(pingTestIP.map(async (ip) => {
-        let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
-        return exec(cmd).then((result) => {
-          if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
-            this.log.warn(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
-            failures.push({type: "ping", target: ip});
-            era.addStateEvent(EventConstants.EVENT_PING_STATE, wanIntfPlugin.name+"-"+ip, 1, {
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
-            });
-            return false;
-          } else
-            era.addStateEvent(EventConstants.EVENT_PING_STATE, wanIntfPlugin.name+"-"+ip, 0, {
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate":Number(result.stdout.trim())/pingTestCount
-            });
+
+      const carrierState = await wanIntfPlugin.carrierState();
+
+      if (carrierState !== "1") {
+        this.log.error(`Carrier is not connected on interface ${wanIntfPlugin.name}, directly mark as non-active`);
+        active = false;
+        failures.push({type: "carrier"});
+      }
+      
+      if (active) {
+        await Promise.all(pingTestIP.map(async (ip) => {
+          let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+          return exec(cmd).then((result) => {
+            if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
+              this.log.warn(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
+              failures.push({type: "ping", target: ip});
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, wanIntfPlugin.name+"-"+ip, 1, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+              });
+              return false;
+            } else
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, wanIntfPlugin.name+"-"+ip, 0, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate":Number(result.stdout.trim())/pingTestCount
+              });
             return true;
-        }).catch((err) => {
-          this.log.error(`Failed to do ping test to ${ip} on ${wanIntfPlugin.name}`, err.message);
-          failures.push({type: "ping", target: ip});
-          return false;
+          }).catch((err) => {
+            this.log.error(`Failed to do ping test to ${ip} on ${wanIntfPlugin.name}`, err.message);
+            failures.push({type: "ping", target: ip});
+            return false;
+          });
+        })).then(results => {
+          if (!results.some(result => result === true)) {
+            this.log.error(`Ping test failed to all ping test targets on ${wanIntfPlugin.name}`);
+            active = false;
+          }
         });
-      })).then(results => {
-        if (!results.some(result => result === true)) {
-          this.log.error(`Ping test failed to all ping test targets on ${wanIntfPlugin.name}`);
-          active = false;
-        }
-      });
+      }
+
       if (active && dnsTestEnabled) {
         const nameservers = await wanIntfPlugin.getDNSNameservers();
         const ip4s = await wanIntfPlugin.getIPv4Addresses();

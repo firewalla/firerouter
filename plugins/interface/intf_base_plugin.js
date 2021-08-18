@@ -687,6 +687,12 @@ class InterfaceBasePlugin extends Plugin {
     return ip4s;
   }
 
+  // use a dedicated carrier state for fast processing
+  async carrierState() {
+    const state = await this._getSysFSClassNetValue("carrier");
+    return state;
+  }
+
   async state() {
     let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns] = await Promise.all([
       this._getSysFSClassNetValue("address"),
