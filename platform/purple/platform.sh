@@ -1,4 +1,5 @@
 NETWORK_SETUP=yes
+NEED_FIRESTATUS=true
 
 function get_pppoe_rps_cpus {
   echo "30"
