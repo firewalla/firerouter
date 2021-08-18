@@ -21,15 +21,31 @@ const exec = require('child-process-promise').exec;
 const ncm = require('../core/network_config_mgr.js');
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
+const PlatformLoader = require('../platform/PlatformLoader.js')
+const platform = PlatformLoader.getPlatform()
 const EventConstants = require('../event/EventConstants.js');
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const ifStates = {}
 
 class IfPlugSensor extends Sensor {
 
   static async prepare() {
     await exec(`sudo rm -rf /etc/ifplugd/action.d/*`).catch((err) => {});
     await exec(`sudo cp ${ifupdownPublishScript} /etc/ifplugd/action.d/`).catch((err) => {});
+  }
+
+  async toggleLedNormalVisible() {
+    const etherCarrierDetected = Object.keys(ifStates).some(iface => {
+      const intfPlugin = pl.getPluginInstance("interface", iface);
+      if (intfPlugin && intfPlugin.constructor.name === "PhyInterfacePlugin" && ifStates[iface] === 1)
+        return true;
+      return false;
+    });
+    if (etherCarrierDetected)
+      await platform.ledNormalVisibleStop();
+    else
+      await platform.ledNormalVisibleStart();
   }
 
   async run() {
@@ -42,7 +58,14 @@ class IfPlugSensor extends Sensor {
       await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay}`).catch((err) => {
         this.log.error(`Failed to start ifplugd on ${iface}`);
       });
+      ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);
     }
+    this.log.info("initial ifStates:",ifStates);
+    setTimeout(() => {
+      this.toggleLedNormalVisible().catch((err) => {
+        this.log.error("Failed to toggle led visible", err.message);
+      });
+    }, 60000)
 
     sclient.on("message", (channel, message) => {
       switch (channel) {
@@ -61,8 +84,14 @@ class IfPlugSensor extends Sensor {
             intfPlugin.propagateEvent(e);
           }
           // filter out VPN interface
-          if (intfPlugin.constructor.name === "PhyInterfacePlugin")
+          if (intfPlugin && intfPlugin.constructor.name === "PhyInterfacePlugin") {
+            ifStates[iface] = 1;
+            this.log.info("ifStates:",ifStates);
             era.addStateEvent(EventConstants.EVENT_ETHER_STATE, iface, 0);
+          }
+          this.toggleLedNormalVisible().catch((err) => {
+            this.log.error("Failed to toggle led visible", err.message);
+          });
           break;
         }
         case "ifdown": {
@@ -80,8 +109,14 @@ class IfPlugSensor extends Sensor {
             intfPlugin.propagateEvent(e);
           }
           // ethernet state change only generated on physical interfaces
-          if (intfPlugin.constructor.name === "PhyInterfacePlugin")
+          if (intfPlugin && intfPlugin.constructor.name === "PhyInterfacePlugin") {
+            ifStates[iface] = 0;
+            this.log.info("ifStates:",ifStates);
             era.addStateEvent(EventConstants.EVENT_ETHER_STATE, iface, 1);
+          }
+          this.toggleLedNormalVisible().catch((err) => {
+            this.log.error("Failed to toggle led visible", err.message);
+          });
           break;
         }
         default:
