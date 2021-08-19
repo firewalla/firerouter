@@ -704,10 +704,11 @@ class RoutingPlugin extends Plugin {
         }
         if (changeDesc) {
           if (changeActiveWanNeeded) {
+            this.processWANConnChange();
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
             changeDesc.currentStatus = this.getWANConnStates();
-            this.processWANConnChanged(changeDesc);
+            this.publishWANConnChange(changeDesc);
           }   
         }
       }
@@ -737,7 +738,7 @@ class RoutingPlugin extends Plugin {
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
             desc.currentStatus = this.getWANConnStates();
-            this.processWANConnChanged(desc);
+            this.publishWANConnChange(desc);
           }
         }
         this._pendingChangeDescs = [];
@@ -772,12 +773,14 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  async processWANConnChanged(changeDesc) {
+  async publishWANConnChange(changeDesc) {
     this.log.info("publish WAN :",changeDesc);
 
     // publish to redis db used by Firewalla
     await pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
 
+  async processWANConnChange(changeDesc) {
     const state = this.isAnyWanConnected();
     const anyUp = state && state.connected;
     const lastAnyUp = this.lastAnyUp;
