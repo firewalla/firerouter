@@ -831,7 +831,7 @@ class InterfaceBasePlugin extends Plugin {
     }
     return {
       active: active, 
-      forceState: carrierResult === true ? forceState : null, // do not honor forceState if carrier is not detected at all
+      forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
