@@ -31,6 +31,8 @@ const uuid = require('uuid');
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
 const event = require('../../core/event.js');
+const era = require('../../event/EventRequestApi.js');
+const EventConstants = require('../../event/EventConstants.js');
 
 Promise.promisifyAll(fs);
 
@@ -691,6 +693,150 @@ class InterfaceBasePlugin extends Plugin {
   async carrierState() {
     const state = await this._getSysFSClassNetValue("carrier");
     return state;
+  }
+
+  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
+    if (!this.isWAN()) {
+      this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
+      return null;
+    }
+    const extraConf = this.networkConfig && this.networkConfig.extra;
+    const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
+    const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
+    const output = await exec(`curl -sq -m30 -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
+      this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
+      return null;
+    });
+    if (!output)
+      return null;
+    const [statusCode, redirectURL] = output.split(',', 2);
+    return {
+      statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
+      redirectURL: redirectURL,
+      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode
+    };
+  }
+
+  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com") {
+    if (!this.isWAN()) {
+      this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
+      return null;
+    }
+    const failures = [];
+    let active = true;
+    let carrierResult = null;
+    let pingResult = null;
+    let dnsResult = null;
+    const extraConf = this.networkConfig && this.networkConfig.extra;
+    let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+    let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
+    const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
+    const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
+    const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
+    const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
+    if (_.isString(pingTestIP))
+      pingTestIP = [pingTestIP];
+    if (pingTestIP.length > 3) {
+      this.log.warn(`Number of ping test target is greater than 3 on ${this.name}, will only use the first 3 for testing`);
+      pingTestIP = pingTestIP.slice(0, 3);
+    }
+    const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
+    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
+    const forceState = (extraConf && extraConf.forceState) || undefined;
+
+    const carrierState = await this.carrierState();
+    if (carrierState !== "1") {
+      this.log.error(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
+      active = false;
+      carrierResult = false;
+      failures.push({type: "carrier"});
+    } else
+      carrierResult = true;
+
+    if (active && pingTestEnabled) {
+      await Promise.all(pingTestIP.map(async (ip) => {
+        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+        return exec(cmd).then((result) => {
+          if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
+            this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
+            failures.push({type: "ping", target: ip});
+            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
+              "wan_test_ip":ip,
+              "wan_intf_name":wanName,
+              "wan_intf_uuid":wanUUID,
+              "ping_test_count":pingTestCount,
+              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+            });
+            return false;
+          } else
+            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
+              "wan_test_ip":ip,
+              "wan_intf_name":wanName,
+              "wan_intf_uuid":wanUUID,
+              "ping_test_count":pingTestCount,
+              "success_rate":Number(result.stdout.trim())/pingTestCount
+            });
+          return true;
+        }).catch((err) => {
+          this.log.error(`Failed to do ping test to ${ip} on ${this.name}`, err.message);
+          failures.push({type: "ping", target: ip});
+          return false;
+        });
+      })).then(results => {
+        if (!results.some(result => result === true)) {
+          this.log.error(`Ping test failed to all ping test targets on ${this.name}`);
+          pingResult = false;
+          active = false;
+        } else
+          pingResult = true;
+      });
+    }
+
+    if (active && dnsTestEnabled) {
+      const nameservers = await this.getDNSNameservers();
+      const ip4s = await this.getIPv4Addresses();
+      if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
+        const srcIP = ip4s[0].split('/')[0];
+        await Promise.all(nameservers.map(async (nameserver) => {
+          const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
+          const result = await exec(cmd).then((result) => {
+            if (!result || !result.stdout || result.stdout.trim().length === 0)  {
+              this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${this.name}`);
+              failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
+              return false;
+            } else {
+              return true;
+            }
+          }).catch((err) => {
+            this.log.error(`Failed to do DNS test using ${nameserver} on ${this.name}`, err.message);
+            failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
+            return false;
+          });
+          era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, result ? 0 : 1, {
+            "wan_intf_name":wanName,
+            "wan_intf_uuid":wanUUID,
+            "name_server":nameserver,
+            "dns_test_domain":dnsTestDomain
+          });
+          return result;
+        })).then(results => {
+          if (!results.some(result => result === true)) {
+            this.log.error(`DNS test failed on all nameservers on ${this.name}`);
+            dnsResult = false;
+            active = false;
+          } else
+            dnsResult = true;
+        });
+      }
+    }
+    return {
+      active: active, 
+      forceState: carrierResult === true ? forceState : null, // do not honor forceState if carrier is not detected at all
+      carrier: carrierResult,
+      ping: pingResult,
+      dns: dnsResult,
+      failures: failures
+    };
   }
 
   async state() {
