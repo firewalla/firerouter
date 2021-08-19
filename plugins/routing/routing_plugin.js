@@ -30,6 +30,8 @@ const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
+const PlatformLoader = require('../../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
@@ -705,7 +707,7 @@ class RoutingPlugin extends Plugin {
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
             changeDesc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(changeDesc);
+            this.processWANConnChanged(changeDesc);
           }   
         }
       }
@@ -735,7 +737,7 @@ class RoutingPlugin extends Plugin {
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
             desc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(desc);
+            this.processWANConnChanged(desc);
           }
         }
         this._pendingChangeDescs = [];
@@ -770,7 +772,7 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  schedulePublishWANConnChanged(changeDesc) {
+  processWANConnChanged(changeDesc) {
     this.log.info("schedule publish WAN :",changeDesc);
     // publish to redis db used by Firewalla
     setTimeout(async () => {
@@ -787,10 +789,12 @@ class RoutingPlugin extends Plugin {
     this.lastAnyUp = anyUp;
 
     if(anyUp) {
-      this.log.info("at least one wan is back online, publishing redis message...");
+      this.log.info("at least one wan is back online, publishing redis message and set led...");
+      platform.ledAnyNetworkUp();
       pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
     } else {
-      this.log.info("all wan are down, publishing redis message...");
+      this.log.info("all wan are down, publishing redis message and set led...");
+      platform.ledAllNetworkDown();
       pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
     }
   }
