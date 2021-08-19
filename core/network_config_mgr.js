@@ -138,6 +138,22 @@ class NetworkConfigManager {
     });
   }
 
+  async checkWanConnectivity(iface) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const intfPlugin = pluginLoader.getPluginInstance("interface", iface);
+    if (!intfPlugin)
+      throw new Error(`Interface ${iface} is not found in network config`);
+    if (!intfPlugin.isWAN())
+      throw new Error(`Interface ${iface} is not a WAN interface`);
+    const result = await intfPlugin.checkWanConnectivity();
+    if (result && result.active === true) {
+      const httpResult = await intfPlugin.checkHttpStatus();
+      if (httpResult)
+        result.http = httpResult;
+    }
+    return result;
+  }
+
   async getWlanAvailable(intf) {
     const promise = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
     const cp = promise.childProcess
