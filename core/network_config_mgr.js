@@ -154,6 +154,17 @@ class NetworkConfigManager {
     return result;
   }
 
+  async isAnyWanConnected() {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
+    if (routingPlugin) {
+      const states = routingPlugin.getWANConnStates();
+      const readyWans = states.filter((s) => s.ready);
+      return !_.isEmpty(readyWans);
+    }
+    return null;
+  }
+
   async getWlanAvailable(intf) {
     const promise = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
     const cp = promise.childProcess

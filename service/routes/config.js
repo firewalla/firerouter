@@ -65,6 +65,15 @@ router.post('/wan/:intf/connectivity', jsonParser, async (req, res, next) => {
   });
 });
 
+router.get('/wan/connected', async (req, res, next) => {
+  try {
+    const connected = await ncm.isAnyWanConnected();
+    res.status(200).json({connected});
+  } catch(err) {
+    res.status(500).json({errors: [err.message]});
+  }
+});
+
 router.post('/wlan/switch_wifi/:intf',
   jsonParser,
   async (req, res, next) => {
