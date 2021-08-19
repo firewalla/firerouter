@@ -22,6 +22,7 @@ const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
 const era = require('../event/EventRequestApi.js');
 const EventConstants = require('../event/EventConstants.js');
+const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const _ = require('lodash');
 
 class WanConnCheckSensor extends Sensor {
@@ -37,6 +38,33 @@ class WanConnCheckSensor extends Sensor {
         });
       }, 20000);
     }, 60000);
+    this.hookOnInterfaceEvents();
+  }
+
+  // run immediately when interface is up/down
+  hookOnInterfaceEvents() {
+    sclient.on("message", (channel, message) => {
+      switch (channel) {
+      case "ifup": {
+        setTimeout(() => {
+          this._checkWanConnectivity().catch((err) => {
+            this.log.error("Failed to do WAN connectivity check", err.message);
+          });
+        }, 5000); // after 5 seconds hopefully interface can get ip address
+        break;
+      }
+      case "ifdown": {
+        this._checkWanConnectivity().catch((err) => {
+          this.log.error("Failed to do WAN connectivity check", err.message);
+        });
+        break;
+      }
+        default:
+      }
+    });
+
+    sclient.subscribe("ifup");
+    sclient.subscribe("ifdown");
   }
 
   async _checkWanConnectivity() {
