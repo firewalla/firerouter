@@ -772,12 +772,11 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  processWANConnChanged(changeDesc) {
-    this.log.info("schedule publish WAN :",changeDesc);
+  async processWANConnChanged(changeDesc) {
+    this.log.info("publish WAN :",changeDesc);
+
     // publish to redis db used by Firewalla
-    setTimeout(async () => {
-      pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
-    }, 10000);
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
 
     const state = this.isAnyWanConnected();
     const anyUp = state && state.connected;
@@ -790,12 +789,12 @@ class RoutingPlugin extends Plugin {
 
     if(anyUp) {
       this.log.info("at least one wan is back online, publishing redis message and set led...");
-      platform.ledAnyNetworkUp();
-      pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
+      await platform.ledAnyNetworkUp();
+      await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
     } else {
       this.log.info("all wan are down, publishing redis message and set led...");
-      platform.ledAllNetworkDown();
-      pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
+      await platform.ledAllNetworkDown();
+      await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
     }
   }
 
