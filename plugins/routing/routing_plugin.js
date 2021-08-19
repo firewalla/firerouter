@@ -776,6 +776,40 @@ class RoutingPlugin extends Plugin {
     setTimeout(async () => {
       pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
     }, 10000);
+
+    const state = this.isAnyWanConnected();
+    const anyUp = state && state.connected;
+    const lastAnyUp = this.lastAnyUp;
+    if (anyUp === lastAnyUp) {
+      return;
+    }
+
+    this.lastAnyUp = anyUp;
+
+    if(anyUp) {
+      this.log.info("at least one wan is back online, publishing redis message...");
+      pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
+    } else {
+      this.log.info("all wan are down, publishing redis message...");
+      pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
+    }
+  }
+
+  isAnyWanConnected() {
+    const states = this.getWANConnStates();
+    let connected = false;
+    const subStates = {};
+    for(const intf in states) {
+      const state = states[intf];
+      if(state.ready) {
+        connected = true;
+      }
+      subStates[intf] = state.ready;
+    }
+    return {
+      connected,
+      wans: subStates
+    };
   }
 }
 

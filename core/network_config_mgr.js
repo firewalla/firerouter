@@ -19,7 +19,7 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const { exec, spawn } = require('child-process-promise')
+const { exec, spawn } = require('child-process-promise');
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
@@ -158,20 +158,7 @@ class NetworkConfigManager {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      const states = routingPlugin.getWANConnStates();
-      let connected = false;
-      const subStates = {};
-      for(const intf in states) {
-        const state = states[intf];
-        if(state.ready) {
-          connected = true;
-        }
-        subStates[intf] = state.ready;
-      }
-      return {
-        connected,
-        wans: subStates
-      };
+      return routingPlugin.isAnyWanConnected();
     }
     return null;
   }
