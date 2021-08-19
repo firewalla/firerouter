@@ -67,7 +67,7 @@ class WanConnCheckSensor extends Sensor {
       const carrierState = await wanIntfPlugin.carrierState();
 
       if (carrierState !== "1") {
-        this.log.error(`Carrier is not connected on interface ${wanIntfPlugin.name}, directly mark as non-active`);
+        this.log.warn(`Carrier is not connected on interface ${wanIntfPlugin.name}, directly mark as non-active`);
         active = false;
         failures.push({type: "carrier"});
       }
