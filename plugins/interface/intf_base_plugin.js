@@ -695,6 +695,28 @@ class InterfaceBasePlugin extends Plugin {
     return state;
   }
 
+  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
+    if (!this.isWAN()) {
+      this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
+      return null;
+    }
+    const extraConf = this.networkConfig && this.networkConfig.extra;
+    const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
+    const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
+    const output = await exec(`curl -sq -m30 -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
+      this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
+      return null;
+    });
+    if (!output)
+      return null;
+    const [statusCode, redirectURL] = output.split(',', 2);
+    return {
+      statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
+      redirectURL: redirectURL,
+      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode
+    };
+  }
+
   async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com") {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
