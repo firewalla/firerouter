@@ -746,7 +746,7 @@ class InterfaceBasePlugin extends Plugin {
 
     const carrierState = await this.carrierState();
     if (carrierState !== "1") {
-      this.log.error(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
+      this.log.warn(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
       active = false;
       carrierResult = false;
       failures.push({type: "carrier"});
