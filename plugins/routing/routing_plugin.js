@@ -629,17 +629,6 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  // if fail reason is carrier, directly meet the threshold, so that it can fail fast
-  getEffectiveFailurePoints(failures) {
-    for(const f of failures) {
-      if (f.type === 'carrier') {
-        return ON_OFF_THRESHOLD;
-      }
-    }
-
-    return 1;
-  }
-
   onEvent(e) {
     if (!event.isLoggingSuppressed(e))
       this.log.info(`Received event on ${this.name}`, e);
@@ -671,7 +660,7 @@ class RoutingPlugin extends Plugin {
           currentStatus.failureCount = 0;
         } else {
           currentStatus.successCount = 0;
-          currentStatus.failureCount += this.getEffectiveFailurePoints(failures);
+          currentStatus.failureCount++;
         }
         let changeActiveWanNeeded = false;
         let changeDesc = null;
