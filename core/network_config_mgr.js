@@ -159,8 +159,19 @@ class NetworkConfigManager {
     const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
     if (routingPlugin) {
       const states = routingPlugin.getWANConnStates();
-      const readyWans = states.filter((s) => s.ready);
-      return !_.isEmpty(readyWans);
+      let connected = false;
+      const subStates = {};
+      for(const intf in states) {
+        const state = states[intf];
+        if(state.ready) {
+          connected = true;
+        }
+        subStates[intf] = state.ready;
+      }
+      return {
+        connected,
+        wans: subStates
+      };
     }
     return null;
   }

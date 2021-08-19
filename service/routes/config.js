@@ -67,8 +67,8 @@ router.post('/wan/:intf/connectivity', jsonParser, async (req, res, next) => {
 
 router.get('/wan/connected', async (req, res, next) => {
   try {
-    const connected = await ncm.isAnyWanConnected();
-    res.status(200).json({connected});
+    const status = await ncm.isAnyWanConnected();
+    res.status(200).json(status);
   } catch(err) {
     res.status(500).json({errors: [err.message]});
   }
