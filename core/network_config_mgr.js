@@ -208,7 +208,19 @@ class NetworkConfigManager {
           ie.pairwises = ln.substring(20).trim().split(' ')
         }
         else if (ln.startsWith('* Authentication suites:')) {
-          ie.suites = ln.substring(25).trim().split(' ')
+          const splited = ln.substring(25).trim().split(' ')
+
+          ie.suites = []
+          let i = 0
+          while (i < splited.length) {
+            if (splited[i].includes('IEEE')) {
+              ie.suites.push(splited[i]  + " " + splited[i+1])
+              i += 2
+            } else {
+              ie.suites.push(splited[i])
+              i ++
+            }
+          }
         }
       } catch(err) {
         log.error('Error parsing line', line, '\n', err)
