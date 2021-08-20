@@ -28,6 +28,9 @@ const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
+
+const fsp = require('fs').promises
+
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 
 class NetworkConfigManager {
@@ -63,7 +66,7 @@ class NetworkConfigManager {
     return ns.getInterface(intf);
   }
 
-  async switchWifi(intf, ssid) {
+  async switchWifi(intf, ssid, params = {}) {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
         const iface = await ns.getInterface(intf);
@@ -91,10 +94,25 @@ class NetworkConfigManager {
           return {id, ssid, bssid, flags};
         })).catch(err => []);
         const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
-        const selectedNetwork = networks.find(n => n.ssid === ssid);
+        let selectedNetwork = networks.find(n => n.ssid === ssid);
         if (!selectedNetwork) {
-          done(null, [`ssid ${ssid} is not configured in ${intf} settings`]);
-          return;
+          log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
+          const networkId = await exec(`sudo ${wpaCliPath} -p ${socketDir} add_network | tail -n +2`).then((result) => result.stdout.trim()).catch((err) => null);
+          if (networkId === null) {
+            done(null, [`Failed to add new network ${ssid}`]);
+            return;
+          }  
+          selectedNetwork = {id: networkId, ssid: ssid, bssid: params.bssid, flags: null};
+        }
+        if (!params.hasOwnProperty("ssid"))
+          params.ssid = `"${ssid}"`;
+        const escapedParams = ["ssid", "psk", "identity", "password", "anonymous_identity", "phase1", "phase2", "sae_password"];
+        for (const key of Object.keys(params)) {
+          const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} set_network ${selectedNetwork.id} ${key} "${escapedParams.includes(key) ? "\\" : ""}${params[key]}${escapedParams.includes(key) ? "\\" : ""}"`).then(() => null).catch((err) => err.message);
+          if (error) {
+            done(null, [error]);
+            return;
+          }
         }
         let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
         if (error) {
@@ -168,6 +186,15 @@ class NetworkConfigManager {
     const cp = promise.childProcess
     const rl = readline.createInterface({input: cp.stdout});
 
+    const config = await this.getActiveConfig()
+    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+
+    const selfWlanMacs = []
+    for (const intf of hostapdIntf) {
+      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
+    }
+
     const results = []
     let wlan, ie
 
@@ -221,7 +248,19 @@ class NetworkConfigManager {
           ie.pairwises = ln.substring(20).trim().split(' ')
         }
         else if (ln.startsWith('* Authentication suites:')) {
-          ie.suites = ln.substring(25).trim().split(' ')
+          const splited = ln.substring(25).trim().split(' ')
+
+          ie.suites = []
+          let i = 0
+          while (i < splited.length) {
+            if (splited[i].includes('IEEE')) {
+              ie.suites.push(splited[i]  + " " + splited[i+1])
+              i += 2
+            } else {
+              ie.suites.push(splited[i])
+              i ++
+            }
+          }
         }
       } catch(err) {
         log.error('Error parsing line', line, '\n', err)
@@ -232,7 +271,7 @@ class NetworkConfigManager {
 
     results.push(wlan)
 
-    return _.sortBy(results, 'channel')
+    return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }
 
   async getActiveConfig() {
