@@ -172,9 +172,6 @@ class NetworkConfigManager {
       const rate = options.successRate || 0.5;
       const dns = options.testDomain || "github.com";
       result = await intfPlugin.checkWanConnectivity(targets, count, rate, dns);
-      if (!result || result.active !== true) {
-        return result;
-      }
     }
 
     if(!options.skipHttpCheck) {
