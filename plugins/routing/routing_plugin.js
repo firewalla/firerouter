@@ -357,6 +357,7 @@ class RoutingPlugin extends Plugin {
           default:
         }
         await this._refreshOutputSNATRules();
+        this.processWANConnChange(); // no need to await, call this func again to ensure led is set correctly
         done(null);
       }, function(err, ret) {
         if (err)
@@ -715,7 +716,7 @@ class RoutingPlugin extends Plugin {
         }
         if (changeDesc) {
           if (changeActiveWanNeeded) {
-            this.processWANConnChange();
+            this.processWANConnChange(); // no need to await
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
             changeDesc.currentStatus = this.getWANConnStates();
@@ -791,7 +792,7 @@ class RoutingPlugin extends Plugin {
     await pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
   }
 
-  async processWANConnChange(changeDesc) {
+  async processWANConnChange() {
     const state = this.isAnyWanConnected();
     const anyUp = state && state.connected;
     const lastAnyUp = this.lastAnyUp;
