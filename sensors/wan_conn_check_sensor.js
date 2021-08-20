@@ -45,8 +45,8 @@ class WanConnCheckSensor extends Sensor {
   hookOnInterfaceEvents() {
     sclient.on("message", (channel, message) => {
       switch (channel) {
-      case "dhclient.ip_change":
-      case "pppoe.ip_change":
+      // case "dhclient.ip_change":
+      // case "pppoe.ip_change":
       case "ifdown": {
         this._checkWanConnectivity().catch((err) => {
           this.log.error("Failed to do WAN connectivity check", err.message);
@@ -58,8 +58,8 @@ class WanConnCheckSensor extends Sensor {
     });
 
     sclient.subscribe("ifdown");
-    sclient.subscribe("dhclient.ip_change");
-    sclient.subscribe("pppoe.ip_change");
+    // sclient.subscribe("dhclient.ip_change");
+    // sclient.subscribe("pppoe.ip_change");
 
     // do not hook on ipv6 change yet; FIXME
     // sclient.subscribe("dhcpcd6.ip_change");

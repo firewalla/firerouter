@@ -144,7 +144,18 @@ class RoutingPlugin extends Plugin {
     }
   }
 
+  meterApplyActiveGlobalDefaultRouting() {
+    const now = new Date();
+    if(this.lastApplyTimestamp) {
+      const diff = Math.floor(now / 1000 - this.lastApplyTimestamp / 1000);
+      this.log.info(`applying active global default routing, ${diff} seconds since last time apply`);
+    }
+    this.lastApplyTimestamp = now;
+  }
+
   async _applyActiveGlobalDefaultRouting(inAsyncContext = false) {
+    this.meterApplyActiveGlobalDefaultRouting();
+    
     return new Promise((resolve, reject) => {
       // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
       lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async (done) => {
