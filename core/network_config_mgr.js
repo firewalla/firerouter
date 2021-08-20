@@ -28,6 +28,9 @@ const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
+
+const fsp = require('fs').promises
+
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 
 class NetworkConfigManager {
@@ -143,6 +146,15 @@ class NetworkConfigManager {
     const cp = promise.childProcess
     const rl = readline.createInterface({input: cp.stdout});
 
+    const config = await this.getActiveConfig()
+    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+
+    const selfWlanMacs = []
+    for (const intf of hostapdIntf) {
+      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
+    }
+
     const results = []
     let wlan, ie
 
@@ -207,7 +219,7 @@ class NetworkConfigManager {
 
     results.push(wlan)
 
-    return _.sortBy(results, 'channel')
+    return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }
 
   async getActiveConfig() {
