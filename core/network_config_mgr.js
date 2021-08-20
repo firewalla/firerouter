@@ -167,11 +167,7 @@ class NetworkConfigManager {
     let result = {};
     
     if(!options.skipBasicCheck) {
-      const targets = options.testIPs || ["1.1.1.1", "8.8.8.8", "9.9.9.9"];
-      const count = options.testIPCount || 4;
-      const rate = options.successRate || 0.5;
-      const dns = options.testDomain || "github.com";
-      result = await intfPlugin.checkWanConnectivity(targets, count, rate, dns);
+      result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 4, 0.5, "github.com", options);
     }
 
     if(!options.skipHttpCheck) {

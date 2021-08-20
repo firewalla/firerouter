@@ -717,7 +717,7 @@ class InterfaceBasePlugin extends Plugin {
     };
   }
 
-  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com") {
+  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
       return null;
@@ -727,7 +727,7 @@ class InterfaceBasePlugin extends Plugin {
     let carrierResult = null;
     let pingResult = null;
     let dnsResult = null;
-    const extraConf = this.networkConfig && this.networkConfig.extra;
+    const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;

@@ -58,7 +58,7 @@ router.get('/wlan/:intf/available', async (req, res, _next) => {
 const jsonParser = bodyParser.json();
 
 router.post('/wan/:intf/connectivity', jsonParser, async (req, res, next) => {
-  await ncm.checkWanConnectivity(req.params.intf, res.body).then((result) => {
+  await ncm.checkWanConnectivity(req.params.intf, req.body).then((result) => {
     res.status(200).json(result);
   }).catch((err) => {
     res.status(500).json({errors: [err.message]});
