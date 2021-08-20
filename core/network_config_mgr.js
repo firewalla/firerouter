@@ -63,7 +63,7 @@ class NetworkConfigManager {
     return ns.getInterface(intf);
   }
 
-  async switchWifi(intf, ssid) {
+  async switchWifi(intf, ssid, params = {}) {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
         const iface = await ns.getInterface(intf);
@@ -91,10 +91,25 @@ class NetworkConfigManager {
           return {id, ssid, bssid, flags};
         })).catch(err => []);
         const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
-        const selectedNetwork = networks.find(n => n.ssid === ssid);
+        let selectedNetwork = networks.find(n => n.ssid === ssid);
         if (!selectedNetwork) {
-          done(null, [`ssid ${ssid} is not configured in ${intf} settings`]);
-          return;
+          log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
+          const networkId = await exec(`sudo ${wpaCliPath} -p ${socketDir} add_network | tail -n +2`).then((result) => result.stdout.trim()).catch((err) => null);
+          if (networkId === null) {
+            done(null, [`Failed to add new network ${ssid}`]);
+            return;
+          }  
+          selectedNetwork = {id: networkId, ssid: ssid, bssid: params.bssid, flags: null};
+        }
+        if (!params.hasOwnProperty("ssid"))
+          params.ssid = `"${ssid}"`;
+        const escapedParams = ["ssid", "psk", "identity", "password", "anonymous_identity", "phase1", "phase2", "sae_password"];
+        for (const key of Object.keys(params)) {
+          const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} set_network ${selectedNetwork.id} ${key} "${escapedParams.includes(key) ? "\\" : ""}${params[key]}${escapedParams.includes(key) ? "\\" : ""}"`).then(() => null).catch((err) => err.message);
+          if (error) {
+            done(null, [error]);
+            return;
+          }
         }
         let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
         if (error) {
