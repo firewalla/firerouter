@@ -156,19 +156,29 @@ class NetworkConfigManager {
     });
   }
 
-  async checkWanConnectivity(iface) {
+  async checkWanConnectivity(iface, options = {}) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const intfPlugin = pluginLoader.getPluginInstance("interface", iface);
     if (!intfPlugin)
       throw new Error(`Interface ${iface} is not found in network config`);
     if (!intfPlugin.isWAN())
       throw new Error(`Interface ${iface} is not a WAN interface`);
-    const result = await intfPlugin.checkWanConnectivity();
-    if (result && result.active === true) {
+
+    let result = {};
+    
+    if(!options.skipBasicCheck) {
+      result = await intfPlugin.checkWanConnectivity();
+      if (!result || result.active !== true) {
+        return result;
+      }
+    }
+
+    if(!options.skipHttpCheck) {
       const httpResult = await intfPlugin.checkHttpStatus();
       if (httpResult)
         result.http = httpResult;
     }
+
     return result;
   }
 
