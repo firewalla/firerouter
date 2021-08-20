@@ -45,26 +45,26 @@ class WanConnCheckSensor extends Sensor {
   hookOnInterfaceEvents() {
     sclient.on("message", (channel, message) => {
       switch (channel) {
-      case "ifup": {
-        setTimeout(() => {
-          this._checkWanConnectivity().catch((err) => {
-            this.log.error("Failed to do WAN connectivity check", err.message);
-          });
-        }, 5000); // after 5 seconds hopefully interface can get ip address
-        break;
-      }
+      case "dhclient.ip_change":
+      case "pppoe.ip_change":
       case "ifdown": {
         this._checkWanConnectivity().catch((err) => {
           this.log.error("Failed to do WAN connectivity check", err.message);
         });
         break;
       }
-        default:
+      default:
       }
     });
 
-    sclient.subscribe("ifup");
     sclient.subscribe("ifdown");
+    sclient.subscribe("dhclient.ip_change");
+    sclient.subscribe("pppoe.ip_change");
+
+    // do not hook on ipv6 change yet; FIXME
+    // sclient.subscribe("dhcpcd6.ip_change");
+    // sclient.subscribe("dhcpcd6.pd_change");
+    // sclient.subscribe("pppoe.ipv6_up");
   }
 
   async _checkWanConnectivity() {
