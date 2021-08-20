@@ -19,6 +19,7 @@ const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const ncm = require('../../core/network_config_mgr')
 const platform = require('../../platform/PlatformLoader').getPlatform()
+const { delay } = require('../../util/util')
 
 const hostapdServiceFileTemplate = __dirname + "/firerouter_hostapd@.template.service";
 const hostapdScript = __dirname + "/hostapd.sh";
@@ -29,6 +30,8 @@ const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
 
 const pluginConfig = require('./config.json')
+
+const WLAN_AVAILABLE_RETRY = 3
 
 class HostapdPlugin extends Plugin {
 
@@ -94,32 +97,47 @@ class HostapdPlugin extends Plugin {
 
     if (!parameters.channel) {
       const availableChannels = pluginConfig.vendor[await platform.getWlanVendor()].channels
-
       const scores = {}
-      const availableWLANs = await ncm.getWlanAvailable(this.name)
-      for (const network of availableWLANs) {
-        const channelConfig = pluginConfig.channel[network.channel]
-        if (!channelConfig) continue
 
-        // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
-        for (const ch of channelConfig.ACI) {
-          if (!scores[ch]) scores[ch] = 0
-          scores[ch] += Math.pow(10, (network.signal/10)) * channelConfig.weight
+      let availableWLANs
+      for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
+        availableWLANs = await ncm.getWlanAvailable(this.name)
+        break; // stop on first successful call
+      } catch(err) {
+        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
+        await delay(2)
+      }
+
+      if (!Array.isArray(availableWLANs)) {
+        // 5G network is preferred
+        parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
+        this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
+      }
+      else {
+        for (const network of availableWLANs) {
+          const channelConfig = pluginConfig.channel[network.channel]
+          if (!channelConfig) continue
+
+          // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
+          for (const ch of channelConfig.ACI) {
+            if (!scores[ch]) scores[ch] = 0
+            scores[ch] += Math.pow(10, (network.signal/10)) * channelConfig.weight
+          }
         }
+
+        // print debug log
+        // this.log.info('channel score chart')
+        // Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
+
+        let bestChannel = undefined
+        for (const ch of availableChannels) {
+          if (!bestChannel || scores[bestChannel] > scores[ch])
+            bestChannel = ch
+        }
+        this.log.info('Best channel is', bestChannel)
+
+        parameters.channel = bestChannel
       }
-
-      // print debug log
-      this.log.info('channel score chart')
-      Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
-
-      let bestChannel = undefined
-      for (const ch of availableChannels) {
-        if (!bestChannel || scores[bestChannel] > scores[ch])
-          bestChannel = ch
-      }
-      this.log.info('Best channel is', bestChannel)
-
-      parameters.channel = bestChannel
     }
 
     const channelConfig = pluginConfig.channel[parameters.channel]

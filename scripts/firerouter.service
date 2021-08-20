@@ -9,6 +9,8 @@ RestartSec=1
 WorkingDirectory=/home/pi/firerouter/service
 #ExecStart=/bin/bash -c '/home/pi/firerouter/bin/node bin/main.js >> /home/pi/.forever/router.log 2>&1'
 ExecStart=/bin/bash -c '/home/pi/firerouter/bin/node bin/main.js 2>&1 | tee -a /home/pi/.forever/router.log &>/dev/null'
+ExecStopPost=/home/pi/firerouter/scripts/post_stop_firerouter.sh
+ExecStartPost=/home/pi/firerouter/scripts/post_start_firerouter.sh
 
 [Install]
 WantedBy=multi-user.target

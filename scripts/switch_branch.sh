@@ -82,5 +82,14 @@ switch_branch $cur_branch $branch || exit 1
 # remove prepared flag file to trigger prepare_env during next init_network_config
 rm -f /dev/shm/firerouter.prepared
 
+if [[ $NETWORK_SETUP == "yes" ]]; then
+  sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
+  sudo cp /home/pi/firerouter/scripts/fireboot.service /etc/systemd/system/.
+else
+  sudo cp /home/pi/firerouter/scripts/fireboot_standalone.service /etc/systemd/system/fireboot.service
+fi
+sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
+sudo systemctl daemon-reload
+
 sync
 logger "FireRouter: SWITCH branch from $cur_branch to $branch"

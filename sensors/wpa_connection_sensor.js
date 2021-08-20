@@ -19,27 +19,48 @@ const r = require('../util/firerouter.js');
 const event = require('../core/event.js');
 const pl = require('../plugins/plugin_loader.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const exec = require('child-process-promise').exec;
+const platformLoader = require('../platform/PlatformLoader.js');
+const platform = platformLoader.getPlatform();
+const era = require('../event/EventRequestApi.js');
+const EventConstants = require('../event/EventConstants.js');
 
 class WPAConnectionSensor extends Sensor {
 
   async run() {
-    sclient.on("message", (channel, message) => {
+    sclient.on("message", async (channel, message) => {
       let eventType = null;
+      let wpaState = false;
       switch (channel) {
         case "wpa.connected": {
           eventType = event.EVENT_WPA_CONNECTED;
+          wpaState = true;
           break;
         }
         case "wpa.disconnected": {
           eventType = event.EVENT_WPA_DISCONNECTED;
+          wpaState = false;
           break;
         }
         default:
           return;
       }
-      const iface = message;
+      const [iface, wpaId] = message.split(',', 2);
+      const wpaCliPath = platform.getWpaCliBinPath();
       const intfPlugin = pl.getPluginInstance("interface", iface);
       if (intfPlugin) {
+        const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
+        let ssid = null;
+        if (wpaId !== undefined) {
+          ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} get_network ${wpaId} ssid | tail -n +2 | tr -d '"'`).then(result => result.stdout.trim()).catch((err) => null);
+        }
+        const ifaceName = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.name;
+        const ifaceUUID = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+        era.addStateEvent(EventConstants.EVENT_WPA_CONNECTION_STATE, iface, wpaState ? 0 : 1, {
+          "intf_name": ifaceName,
+          "intf_uuid": ifaceUUID,
+          "ssid": ssid
+        });
         const e = event.buildEvent(eventType, { intf: iface });
         intfPlugin.propagateEvent(e);
       }
