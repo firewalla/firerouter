@@ -168,6 +168,9 @@ class NetworkConfigManager {
     let result = {};
     
     result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 1, 0.5, "github.com", options);
+    if (result.dns === null) {
+      result.dns = false;
+    }
 
     const httpResult = await intfPlugin.checkHttpStatus();
     if (httpResult)
