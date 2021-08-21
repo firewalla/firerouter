@@ -730,6 +730,7 @@ class InterfaceBasePlugin extends Plugin {
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
+    let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
     const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
     const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
@@ -755,7 +756,7 @@ class InterfaceBasePlugin extends Plugin {
 
     if (active && pingTestEnabled) {
       await Promise.all(pingTestIP.map(async (ip) => {
-        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
