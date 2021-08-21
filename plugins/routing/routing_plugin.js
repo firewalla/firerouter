@@ -822,7 +822,7 @@ class RoutingPlugin extends Plugin {
       if(state.ready) {
         connected = true;
       }
-      subStates[intf] = state.ready;
+      subStates[intf] = {active: state.ready};
     }
     return {
       connected,

@@ -36,6 +36,7 @@ const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 class NetworkConfigManager {
   constructor() {
     if(instance === null) {
+      this.wanTestResult = {};
       instance = this;
     }
 
@@ -156,7 +157,7 @@ class NetworkConfigManager {
     });
   }
 
-  async checkWanConnectivity(iface, options = {}) {
+  async checkWanConnectivity(iface, options = {pingTestCount: 1}) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const intfPlugin = pluginLoader.getPluginInstance("interface", iface);
     if (!intfPlugin)
@@ -166,24 +167,46 @@ class NetworkConfigManager {
 
     let result = {};
     
-    if(!options.skipBasicCheck) {
-      result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 4, 0.5, "github.com", options);
-    }
+    result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 1, 0.5, "github.com", options);
 
-    if(!options.skipHttpCheck) {
-      const httpResult = await intfPlugin.checkHttpStatus();
-      if (httpResult)
-        result.http = httpResult;
-    }
+    const httpResult = await intfPlugin.checkHttpStatus();
+    if (httpResult)
+      result.http = httpResult;
+
+    result.ts = Math.floor(new Date() / 1000);
+
+    this.wanTestResult[iface] = result.ts;
 
     return result;
   }
 
-  async isAnyWanConnected() {
+  getWanTestResult() {
+    return this.wanTestResult;
+  }
+
+  async isAnyWanConnected(options = {}) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      return routingPlugin.isAnyWanConnected();
+      const overallStatus = routingPlugin.isAnyWanConnected();
+      const wans = overallStatus && overallStatus.wans;
+      if(options.live && !_.isEmpty(wans)) {
+        const promises = [];
+        const results = {};
+
+        for(const name in wans) {
+          let checkFunc = async () => {
+            const result = await this.checkWanConnectivity(name);
+            results[name] = result;
+          };
+          promises.push(checkFunc());
+        }
+        await Promise.all(promises);
+
+        overallStatus.wans = results;
+      }
+
+      return overallStatus;
     }
     return null;
   }
