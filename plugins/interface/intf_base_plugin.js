@@ -875,7 +875,7 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     if (this.isWAN()) {
       wanConnState = this._getWANConnState(this.name) || {};
-      wanConnState.http = this._wanStatus && this._wanStatus.http;
+      wanConnState.http = (this._wanStatus && this._wanStatus.http) || {};
     }
     return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState};
   }
