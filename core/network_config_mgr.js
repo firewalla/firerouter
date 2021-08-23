@@ -190,28 +190,39 @@ class NetworkConfigManager {
   async isAnyWanConnected(options = {}) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
-    if (routingPlugin) {
-      const overallStatus = routingPlugin.isAnyWanConnected();
-      const wans = overallStatus && overallStatus.wans;
-      if(options.live && !_.isEmpty(wans)) {
-        const promises = [];
-        const results = {};
+    if (!routingPlugin) {
+      return null;
+    }
 
-        for(const name in wans) {
-          let checkFunc = async () => {
-            const result = await this.checkWanConnectivity(name);
-            results[name] = result;
-          };
-          promises.push(checkFunc());
-        }
-        await Promise.all(promises);
-
-        overallStatus.wans = results;
-      }
-
+    const overallStatus = routingPlugin.isAnyWanConnected();
+    const wans = overallStatus && overallStatus.wans;
+    if(_.isEmpty(wans)) {
       return overallStatus;
     }
-    return null;
+
+    const results = {};
+
+    if(options.live) {
+      const promises = [];
+
+      for(const name in wans) {
+        let checkFunc = async () => {
+          const result = await this.checkWanConnectivity(name);
+          results[name] = result;
+        };
+        promises.push(checkFunc());
+      }
+
+      await Promise.all(promises);
+    } else {
+      for(const name in wans) {
+        const intfPlugin = pluginLoader.getPluginInstance("interface", name);
+        results[name] = intfPlugin.getWanStatus();
+      }
+    }
+
+    overallStatus.wans = results;
+    return overallStatus;
   }
 
   async getWlanAvailable(intf) {
