@@ -19,7 +19,7 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const { exec, spawn } = require('child-process-promise')
+const { exec, spawn } = require('child-process-promise');
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
@@ -36,6 +36,7 @@ const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 class NetworkConfigManager {
   constructor() {
     if(instance === null) {
+      this.wanTestResult = {};
       instance = this;
     }
 
@@ -156,20 +157,61 @@ class NetworkConfigManager {
     });
   }
 
-  async checkWanConnectivity(iface) {
+  async checkWanConnectivity(iface, options = {pingTestCount: 1}) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const intfPlugin = pluginLoader.getPluginInstance("interface", iface);
     if (!intfPlugin)
       throw new Error(`Interface ${iface} is not found in network config`);
     if (!intfPlugin.isWAN())
       throw new Error(`Interface ${iface} is not a WAN interface`);
-    const result = await intfPlugin.checkWanConnectivity();
-    if (result && result.active === true) {
-      const httpResult = await intfPlugin.checkHttpStatus();
-      if (httpResult)
-        result.http = httpResult;
+
+    let result = {};
+    
+    result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 1, 0.5, "github.com", options);
+    if (result.dns === null) {
+      result.dns = false;
     }
+
+    const httpResult = await intfPlugin.checkHttpStatus();
+    if (httpResult)
+      result.http = httpResult;
+
+    result.ts = Math.floor(new Date() / 1000);
+
+    this.wanTestResult[iface] = result.ts;
+
     return result;
+  }
+
+  getWanTestResult() {
+    return this.wanTestResult;
+  }
+
+  async isAnyWanConnected(options = {}) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
+    if (routingPlugin) {
+      const overallStatus = routingPlugin.isAnyWanConnected();
+      const wans = overallStatus && overallStatus.wans;
+      if(options.live && !_.isEmpty(wans)) {
+        const promises = [];
+        const results = {};
+
+        for(const name in wans) {
+          let checkFunc = async () => {
+            const result = await this.checkWanConnectivity(name);
+            results[name] = result;
+          };
+          promises.push(checkFunc());
+        }
+        await Promise.all(promises);
+
+        overallStatus.wans = results;
+      }
+
+      return overallStatus;
+    }
+    return null;
   }
 
   async getWlanAvailable(intf) {

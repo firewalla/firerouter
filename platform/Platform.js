@@ -43,6 +43,12 @@ class Platform {
 
   async ledNormalVisibleStop() {
   }
+
+  async ledAllNetworkDown() {
+  }
+
+  async ledAnyNetworkUp() {
+  }
 }
 
 module.exports = Platform;
