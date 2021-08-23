@@ -671,9 +671,10 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   _getWANConnState(name) {
+    const state = this._wanStatus || {};
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      return routingPlugin.getWANConnState(name);
+      state.routing = routingPlugin.getWANConnState(name);
     }
     return null;
   }
@@ -839,7 +840,8 @@ class InterfaceBasePlugin extends Plugin {
         });
       }
     }
-    return {
+
+    const result = {
       active: active, 
       forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
       carrier: carrierResult,
@@ -848,6 +850,12 @@ class InterfaceBasePlugin extends Plugin {
       failures: failures,
       ts: Math.floor(new Date() / 1000)
     };
+
+    if(this._wanStatus) {
+      this._wanStatus = Object.assign(this._wanStatus, result);
+    }
+
+    return result;
   }
 
   async state() {
