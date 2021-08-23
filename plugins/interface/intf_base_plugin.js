@@ -652,6 +652,7 @@ class InterfaceBasePlugin extends Plugin {
     await this.changeRoutingTables();
 
     if (this.isWAN()) {
+      this._wanStatus = {};
 
       await this.updateRouteForDNS();
 
@@ -710,11 +711,19 @@ class InterfaceBasePlugin extends Plugin {
     if (!output)
       return null;
     const [statusCode, redirectURL] = output.split(',', 2);
-    return {
+
+    const result = {
       statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
       redirectURL: redirectURL,
-      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode
+      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
+      ts: Math.floor(new Date() / 1000)
     };
+
+    if(this._wanStatus) {
+      this._wanStatus.http = result;
+    }
+
+    return result;
   }
 
   async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
@@ -830,14 +839,22 @@ class InterfaceBasePlugin extends Plugin {
         });
       }
     }
-    return {
+
+    const result = {
       active: active, 
       forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
-      failures: failures
+      failures: failures,
+      ts: Math.floor(new Date() / 1000)
     };
+
+    if(this._wanStatus) {
+      this._wanStatus = Object.assign(this._wanStatus, result);
+    }
+
+    return result;
   }
 
   async state() {
@@ -863,9 +880,12 @@ class InterfaceBasePlugin extends Plugin {
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
-    if (this.isWAN())
-      wanConnState = this._getWANConnState(this.name);
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState};
+    let wanTestResult = null;
+    if (this.isWAN()) {
+      wanConnState = this._getWANConnState(this.name) || {};
+      wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
+    }
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
   }
 
   onEvent(e) {
