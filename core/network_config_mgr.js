@@ -302,7 +302,7 @@ class NetworkConfigManager {
 
     await promise
 
-    results.push(wlan)
+    if (wlan) results.push(wlan)
 
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }

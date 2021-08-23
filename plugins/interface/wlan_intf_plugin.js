@@ -16,6 +16,7 @@
 'use strict';
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
+const ncm = require('../../core/network_config_mgr')
 
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
@@ -30,6 +31,8 @@ const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
+const WLAN_AVAILABLE_RETRY = 3
+
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
@@ -42,7 +45,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/wpa_supplicant`).catch((err) => {});
     await exec(`mkdir -p ${r.getRuntimeFolder()}/wpa_supplicant`).catch((err) => {});
     await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
-  } 
+  }
 
   static async installSystemService() {
     let content = await fs.readFileAsync(wpaSupplicantServiceFileTemplate, {encoding: 'utf8'});
@@ -101,18 +104,44 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     } else {
       this.log.warn(`Interface ${this.name} already exists`);
     }
-  
+
     if (this.networkConfig.wpaSupplicant) {
       const entries = [];
+
+      let availableWLANs
+      for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
+        availableWLANs = await ncm.getWlanAvailable(this.name)
+        break; // stop on first successful call
+      } catch(err) {
+        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
+        await delay(2)
+      }
+
       entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
       const networks = this.networkConfig.wpaSupplicant.networks || [];
       for (const network of networks) {
+
+        const prioritizedNetworks = availableWLANs
+          .filter(n => n.ssid == network.ssid.slice(1, -1) && n.channel > 30 && n.signal > -80)
+        if (prioritizedNetworks.length) {
+          entries.push("network={");
+          for (const key of Object.keys(network)) {
+            if (key == 'priority')
+              entries.push(`\tpriority=${network[key]+1}`);
+            else
+              entries.push(`\t${key}=${network[key]}`);
+          }
+          if (!network.priority) {
+            entries.push(`\tpriority=1`);
+          }
+          entries.push(`\tfreq_list=${prioritizedNetworks.map(p => p.freq).join(' ')}`);
+          entries.push("}\n");
+        }
         entries.push("network={");
         for (const key of Object.keys(network)) {
           entries.push(`\t${key}=${network[key]}`);
         }
-        entries.push("}");
-        entries.push('\n');
+        entries.push("}\n");
       }
       await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
 
