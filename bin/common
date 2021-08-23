@@ -2,6 +2,7 @@
 
 TEST_URLS='
     https://check.firewalla.com 204
+    http://cp.cloudflare.com 204
     http://clients3.google.com/generate_204 204
     https://www.gstatic.com/generate_204 204
 '
