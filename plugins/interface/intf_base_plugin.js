@@ -676,7 +676,7 @@ class InterfaceBasePlugin extends Plugin {
     if (routingPlugin) {
       state.routing = routingPlugin.getWANConnState(name);
     }
-    return null;
+    return state;
   }
 
   async getDNSNameservers() {
