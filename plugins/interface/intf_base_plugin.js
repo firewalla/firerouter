@@ -652,6 +652,7 @@ class InterfaceBasePlugin extends Plugin {
     await this.changeRoutingTables();
 
     if (this.isWAN()) {
+      this._wanStatus = {};
 
       await this.updateRouteForDNS();
 
@@ -710,11 +711,19 @@ class InterfaceBasePlugin extends Plugin {
     if (!output)
       return null;
     const [statusCode, redirectURL] = output.split(',', 2);
-    return {
+
+    const result = {
       statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
       redirectURL: redirectURL,
-      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode
+      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
+      ts: Math.floor(new Date() / 1000)
     };
+
+    if(this._wanStatus) {
+      this._wanStatus.http = result;
+    }
+
+    return result;
   }
 
   async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
@@ -836,7 +845,8 @@ class InterfaceBasePlugin extends Plugin {
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
-      failures: failures
+      failures: failures,
+      ts: Math.floor(new Date() / 1000)
     };
   }
 
@@ -863,8 +873,10 @@ class InterfaceBasePlugin extends Plugin {
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
-    if (this.isWAN())
-      wanConnState = this._getWANConnState(this.name);
+    if (this.isWAN()) {
+      wanConnState = this._getWANConnState(this.name) || {};
+      wanConnState.http = this._wanStatus && this._wanStatus.http;
+    }
     return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState};
   }
 
