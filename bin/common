@@ -5,6 +5,7 @@ TEST_URLS='
     http://cp.cloudflare.com 204
     http://clients3.google.com/generate_204 204
     https://www.gstatic.com/generate_204 204
+    http://detectportal.firefox.com/success.txt 200
 '
 
 init_network_config() {
