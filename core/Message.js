@@ -18,9 +18,13 @@
 const MSG_FR_CHANGE_APPLIED = "firerouter.change_applied";
 const MSG_FR_IFACE_CHANGE_APPLIED = "firerouter.iface_change_applied";
 const MSG_FR_WAN_CONN_CHANGED = "firerouter.wan_conn_changed";
+const MSG_FR_WAN_CONN_ANY_UP = "firerouter.wan_conn_any_up";
+const MSG_FR_WAN_CONN_ALL_DOWN = "firerouter.wan_conn_all_down";
 
 module.exports = {
   MSG_FR_CHANGE_APPLIED,
   MSG_FR_IFACE_CHANGE_APPLIED,
-  MSG_FR_WAN_CONN_CHANGED
+  MSG_FR_WAN_CONN_CHANGED,
+  MSG_FR_WAN_CONN_ALL_DOWN,
+  MSG_FR_WAN_CONN_ANY_UP
 }

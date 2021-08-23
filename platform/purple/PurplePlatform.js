@@ -60,6 +60,18 @@ class PurplePlatform extends Platform {
     });
   }
 
+  async ledAllNetworkDown() {
+    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
+  async ledAnyNetworkUp() {
+    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
 }
 
 module.exports = PurplePlatform;

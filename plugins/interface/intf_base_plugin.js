@@ -703,7 +703,7 @@ class InterfaceBasePlugin extends Plugin {
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const output = await exec(`curl -${testURL.startsWith("https") ? 'k' : ''}sq -m30 -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
+    const output = await exec(`curl -${testURL.startsWith("https") ? 'k' : ''}sq -m30 --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
@@ -717,7 +717,7 @@ class InterfaceBasePlugin extends Plugin {
     };
   }
 
-  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com") {
+  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
       return null;
@@ -727,9 +727,10 @@ class InterfaceBasePlugin extends Plugin {
     let carrierResult = null;
     let pingResult = null;
     let dnsResult = null;
-    const extraConf = this.networkConfig && this.networkConfig.extra;
+    const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
+    let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
     const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
     const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
@@ -746,7 +747,7 @@ class InterfaceBasePlugin extends Plugin {
 
     const carrierState = await this.carrierState();
     if (carrierState !== "1") {
-      this.log.error(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
+      this.log.warn(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
       active = false;
       carrierResult = false;
       failures.push({type: "carrier"});
@@ -755,7 +756,7 @@ class InterfaceBasePlugin extends Plugin {
 
     if (active && pingTestEnabled) {
       await Promise.all(pingTestIP.map(async (ip) => {
-        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);

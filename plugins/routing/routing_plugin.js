@@ -30,6 +30,8 @@ const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
+const PlatformLoader = require('../../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
@@ -142,7 +144,18 @@ class RoutingPlugin extends Plugin {
     }
   }
 
+  meterApplyActiveGlobalDefaultRouting() {
+    const now = new Date();
+    if(this.lastApplyTimestamp) {
+      const diff = Math.floor(now / 1000 - this.lastApplyTimestamp / 1000);
+      this.log.info(`applying active global default routing, ${diff} seconds since last time apply`);
+    }
+    this.lastApplyTimestamp = now;
+  }
+
   async _applyActiveGlobalDefaultRouting(inAsyncContext = false) {
+    this.meterApplyActiveGlobalDefaultRouting();
+    
     return new Promise((resolve, reject) => {
       // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
       lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async (done) => {
@@ -344,6 +357,7 @@ class RoutingPlugin extends Plugin {
           default:
         }
         await this._refreshOutputSNATRules();
+        this.processWANConnChange(); // no need to await, call this func again to ensure led is set correctly
         done(null);
       }, function(err, ret) {
         if (err)
@@ -702,10 +716,11 @@ class RoutingPlugin extends Plugin {
         }
         if (changeDesc) {
           if (changeActiveWanNeeded) {
+            this.processWANConnChange(); // no need to await
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
             changeDesc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(changeDesc);
+            this.publishWANConnChange(changeDesc);
           }   
         }
       }
@@ -735,7 +750,7 @@ class RoutingPlugin extends Plugin {
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
             desc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(desc);
+            this.publishWANConnChange(desc);
           }
         }
         this._pendingChangeDescs = [];
@@ -770,12 +785,49 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  schedulePublishWANConnChanged(changeDesc) {
-    this.log.info("schedule publish WAN :",changeDesc);
+  async publishWANConnChange(changeDesc) {
+    this.log.info("publish WAN :",changeDesc);
+
     // publish to redis db used by Firewalla
-    setTimeout(async () => {
-      pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
-    }, 10000);
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  async processWANConnChange() {
+    const state = this.isAnyWanConnected();
+    const anyUp = state && state.connected;
+    const lastAnyUp = this.lastAnyUp;
+    if (anyUp === lastAnyUp) {
+      return;
+    }
+
+    this.lastAnyUp = anyUp;
+
+    if(anyUp) {
+      this.log.info("at least one wan is back online, publishing redis message and set led...");
+      await platform.ledAnyNetworkUp();
+      await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
+    } else {
+      this.log.info("all wan are down, publishing redis message and set led...");
+      await platform.ledAllNetworkDown();
+      await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
+    }
+  }
+
+  isAnyWanConnected() {
+    const states = this.getWANConnStates();
+    let connected = false;
+    const subStates = {};
+    for(const intf in states) {
+      const state = states[intf];
+      if(state.ready) {
+        connected = true;
+      }
+      subStates[intf] = {active: state.ready};
+    }
+    return {
+      connected,
+      wans: subStates
+    };
   }
 }
 
