@@ -56,10 +56,11 @@ class WPAConnectionSensor extends Sensor {
         }
         const ifaceName = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.name;
         const ifaceUUID = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
-        era.addStateEvent(EventConstants.EVENT_WPA_CONNECTION_STATE, iface, wpaState ? 0 : 1, {
+        era.addActionEvent(EventConstants.EVENT_WPA_CONNECTION_STATE, wpaState ? 0 : 1, {
           "intf_name": ifaceName,
           "intf_uuid": ifaceUUID,
-          "ssid": ssid
+          "ssid": ssid,
+          "intf": iface
         });
         const e = event.buildEvent(eventType, { intf: iface });
         intfPlugin.propagateEvent(e);
