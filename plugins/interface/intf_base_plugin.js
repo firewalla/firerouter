@@ -671,12 +671,11 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   _getWANConnState(name) {
-    const state = this._wanStatus || {};
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      state.routing = routingPlugin.getWANConnState(name);
+      return routingPlugin.getWANConnState(name);
     }
-    return state;
+    return null;
   }
 
   async getDNSNameservers() {
@@ -881,10 +880,12 @@ class InterfaceBasePlugin extends Plugin {
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
+    let wanTestResult = null;
     if (this.isWAN()) {
       wanConnState = this._getWANConnState(this.name) || {};
+      wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
   }
 
   onEvent(e) {
