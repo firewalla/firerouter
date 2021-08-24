@@ -24,6 +24,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const event = require('../../core/event.js');
+const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
@@ -109,7 +110,25 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       for (const network of networks) {
         entries.push("network={");
         for (const key of Object.keys(network)) {
-          entries.push(`\t${key}=${network[key]}`);
+          let value = network[key];
+          switch (key) {
+            case "ssid":
+            case "password":
+              // use hex string for ssid/eap password in case of special characters
+              value = util.getHexStrArray(value).join("");
+              break;
+            case "psk":
+              value = await util.generatePSK(network["ssid"], value);
+              break;
+            case "identity":
+            case "anonymous_identity":
+            case "phase1":
+            case "phase2":
+            case "sae_password":
+              value = `"${value}"`;
+            default:
+          }
+          entries.push(`\t${key}=${value}`);
         }
         entries.push("}");
         entries.push('\n');

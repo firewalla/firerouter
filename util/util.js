@@ -16,6 +16,9 @@
 'use strict';
 
 const Promise = require('bluebird');
+const { exec } = require('child-process-promise');
+const PlatformLoader = require('../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 function extend(target) {
   var sources = [].slice.call(arguments, 1);
@@ -117,11 +120,38 @@ function wrapIptables(rule) {
   }
 }
 
+async function generatePSK(ssid, passphrase) {
+  const ssidHex = _getCLangHexString(ssid);
+  const passphraseHex = _getCLangHexString(passphrase);
+  const lines = await exec(`${platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
+  for (const line of lines) {
+    if (line.startsWith("psk="))
+      return line.substring(4);
+  }
+  return null;
+}
+
+function _getCLangHexString(str) {
+  const hexArray = getHexStrArray(str);
+  return `$'${hexArray.map(hex => `\\x${hex}`).join("")}'`;
+}
+
+function getHexStrArray(str) {
+  const result = [];
+  const buf = Buffer.from(str, 'utf8');
+  for (let i = 0; i < buf.length; i++) {
+    result.push(Number(buf[i]).toString(16));
+  }
+  return result;
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
   getPreferredName: getPreferredName,
   delay: delay,
   argumentsToString: argumentsToString,
-  wrapIptables: wrapIptables
+  wrapIptables: wrapIptables,
+  getHexStrArray: getHexStrArray,
+  generatePSK: generatePSK
 };
