@@ -124,6 +124,10 @@ class NetworkConfigManager {
           switch (key) {
             case "ssid":
             case "password":
+            case "wep_key0":
+            case "wep_key1":
+            case "wep_key2":
+            case "wep_key3":
               value = util.getHexStrArray(value).join("");
               break;
             case "psk":
