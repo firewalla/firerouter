@@ -726,6 +726,10 @@ class InterfaceBasePlugin extends Plugin {
     return result;
   }
 
+  getWanStatus() {
+    return this._wanStatus;
+  }
+
   async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
