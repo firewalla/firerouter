@@ -307,7 +307,27 @@ class NetworkConfigManager {
           wlan.freq = Number(ln.substring(6))
         }
         else if (ln.startsWith('SSID:')) {
-          wlan.ssid = ln.substring(6)
+          const escaped = ln.substring(6)
+          const chArray = []
+          let i = 0
+          while (i < escaped.length) {
+            if (escaped[i] === '\\') {
+              i++
+              if (escaped[i] == 'x') {
+                i++
+                const num = parseInt(escaped[i++] + escaped[i++], 16)
+                chArray.push(String.fromCharCode(num))
+                continue
+              }
+            }
+            chArray.push(escaped[i])
+            i ++
+          }
+          wlan.ssid = Buffer.from(chArray.join(''), 'latin1').toString()
+          const testSet = new Set(wlan.ssid)
+          if (testSet.size == 1 && testSet.values().next().value == '\x00') {
+            wlan.ssid = ""
+          }
         }
         // else if (ln.startsWith('HT Operation:')) {
         //   ie = { }
