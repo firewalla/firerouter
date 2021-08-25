@@ -311,17 +311,14 @@ class NetworkConfigManager {
           const chArray = []
           let i = 0
           while (i < escaped.length) {
-            if (escaped[i] === '\\') {
-              i++
-              if (escaped[i] == 'x') {
-                i++
+            if (escaped[i++] === '\\') {
+              if (escaped[i++] == 'x') {
                 const num = parseInt(escaped[i++] + escaped[i++], 16)
                 chArray.push(String.fromCharCode(num))
                 continue
               }
             }
-            chArray.push(escaped[i])
-            i ++
+            chArray.push(escaped[i++])
           }
           wlan.ssid = Buffer.from(chArray.join(''), 'latin1').toString()
           const testSet = new Set(wlan.ssid)
