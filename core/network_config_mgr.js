@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,9 +19,16 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const exec = require('child-process-promise').exec;
+const { exec, spawn } = require('child-process-promise')
+const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
+const pl = require('../platform/PlatformLoader.js');
+const platform = pl.getPlatform();
+const r = require('../util/firerouter.js');
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
+const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 
 class NetworkConfigManager {
   constructor() {
@@ -56,6 +63,153 @@ class NetworkConfigManager {
     return ns.getInterface(intf);
   }
 
+  async switchWifi(intf, ssid) {
+    return new Promise((resolve, reject) => {
+      lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
+        const iface = await ns.getInterface(intf);
+        if (!iface) {
+          done(null, [`Interface ${intf} is not found`]);
+          return;
+        }
+        const config = iface.config;
+        if (config.enabled !== true) {
+          done(null, [`Interface ${intf} is not enabled`]);
+          return;
+        }
+        if (config.meta.type !== "wan") {
+          done(null, [`Interface ${intf} is not a WAN interface`]);
+          return;
+        }
+        if (!config.wpaSupplicant) {
+          done(null, [`wpa_supplicant is not configured on ${intf}`]);
+          return;
+        } 
+        const wpaCliPath = platform.getWpaCliBinPath();
+        const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
+        const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} list_networks | tail +3`).then(result => result.stdout.trim().split('\n').map(line => {
+          const [id, ssid, bssid, flags] = line.split('\t', 4);
+          return {id, ssid, bssid, flags};
+        })).catch(err => []);
+        const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
+        const selectedNetwork = networks.find(n => n.ssid === ssid);
+        if (!selectedNetwork) {
+          done(null, [`ssid ${ssid} is not configured in ${intf} settings`]);
+          return;
+        }
+        let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
+        if (error) {
+          done(null, [error]);
+          return;
+        }
+        const t1 = Date.now() / 1000;
+        const checkTask = setInterval(async () => {
+          const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+          if (state === true) {
+            clearInterval(checkTask);
+            for (const network of networks) {
+              // select_network will disable all other ssids, re-enable other ssid
+              if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
+                await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
+            }
+            done(null, []);
+          } else {
+            const t2 = Date.now() / 1000;
+            if (t2 - t1 > 15) {
+              clearInterval(checkTask);
+              if (currentNetwork) // switch back to previous ssid
+                await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => { });
+              else // deselect ssid
+                await exec(`sudo ${wpaCliPath} -p ${socketDir} disable_network ${selectedNetwork.id}`).catch((err) => { });
+              for (const network of networks) {
+                // select_network will disable all other ssids, re-enable other ssid
+                if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
+                  await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
+              }
+              done(null, [`Failed to switch to ${ssid}`]);
+            }
+          }
+        }, 3000);
+      }, (err, ret) => {
+        if (err)
+          reject(err);
+        else
+          resolve(ret);
+      });
+    });
+  }
+
+  async getWlanAvailable(intf) {
+    const promise = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
+    const cp = promise.childProcess
+    const rl = readline.createInterface({input: cp.stdout});
+
+    const results = []
+    let wlan, ie
+
+    for await (const line of rl) {
+      try {
+        if (line.startsWith('BSS ')) {
+          wlan && results.push(wlan)
+
+          const mac = line.substring(4, 21).toUpperCase()
+          wlan = { mac }
+        }
+
+        const ln = line.trimStart() // don't trim end in case SSID has trailing spaces
+
+        if (ln.startsWith('signal:')) {
+          // https://git.kernel.org/pub/scm/linux/kernel/git/jberg/iw.git/tree/nl80211.h
+          // * @NL80211_BSS_SIGNAL_MBM: signal strength of probe response/beacon
+          // *  in mBm (100 * dBm) (s32)
+          // * @NL80211_BSS_SIGNAL_UNSPEC: signal strength of the probe response/beacon
+          // *  in unspecified units, scaled to 0..100 (u8)
+          //
+          // if unspecified unit, it's be positive number, while it's negative in dBm
+          wlan.signal = Number(ln.substring(8).split(' ')[0])
+        }
+        else if (ln.startsWith('freq:')) {
+          wlan.freq = Number(ln.substring(6))
+        }
+        else if (ln.startsWith('SSID:')) {
+          wlan.ssid = ln.substring(6)
+        }
+        // else if (ln.startsWith('HT Operation:')) {
+        //   ie = { }
+        // }
+        else if (ln.startsWith('* primary channel:')) {
+          wlan.channel = Number(ln.substring(19))
+        }
+        else if (ln.startsWith('RSN:')) {
+          const index = ln.indexOf('Version:')
+          ie = { ver: Number(ln.substring(index + 8)) }
+          wlan.rsn = ie
+        }
+        else if (ln.startsWith('WPA:')) {
+          const index = ln.indexOf('Version:')
+          ie = { ver: Number(ln.substring(index + 8)) }
+          wlan.wpa = ie
+        }
+        else if (ln.startsWith('* Group cipher:')) {
+          ie.group = ln.substring(16)
+        }
+        else if (ln.startsWith('* Pairwise ciphers:')) {
+          ie.pairwises = ln.substring(20).trim().split(' ')
+        }
+        else if (ln.startsWith('* Authentication suites:')) {
+          ie.suites = ln.substring(25).trim().split(' ')
+        }
+      } catch(err) {
+        log.error('Error parsing line', line, '\n', err)
+      }
+    }
+
+    await promise
+
+    results.push(wlan)
+
+    return _.sortBy(results, 'channel')
+  }
+
   async getActiveConfig() {
     const configString = await rclient.getAsync("sysdb:networkConfig");
     if(configString) {
@@ -71,7 +225,8 @@ class NetworkConfigManager {
   }
 
   async getDefaultConfig() {
-    const config = require('../network/default_setup.json');
+    const defaultConfigJson = platform.getDefaultNetworkJsonFile();
+    const config = require(defaultConfigJson);
     return config;
   }
 
@@ -128,7 +283,18 @@ class NetworkConfigManager {
     const configString = JSON.stringify(networkConfig);
     if (configString) {
       await rclient.setAsync("sysdb:networkConfig", configString);
+      this._scheduleRedisBackgroundSave();
     }
+  }
+
+  _scheduleRedisBackgroundSave() {
+    if (this.bgsaveTask)
+      clearTimeout(this.bgsaveTask);
+    this.bgsaveTask = setTimeout(() => {
+      rclient.bgsaveAsync().then(() => exec("sync")).catch((err) => {
+        log.error("Redis background save returns error", err.message);
+      });
+    }, 3000);
   }
 }
 

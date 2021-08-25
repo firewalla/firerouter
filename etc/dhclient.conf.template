@@ -8,5 +8,6 @@ request subnet-mask, broadcast-address, time-offset, routers,
         rfc3442-classless-static-routes, ntp-servers;
 
 timeout 300;
+retry 30;
 
 %ADDITIONAL_OPTIONS%

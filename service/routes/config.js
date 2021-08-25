@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -47,6 +47,35 @@ router.get('/lans', async (req, res, next) => {
   });
 });
 
+router.get('/wlan/:intf/available', async (req, res, _next) => {
+  await ncm.getWlanAvailable(req.params.intf).then(lans => {
+    res.status(200).json(lans);
+  }).catch(err => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
+const jsonParser = bodyParser.json()
+
+router.post('/wlan/switch_wifi/:intf',
+  jsonParser,
+  async (req, res, next) => {
+    const intf = req.params.intf;
+    const config = req.body;
+    if (!config || !config.ssid) {
+      res.status(400).json({errors: ['"ssid" is not specified.']});
+      return;
+    }
+    const errors = await ncm.switchWifi(intf, config.ssid).catch((err) => [err.message]);
+    if (errors && errors.length != 0) {
+      log.error(`Failed to switch to ssid ${config.ssid} on ${intf}`, errors);
+      res.status(400).json({errors: errors});
+    } else {
+      log.info(`Successfully switched to ssid ${config.ssid} on ${intf}`, errors);
+      res.status(200).json({errors: []});
+    }
+  });
+
 router.get('/phy_interfaces', async (req, res, next) => {
   await ncm.getPhyInterfaceNames().then((intfs) => {
     res.status(200).json({intfs: intfs});
@@ -79,8 +108,6 @@ router.get('/interfaces', async (req, res, next) => {
     res.status(500).json({errors: [err.message]});
   })
 });
-
-const jsonParser = bodyParser.json()
 
 router.post('/set',
   jsonParser,
