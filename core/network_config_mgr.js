@@ -68,7 +68,7 @@ class NetworkConfigManager {
     return ns.getInterface(intf);
   }
 
-  async switchWifi(intf, ssid, params = {}) {
+  async switchWifi(intf, ssid, params = {}, testOnly = false) {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
         const iface = await ns.getInterface(intf);
@@ -153,31 +153,39 @@ class NetworkConfigManager {
           return;
         }
         const t1 = Date.now() / 1000;
+        let t2 = null;
         const checkTask = setInterval(async () => {
           const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
           if (state === true) {
-            clearInterval(checkTask);
-            for (const network of networks) {
-              // select_network will disable all other ssids, re-enable other ssid
-              if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
-            }
-            done(null, []);
-          } else {
-            const t2 = Date.now() / 1000;
-            if (t2 - t1 > 15) {
+            if (!testOnly) {
               clearInterval(checkTask);
-              if (currentNetwork) // switch back to previous ssid
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => { });
-              else // deselect ssid
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} disable_network ${selectedNetwork.id}`).catch((err) => { });
               for (const network of networks) {
                 // select_network will disable all other ssids, re-enable other ssid
-                if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
+                if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
                   await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
               }
-              done(null, [`Failed to switch to ${ssid}`]);
+              done(null, []);
+              return;
             }
+          } else {
+            t2 = Date.now() / 1000;
+          }
+          // if timeout exceeded or test only is set and connection is successful, switch back to previous setup 
+          if (t2 - t1 > 15 || state === true && testOnly) {
+            clearInterval(checkTask);
+            if (currentNetwork) // switch back to previous ssid
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => { });
+            else // deselect ssid
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} disable_network ${selectedNetwork.id}`).catch((err) => { });
+            for (const network of networks) {
+              // select_network will disable all other ssids, re-enable other ssid
+              if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
+                await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
+            }
+            if (state === true)
+              done(null, []);
+            else
+              done(null, [`Failed to switch to ${ssid}`]);
           }
         }, 3000);
       }, (err, ret) => {
