@@ -45,6 +45,7 @@ function enableSubPath(path, lib) {
 enableSubPath('config');
 enableSubPath('interface');
 enableSubPath('system');
+enableSubPath('storage');
 
 const subpath_docs = express();
 subpath_v1.use("/docs", subpath_docs);
