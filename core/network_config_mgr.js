@@ -291,8 +291,10 @@ class NetworkConfigManager {
           const chArray = []
           let i = 0
           while (i < escaped.length) {
-            if (escaped[i++] === '\\') {
-              if (escaped[i++] == 'x') {
+            if (escaped[i] === '\\') {
+              i ++
+              if (escaped[i] == 'x') {
+                i ++
                 const num = parseInt(escaped[i++] + escaped[i++], 16)
                 chArray.push(String.fromCharCode(num))
                 continue
