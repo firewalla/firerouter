@@ -120,27 +120,7 @@ class NetworkConfigManager {
         if (!params.hasOwnProperty("ssid"))
           params.ssid = ssid;
         for (const key of Object.keys(params)) {
-          let value = params[key];
-          switch (key) {
-            case "ssid":
-            case "password":
-            case "wep_key0":
-            case "wep_key1":
-            case "wep_key2":
-            case "wep_key3":
-              value = util.getHexStrArray(value).join("");
-              break;
-            case "psk":
-              value = await util.generatePSK(params["ssid"], value);
-              break;
-            case "identity":
-            case "anonymous_identity":
-            case "phase1":
-            case "phase2":
-            case "sae_password":
-              value = `"${value}"`;
-            default:
-          }
+          const value = await util.generateWpaSupplicantConfig(key, params);
           const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} set_network ${selectedNetwork.id} ${key} ${value}`).then(() => null).catch((err) => err.message);
           if (error) {
             done(null, [error]);

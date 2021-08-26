@@ -145,6 +145,32 @@ function getHexStrArray(str) {
   return result;
 }
 
+async function generateWpaSupplicantConfig(key, values) {
+  let value = values[key];
+  switch (key) {
+    case "ssid":
+    case "password":
+    case "wep_key0":
+    case "wep_key1":
+    case "wep_key2":
+    case "wep_key3":
+      // use hex string for ssid/eap password in case of special characters
+      value = getHexStrArray(value).join("");
+      break;
+    case "psk":
+      value = await generatePSK(values["ssid"], value);
+      break;
+    case "identity":
+    case "anonymous_identity":
+    case "phase1":
+    case "phase2":
+    case "sae_password":
+      value = `"${value}"`;
+    default:
+  }
+  return value;
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -153,5 +179,6 @@ module.exports = {
   argumentsToString: argumentsToString,
   wrapIptables: wrapIptables,
   getHexStrArray: getHexStrArray,
-  generatePSK: generatePSK
+  generatePSK: generatePSK,
+  generateWpaSupplicantConfig: generateWpaSupplicantConfig
 };
