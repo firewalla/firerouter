@@ -110,28 +110,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       for (const network of networks) {
         entries.push("network={");
         for (const key of Object.keys(network)) {
-          let value = network[key];
-          switch (key) {
-            case "ssid":
-            case "password":
-            case "wep_key0":
-            case "wep_key1":
-            case "wep_key2":
-            case "wep_key3":
-              // use hex string for ssid/eap password in case of special characters
-              value = util.getHexStrArray(value).join("");
-              break;
-            case "psk":
-              value = await util.generatePSK(network["ssid"], value);
-              break;
-            case "identity":
-            case "anonymous_identity":
-            case "phase1":
-            case "phase2":
-            case "sae_password":
-              value = `"${value}"`;
-            default:
-          }
+          const value = await util.generateWpaSupplicantConfig(key, network);
           entries.push(`\t${key}=${value}`);
         }
         entries.push("}");
