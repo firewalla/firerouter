@@ -146,6 +146,7 @@ function getHexStrArray(str) {
 }
 
 async function generateWpaSupplicantConfig(key, values) {
+  const storage = require('./storage.js');
   let value = values[key];
   switch (key) {
     case "ssid":
@@ -160,11 +161,21 @@ async function generateWpaSupplicantConfig(key, values) {
     case "psk":
       value = await generatePSK(values["ssid"], value);
       break;
+    case "ca_cert":
+    case "ca_cert2":
+    case "client_cert":
+    case "client_cert2":
+    case "private_key":
+    case "private_key2":
+      value = `"${storage.getSavedFilePath(value)}"`;
+      break;
     case "identity":
     case "anonymous_identity":
     case "phase1":
     case "phase2":
     case "sae_password":
+    case "private_key_passwd":
+    case "private_key2_passwd":
       value = `"${value}"`;
     default:
   }
