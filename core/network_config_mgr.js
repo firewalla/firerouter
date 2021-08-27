@@ -200,9 +200,15 @@ class NetworkConfigManager {
       result.dns = false;
     }
 
-    const httpResult = await intfPlugin.checkHttpStatus();
-    if (httpResult)
-      result.http = httpResult;
+    const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
+
+    for(const site of sites) {
+      const httpResult = await intfPlugin.checkHttpStatus(site);
+      if (httpResult) {
+        result.http = httpResult;
+        break;
+      }
+    }
 
     result.ts = Math.floor(new Date() / 1000);
 
