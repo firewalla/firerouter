@@ -144,7 +144,17 @@ class HostapdPlugin extends Plugin {
     if (parameters.ssid && parameters.wpa_passphrase) {
       const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
       parameters.wpa_psk = psk;
+      // use hexdump for ssid
+      parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
       delete parameters["wpa_passphrase"];
+      delete parameters["ssid"];
+    }
+
+    const hexdumpKeys = ["wep_key0", "wep_key1", "wep_key2", "wep_key3"];
+    for (const key of hexdumpKeys) {
+      if (parameters.hasOwnProperty(key)) {
+        parameters[key] = util.getHexStrArray(parameters[key]).join("");
+      }
     }
 
     const channelConfig = pluginConfig.channel[parameters.channel]
