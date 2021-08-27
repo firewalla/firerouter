@@ -22,6 +22,8 @@ const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
 const ns = require('../../core/network_setup.js');
 
+const _ = require('lodash')
+
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig();
   if(config) {
@@ -48,11 +50,13 @@ router.get('/lans', async (req, res, next) => {
 });
 
 router.get('/wlan/:intf/available', async (req, res, _next) => {
-  await ncm.getWlanAvailable(req.params.intf).then(lans => {
-    res.status(200).json(lans);
-  }).catch(err => {
+  try {
+    const detailed = await ncm.getWlanAvailable(req.params.intf)
+    const result = _.orderBy(detailed.map(w => _.pick(w, 'ssid', 'signal', 'rsn', 'wpa')), 'signal', 'desc')
+    res.status(200).json(result);
+  } catch(err) {
     res.status(500).json({errors: [err.message]});
-  });
+  }
 });
 
 const jsonParser = bodyParser.json();
@@ -67,7 +71,7 @@ router.post('/wan/:intf/connectivity', jsonParser, async (req, res, next) => {
 
 router.get('/wan/connectivity', async (req, res, next) => {
   try {
-    const options = {live: req.query.live || false};
+    const options = {live: req.query.live === "true" || false};
     const status = await ncm.isAnyWanConnected(options);
     res.status(200).json(status);
   } catch(err) {
@@ -84,7 +88,7 @@ router.post('/wlan/switch_wifi/:intf',
       res.status(400).json({errors: ['"ssid" is not specified.']});
       return;
     }
-    const errors = await ncm.switchWifi(intf, config.ssid, config.params).catch((err) => [err.message]);
+    const errors = await ncm.switchWifi(intf, config.ssid, config.params, config.testOnly).catch((err) => [err.message]);
     if (errors && errors.length != 0) {
       log.error(`Failed to switch to ssid ${config.ssid} on ${intf}`, errors);
       res.status(400).json({errors: errors});
