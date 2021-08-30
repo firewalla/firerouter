@@ -24,6 +24,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const event = require('../../core/event.js');
+const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
@@ -109,7 +110,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       for (const network of networks) {
         entries.push("network={");
         for (const key of Object.keys(network)) {
-          entries.push(`\t${key}=${network[key]}`);
+          const value = await util.generateWpaSupplicantConfig(key, network);
+          entries.push(`\t${key}=${value}`);
         }
         entries.push("}");
         entries.push('\n');
@@ -141,7 +143,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     super.onEvent(e);
     const eventType = event.getEventType(e);
     if (eventType === event.EVENT_WPA_CONNECTED) {
-      this.applyIpSettings().catch((err) => {
+      this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
         this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
       });
     }

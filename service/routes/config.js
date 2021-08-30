@@ -22,6 +22,8 @@ const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
 const ns = require('../../core/network_setup.js');
 
+const _ = require('lodash')
+
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig();
   if(config) {
@@ -35,6 +37,7 @@ router.get('/wans', async (req, res, next) => {
   await ncm.getWANs().then((wans) => {
     res.status(200).json(wans);
   }).catch((err) => {
+    log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
   });
 });
@@ -43,16 +46,20 @@ router.get('/lans', async (req, res, next) => {
   await ncm.getLANs().then((lans) => {
     res.status(200).json(lans);
   }).catch((err) => {
+    log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
   });
 });
 
 router.get('/wlan/:intf/available', async (req, res, _next) => {
-  await ncm.getWlanAvailable(req.params.intf).then(lans => {
-    res.status(200).json(lans);
-  }).catch(err => {
+  try {
+    const detailed = await ncm.getWlanAvailable(req.params.intf)
+    const result = _.orderBy(detailed.map(w => _.pick(w, 'ssid', 'signal', 'rsn', 'wpa')), 'signal', 'desc')
+    res.status(200).json(result);
+  } catch(err) {
+    log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
-  });
+  }
 });
 
 const jsonParser = bodyParser.json();
@@ -61,13 +68,14 @@ router.post('/wan/:intf/connectivity', jsonParser, async (req, res, next) => {
   await ncm.checkWanConnectivity(req.params.intf, req.body).then((result) => {
     res.status(200).json(result);
   }).catch((err) => {
+    log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
   });
 });
 
 router.get('/wan/connectivity', async (req, res, next) => {
   try {
-    const options = {live: req.query.live || false};
+    const options = {live: req.query.live === "true" || false};
     const status = await ncm.isAnyWanConnected(options);
     res.status(200).json(status);
   } catch(err) {
@@ -84,7 +92,7 @@ router.post('/wlan/switch_wifi/:intf',
       res.status(400).json({errors: ['"ssid" is not specified.']});
       return;
     }
-    const errors = await ncm.switchWifi(intf, config.ssid, config.params).catch((err) => [err.message]);
+    const errors = await ncm.switchWifi(intf, config.ssid, config.params, config.testOnly).catch((err) => [err.message]);
     if (errors && errors.length != 0) {
       log.error(`Failed to switch to ssid ${config.ssid} on ${intf}`, errors);
       res.status(400).json({errors: errors});
@@ -102,6 +110,20 @@ router.get('/phy_interfaces', async (req, res, next) => {
   });
 });
 
+router.get('/phy_interfaces/state/simple', async (req, res, next) => {
+  try {
+    const intfs = await ncm.getPhyInterfaceNames()
+    const result = {}
+    for (const intf of intfs) {
+      result[intf] = await ncm.getInterfaceSimple(intf)
+    }
+    res.status(200).json(result);
+  } catch(err) {
+    log.error(req.url, err)
+    res.status(500).json({errors: [err.message]});
+  }
+});
+
 router.get('/interfaces/:intf', async (req, res, next) => {
   const intf = req.params.intf;
   await ncm.getInterface(intf).then((result) => {
@@ -111,6 +133,7 @@ router.get('/interfaces/:intf', async (req, res, next) => {
       res.status(404).send('');
     }
   }).catch((err) => {
+    log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
   });
 });
@@ -123,6 +146,7 @@ router.get('/interfaces', async (req, res, next) => {
       res.status(404).send('');
     }
   }).catch((err) => {
+    log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
   })
 });
@@ -154,6 +178,7 @@ router.post('/prepare_env',
     await ns.prepareEnvironment().then(() => {
       res.status(200).json({errors: []});
     }).catch((err) => {
+      log.error(req.url, err)
       res.status(500).json({errors: [err.message]});
     })
   })

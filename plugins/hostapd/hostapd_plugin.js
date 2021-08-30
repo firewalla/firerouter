@@ -29,7 +29,8 @@ const exec = require('child-process-promise').exec;
 const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
 
-const pluginConfig = require('./config.json')
+const pluginConfig = require('./config.json');
+const util = require('../../util/util');
 
 const WLAN_AVAILABLE_RETRY = 3
 
@@ -137,6 +138,22 @@ class HostapdPlugin extends Plugin {
         this.log.info('Best channel is', bestChannel)
 
         parameters.channel = bestChannel
+      }
+    }
+
+    if (parameters.ssid && parameters.wpa_passphrase) {
+      const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
+      parameters.wpa_psk = psk;
+      // use hexdump for ssid
+      parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
+      delete parameters["wpa_passphrase"];
+      delete parameters["ssid"];
+    }
+
+    const hexdumpKeys = ["wep_key0", "wep_key1", "wep_key2", "wep_key3"];
+    for (const key of hexdumpKeys) {
+      if (parameters.hasOwnProperty(key)) {
+        parameters[key] = util.getHexStrArray(parameters[key]).join("");
       }
     }
 
