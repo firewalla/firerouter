@@ -715,8 +715,8 @@ class RoutingPlugin extends Plugin {
           };
         }
         if (changeDesc) {
+          this.processWANConnChange(); // no need to await
           if (changeActiveWanNeeded) {
-            this.processWANConnChange(); // no need to await
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
             changeDesc.currentStatus = this.getWANConnStates();

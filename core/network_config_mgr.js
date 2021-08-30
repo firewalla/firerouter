@@ -68,6 +68,14 @@ class NetworkConfigManager {
     return ns.getInterface(intf);
   }
 
+  async getInterfaceSimple(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js')
+    const plugin = pluginLoader.getPluginInstance('interface', intf)
+    // ethX interfaces are always presented in config for now
+    const carrier = plugin && parseInt(await plugin.carrierState()) || 0
+    return { carrier }
+  }
+
   async switchWifi(intf, ssid, params = {}, testOnly = false) {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
@@ -192,9 +200,15 @@ class NetworkConfigManager {
       result.dns = false;
     }
 
-    const httpResult = await intfPlugin.checkHttpStatus();
-    if (httpResult)
-      result.http = httpResult;
+    const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
+
+    for(const site of sites) {
+      const httpResult = await intfPlugin.checkHttpStatus(site);
+      if (httpResult) {
+        result.http = httpResult;
+        break;
+      }
+    }
 
     result.ts = Math.floor(new Date() / 1000);
 
