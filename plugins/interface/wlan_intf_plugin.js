@@ -33,6 +33,7 @@ const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firer
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
 const WLAN_AVAILABLE_RETRY = 3
+const WLAN_BGSCAN_INTERVAL = 20
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -119,6 +120,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       }
 
       entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
+      // use high shreshold to force constant bgscan
+      // simple - Periodic background scans based on signal strength
+      // bgscan="simple:<short bgscan interval in seconds>:<signal strength threshold>:<long interval>"
+      entries.push(`bgscan="simple:${WLAN_BGSCAN_INTERVAL}:0:${WLAN_BGSCAN_INTERVAL}"`);
+
       const networks = this.networkConfig.wpaSupplicant.networks || [];
       for (const network of networks) {
 

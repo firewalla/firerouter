@@ -302,21 +302,7 @@ class NetworkConfigManager {
         }
         else if (ln.startsWith('SSID:')) {
           const escaped = ln.substring(6)
-          const chArray = []
-          let i = 0
-          while (i < escaped.length) {
-            if (escaped[i] === '\\') {
-              i ++
-              if (escaped[i] == 'x') {
-                i ++
-                const num = parseInt(escaped[i++] + escaped[i++], 16)
-                chArray.push(String.fromCharCode(num))
-                continue
-              }
-            }
-            chArray.push(escaped[i++])
-          }
-          wlan.ssid = Buffer.from(chArray.join(''), 'latin1').toString()
+          wlan.ssid = util.parseEscapedString(escaped)
           const testSet = new Set(wlan.ssid)
           if (testSet.size == 1 && testSet.values().next().value == '\x00') {
             wlan.ssid = ""
@@ -369,6 +355,66 @@ class NetworkConfigManager {
     if (wlan) results.push(wlan)
 
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
+  }
+
+  async getWlansViaWpaSupplicant() {
+    // const pluginLoader = require('../plugins/plugin_loader.js')
+    // const plugins = pluginLoader.getPluginInstances('interface')
+    // const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
+    // const wanWlan = plugins.entries().find(p => p instanceof WLANInterfacePlugin && p.isWAN())
+
+    const config = await this.getActiveConfig()
+    const wlans = _.get(config, 'interface.wlan')
+    if (!wlans) throw new Error('No wlan interface configured')
+    const wanWlan = Object.entries(wlans).find(intf => intf[1].enabled && intf[1].wpaSupplicant)
+    if (!wanWlan) throw new Error('wpa_supplicant not found')
+
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${wanWlan[0]}`
+
+    const promise = spawn('sudo', ['timeout', '5s', 'wpa_cli', '-p', ctlSocket, 'scan_results'])
+    const cp = promise.childProcess
+    const rl = readline.createInterface({input: cp.stdout});
+
+    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+
+    const selfWlanMacs = []
+    for (const intf of hostapdIntf) {
+      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
+    }
+
+    const results = []
+
+    for await (const line of rl) {
+      try {
+        if (line.startsWith('Selected interface') || line.startsWith('bssid / frequency'))
+          continue
+
+        const split = line.split('\t');
+
+        const mac = split.shift().toUpperCase()
+        const freq = parseInt(split.shift())
+        const signal = parseInt(split.shift())
+        const flags = split.shift().split(/[\[\]]/).filter(Boolean)
+
+        const wlan = { mac, freq, signal, flags }
+
+        wlan.ssid = util.parseEscapedString(split.shift())
+        const testSet = new Set(wlan.ssid)
+        if (testSet.size == 1 && testSet.values().next().value == '\x00') {
+          wlan.ssid = ""
+        }
+
+        results.push(wlan)
+
+      } catch(err) {
+        log.error('Error parsing line', line, '\n', err)
+      }
+    }
+
+    await promise
+
+    return results.filter(r => !selfWlanMacs.includes(r.mac))
   }
 
   async getActiveConfig() {
