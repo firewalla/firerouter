@@ -810,6 +810,7 @@ class RoutingPlugin extends Plugin {
       this.log.info("all wan are down, publishing redis message and set led...");
       await platform.ledAllNetworkDown();
       await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
+      await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
     }
   }
 
