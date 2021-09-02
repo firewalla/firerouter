@@ -64,19 +64,6 @@ router.get('/lans', async (req, res, next) => {
 
 router.get('/wlan/:intf/available', async (req, res, _next) => {
   try {
-    const detailed = await ncm.getWlanAvailable(req.params.intf)
-    const result = detailed
-      .filter(w => w.ssid != '')
-      .map(w => _.pick(w, 'ssid', 'signal', 'rsn', 'wpa'))
-    res.status(200).json(_.orderBy(result, 'signal', 'desc'))
-  } catch(err) {
-    log.error(req.url, err)
-    res.status(500).json({errors: [err.message]});
-  }
-});
-
-router.get('/wlan/available/wpa_supplicant', async (req, res, _next) => {
-  try {
     const detailed = await ncm.getWlansViaWpaSupplicant()
     log.info(detailed.length)
     const result = detailed
