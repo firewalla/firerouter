@@ -113,11 +113,13 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       let availableWLANs
       for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
         availableWLANs = await ncm.getWlansViaWpaSupplicant()
-        break; // stop on first successful call
+        if (availableWLANs && availableWLANs.length)
+          break; // stop on first successful call
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await delay(2)
+        await util.delay(2)
       }
+      availableWLANs = availableWLANs || []
 
       entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
       // use high shreshold to force constant bgscan
