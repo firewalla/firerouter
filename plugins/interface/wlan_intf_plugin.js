@@ -112,7 +112,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
       let availableWLANs
       for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
-        availableWLANs = await ncm.getWlanAvailable(this.name)
+        availableWLANs = await ncm.getWlansViaWpaSupplicant()
         break; // stop on first successful call
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
@@ -129,14 +129,16 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       for (const network of networks) {
 
         const prioritizedNetworks = availableWLANs
-          .filter(n => n.ssid == network.ssid && n.channel > 30 && n.signal > -80)
+          .filter(n => n.ssid == network.ssid && n.freq > 5000 && n.signal > -80)
         if (prioritizedNetworks.length) {
           entries.push("network={");
           for (const key of Object.keys(network)) {
             if (key == 'priority')
               entries.push(`\tpriority=${network[key]+1}`);
-            else
-              entries.push(`\t${key}=${network[key]}`);
+            else {
+              const value = await util.generateWpaSupplicantConfig(key, network);
+              entries.push(`\t${key}=${value}`);
+            }
           }
           if (!network.priority) {
             entries.push(`\tpriority=1`);
