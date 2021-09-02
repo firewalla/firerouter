@@ -129,7 +129,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       for (const network of networks) {
 
         const prioritizedNetworks = availableWLANs
-          .filter(n => n.ssid == network.ssid.slice(1, -1) && n.channel > 30 && n.signal > -80)
+          .filter(n => n.ssid == network.ssid && n.channel > 30 && n.signal > -80)
         if (prioritizedNetworks.length) {
           entries.push("network={");
           for (const key of Object.keys(network)) {
