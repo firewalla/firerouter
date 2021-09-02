@@ -161,6 +161,8 @@ class NetworkConfigManager {
           // if timeout exceeded or test only is set and connection is successful, switch back to previous setup 
           if (t2 - t1 > 15 || state === true && testOnly) {
             clearInterval(checkTask);
+            // restore config from configuration file
+            await exec(`sudo ${wpaCliPath} -p ${socketDir} reconfigure`).catch((err) => { });
             if (currentNetwork) // switch back to previous ssid
               await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => { });
             else // deselect ssid
