@@ -13,6 +13,12 @@
         "dhcp": true
       }
     },
+    "wlan": {
+      "wlan0": {
+        "enabled": true,
+        "wpa_supplicant": {}
+      }
+    },
     "bridge": {
       "br0": {
         "meta": {
