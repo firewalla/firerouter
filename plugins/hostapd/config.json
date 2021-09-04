@@ -1,5 +1,6 @@
 {
   "default": {
+    "ctrl_interface": "/home/pi/.router/run/hostapd",
     "driver": "nl80211",
     "country_code": "US",
     "macaddr_acl": 0,

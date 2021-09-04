@@ -20,6 +20,8 @@ const { exec } = require('child-process-promise');
 const PlatformLoader = require('../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
 
+const _ = require('lodash')
+
 function extend(target) {
   var sources = [].slice.call(arguments, 1);
   sources.forEach(function (source) {
@@ -182,6 +184,37 @@ async function generateWpaSupplicantConfig(key, values) {
   return value;
 }
 
+function parseEscapedString(escaped) {
+  if (!escaped) return ''
+  if (!_.isString(escaped)) throw new Error('Invalid Input', escaped)
+
+  const chArray = []
+  let i = 0
+  while (i < escaped.length) {
+    if (escaped[i] === '\\') {
+      i ++
+      switch(escaped[i]) {
+        case 't':
+          i ++
+          chArray.push('\t')
+          continue
+        case 'v':
+          i ++
+          chArray.push('\v')
+          continue
+        case 'x':
+          i ++
+          const num = parseInt(escaped[i++] + escaped[i++], 16)
+          chArray.push(String.fromCharCode(num))
+          continue
+      }
+    }
+    // \' \" \\ are pushed here
+    chArray.push(escaped[i++])
+  }
+  return Buffer.from(chArray.join(''), 'latin1').toString()
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -191,5 +224,6 @@ module.exports = {
   wrapIptables: wrapIptables,
   getHexStrArray: getHexStrArray,
   generatePSK: generatePSK,
-  generateWpaSupplicantConfig: generateWpaSupplicantConfig
+  generateWpaSupplicantConfig: generateWpaSupplicantConfig,
+  parseEscapedString,
 };

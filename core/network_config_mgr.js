@@ -100,7 +100,7 @@ class NetworkConfigManager {
         } 
         const wpaCliPath = platform.getWpaCliBinPath();
         const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
-        const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} list_networks | tail -n +3`).then(result => result.stdout.trim().split('\n').map(line => {
+        const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
           const [id, ssid, bssid, flags] = line.split('\t', 4);
           const hexArray = [];
           for (let i = 0; i < ssid.length; i++) {
@@ -118,7 +118,7 @@ class NetworkConfigManager {
         let selectedNetwork = networks.find(n => n.ssid === ssid || n.ssidHex === ssidHex); // in case of non-ascii characters, need to compare with hex string
         if (!selectedNetwork) {
           log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
-          const networkId = await exec(`sudo ${wpaCliPath} -p ${socketDir} add_network | tail -n +2`).then((result) => result.stdout.trim()).catch((err) => null);
+          const networkId = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} add_network`).then((result) => result.stdout.trim()).catch((err) => null);
           if (networkId === null) {
             done(null, [`Failed to add new network ${ssid}`]);
             return;
@@ -129,13 +129,13 @@ class NetworkConfigManager {
           params.ssid = ssid;
         for (const key of Object.keys(params)) {
           const value = await util.generateWpaSupplicantConfig(key, params);
-          const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} set_network ${selectedNetwork.id} ${key} ${value}`).then(() => null).catch((err) => err.message);
+          const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} set_network ${selectedNetwork.id} ${key} ${value}`).then(() => null).catch((err) => err.message);
           if (error) {
             done(null, [error]);
             return;
           }
         }
-        let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
+        let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
         if (error) {
           done(null, [error]);
           return;
@@ -143,14 +143,14 @@ class NetworkConfigManager {
         const t1 = Date.now() / 1000;
         let t2 = null;
         const checkTask = setInterval(async () => {
-          const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+          const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
           if (state === true) {
             if (!testOnly) {
               clearInterval(checkTask);
               for (const network of networks) {
                 // select_network will disable all other ssids, re-enable other ssid
                 if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
-                  await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
+                  await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
               }
               done(null, []);
               return;
@@ -161,14 +161,16 @@ class NetworkConfigManager {
           // if timeout exceeded or test only is set and connection is successful, switch back to previous setup 
           if (t2 - t1 > 15 || state === true && testOnly) {
             clearInterval(checkTask);
+            // restore config from configuration file
+            await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} reconfigure`).catch((err) => { });
             if (currentNetwork) // switch back to previous ssid
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} select_network ${currentNetwork.id}`).catch((err) => { });
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} select_network ${currentNetwork.id}`).catch((err) => { });
             else // deselect ssid
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} disable_network ${selectedNetwork.id}`).catch((err) => { });
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} disable_network ${selectedNetwork.id}`).catch((err) => { });
             for (const network of networks) {
               // select_network will disable all other ssids, re-enable other ssid
               if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} enable_network ${network.id}`).catch((err) => { });
+                await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
             }
             if (state === true)
               done(null, []);
@@ -302,21 +304,7 @@ class NetworkConfigManager {
         }
         else if (ln.startsWith('SSID:')) {
           const escaped = ln.substring(6)
-          const chArray = []
-          let i = 0
-          while (i < escaped.length) {
-            if (escaped[i] === '\\') {
-              i ++
-              if (escaped[i] == 'x') {
-                i ++
-                const num = parseInt(escaped[i++] + escaped[i++], 16)
-                chArray.push(String.fromCharCode(num))
-                continue
-              }
-            }
-            chArray.push(escaped[i++])
-          }
-          wlan.ssid = Buffer.from(chArray.join(''), 'latin1').toString()
+          wlan.ssid = util.parseEscapedString(escaped)
           const testSet = new Set(wlan.ssid)
           if (testSet.size == 1 && testSet.values().next().value == '\x00') {
             wlan.ssid = ""
@@ -366,9 +354,69 @@ class NetworkConfigManager {
 
     await promise
 
-    results.push(wlan)
+    if (wlan) results.push(wlan)
 
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
+  }
+
+  async getWlansViaWpaSupplicant() {
+    // const pluginLoader = require('../plugins/plugin_loader.js')
+    // const plugins = pluginLoader.getPluginInstances('interface')
+    // const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
+    // const wanWlan = plugins.entries().find(p => p instanceof WLANInterfacePlugin && p.isWAN())
+
+    const config = await this.getActiveConfig()
+    const wlans = _.get(config, 'interface.wlan')
+    if (!wlans) throw new Error('No wlan interface configured')
+    const wanWlan = Object.entries(wlans).find(intf => intf[1].enabled && intf[1].wpaSupplicant)
+    if (!wanWlan) throw new Error('wpa_supplicant not found')
+
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${wanWlan[0]}`
+
+    const promise = spawn('sudo', ['timeout', '5s', 'wpa_cli', '-p', ctlSocket, 'scan_results'])
+    const cp = promise.childProcess
+    const rl = readline.createInterface({input: cp.stdout});
+
+    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+
+    const selfWlanMacs = []
+    for (const intf of hostapdIntf) {
+      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
+    }
+
+    const results = []
+
+    for await (const line of rl) {
+      try {
+        if (line.startsWith('Selected interface') || line.startsWith('bssid / frequency'))
+          continue
+
+        const split = line.split('\t');
+
+        const mac = split.shift().toUpperCase()
+        const freq = parseInt(split.shift())
+        const signal = parseInt(split.shift())
+        const flags = split.shift().split(/[\[\]]/).filter(Boolean)
+
+        const wlan = { mac, freq, signal, flags }
+
+        wlan.ssid = util.parseEscapedString(split.shift())
+        const testSet = new Set(wlan.ssid)
+        if (testSet.size == 1 && testSet.values().next().value == '\x00') {
+          wlan.ssid = ""
+        }
+
+        results.push(wlan)
+
+      } catch(err) {
+        log.error('Error parsing line', line, '\n', err)
+      }
+    }
+
+    await promise
+
+    return results.filter(r => !selfWlanMacs.includes(r.mac))
   }
 
   async getActiveConfig() {
