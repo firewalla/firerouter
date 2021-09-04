@@ -126,6 +126,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       // simple - Periodic background scans based on signal strength
       // bgscan="simple:<short bgscan interval in seconds>:<signal strength threshold>:<long interval>"
       entries.push(`bgscan="simple:${WLAN_BGSCAN_INTERVAL}:0:${WLAN_BGSCAN_INTERVAL}"`);
+      // autoscan is like bgscan but on disconnected or inactive state.
+      entries.push(`autoscan=periodic:${WLAN_BGSCAN_INTERVAL}`);
 
       const networks = this.networkConfig.wpaSupplicant.networks || [];
       for (const network of networks) {
@@ -161,6 +163,22 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
+        // autoscan won't start until the first manual scan
+        const initialScan = async() => {
+          await util.delay(10)
+          await exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
+        }
+        (async () => {
+          for (;;) {
+            try {
+              await initialScan()
+            } catch(err) {
+              this.log.warn('Failed to start initial scan, trying again soon...')
+              continue
+            }
+            break
+          }
+        })()
       } else {
         await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       }
