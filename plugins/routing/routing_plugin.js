@@ -38,6 +38,12 @@ const OFF_ON_THRESHOLD = 10;
 const FAST_OFF_ON_THRESHOLD = 2;
 
 class RoutingPlugin extends Plugin {
+
+  static async preparePlugin() {
+    // ensure ip forward is enabled
+    await exec(`sudo sysctl -w net.ipv4.ip_forward=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.all.forwarding=1`).catch((err) => {});
+  }
    
   async flush() {
     if (!this.networkConfig) {
