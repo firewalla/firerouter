@@ -611,6 +611,13 @@ class RoutingPlugin extends Plugin {
       return null;
   }
 
+  getAllWANPlugins() {
+    if (this._wanStatus)
+      return Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
+    else
+      return null;
+  }
+
   getPrimaryWANPlugin() {
     if (this._wanStatus) {
       const iface = Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq)[0];
