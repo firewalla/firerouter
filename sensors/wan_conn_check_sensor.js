@@ -74,7 +74,38 @@ class WanConnCheckSensor extends Sensor {
       const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures});
       event.suppressLogging(e);
       wanIntfPlugin.propagateEvent(e);
+
+      this._checkHttpConnectivity(wanIntfPlugin);
     }));
+  }
+
+  // test until http status code is 2xx or test status is reset
+  async _checkHttpConnectivity(intfPlugin, options = {}) {
+    const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
+
+    const carrierState = intfPlugin.carrierState();
+    if(carrierState !== "1") {
+      this.log.debug("no need to check http as carrier is disconnected");
+      return;
+    }
+
+    const lastWanStatus = intfPlugin.getWANStatus();
+    const lastHttpResult = lastWanStatus && lastWanStatus.http;
+    const recentDownTime = (lastWanStatus && lastWanStatus.recentDownTime) || 0;
+
+    const isLastHttpSuccess = lastHttpResult && (lastHttpResult.statusCode >= 200 && lastHttpResult.statusCode < 300);
+    const testAtLeastOnceAfterPingTestPass = lastHttpResult && (lastHttpResult.ts >  recentDownTime);
+
+    if(isLastHttpSuccess && testAtLeastOnceAfterPingTestPass) {
+      return;
+    }
+
+    for(const site of sites) {
+      const httpResult = await intfPlugin.checkHttpStatus(site);
+      if (httpResult) {
+        break;
+      }
+    }
   }
 }
 

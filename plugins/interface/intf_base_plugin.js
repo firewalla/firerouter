@@ -713,6 +713,7 @@ class InterfaceBasePlugin extends Plugin {
     const [statusCode, redirectURL] = output.split(',', 2);
 
     const result = {
+      testURL,
       statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
       redirectURL: redirectURL,
       expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
@@ -853,6 +854,10 @@ class InterfaceBasePlugin extends Plugin {
       failures: failures,
       ts: Math.floor(new Date() / 1000)
     };
+
+    if(!active) {
+      result.recentDownTime = result.ts; // record the recent down time
+    }
 
     if(this._wanStatus) {
       this._wanStatus = Object.assign(this._wanStatus, result);
