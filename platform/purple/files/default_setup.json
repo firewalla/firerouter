@@ -16,7 +16,7 @@
     "wlan": {
       "wlan0": {
         "enabled": true,
-        "wpa_supplicant": {}
+        "wpaSupplicant": {}
       }
     },
     "bridge": {
