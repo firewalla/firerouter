@@ -701,6 +701,14 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
       return null;
     }
+
+    if(this.isHttpTesting) {
+      this.log.info("last round of http testing is not finished yet, this round is skipped.");
+      return null;
+    }
+
+    this.isHttpTesting = true;
+
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
@@ -708,6 +716,9 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
+
+    this.isHttpTesting = false;
+
     if (!output)
       return null;
     const [statusCode, redirectURL] = output.split(',', 2);

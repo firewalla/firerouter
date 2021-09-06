@@ -66,7 +66,9 @@ class WanConnCheckSensor extends Sensor {
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain);
-      this._checkHttpConnectivity(wanIntfPlugin);
+      this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
+        log.error("Got error when checking http, err:", err);
+      });
 
       if (!result)
         return;
