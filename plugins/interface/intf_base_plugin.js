@@ -740,7 +740,7 @@ class InterfaceBasePlugin extends Plugin {
     let active = true;
     let carrierResult = null;
     let pingResult = null;
-    let dnsResult = null;
+    let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
