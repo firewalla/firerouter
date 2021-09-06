@@ -83,13 +83,13 @@ class WanConnCheckSensor extends Sensor {
   async _checkHttpConnectivity(intfPlugin, options = {}) {
     const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
-    const carrierState = intfPlugin.carrierState();
+    const carrierState = await intfPlugin.carrierState();
     if(carrierState !== "1") {
       this.log.debug("no need to check http as carrier is disconnected");
       return;
     }
 
-    const lastWanStatus = intfPlugin.getWANStatus();
+    const lastWanStatus = intfPlugin.getWanStatus();
     const lastHttpResult = lastWanStatus && lastWanStatus.http;
     const recentDownTime = (lastWanStatus && lastWanStatus.recentDownTime) || 0;
 
