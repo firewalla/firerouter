@@ -66,6 +66,8 @@ class WanConnCheckSensor extends Sensor {
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain);
+      this._checkHttpConnectivity(wanIntfPlugin);
+
       if (!result)
         return;
       const active = result.active;
@@ -74,8 +76,6 @@ class WanConnCheckSensor extends Sensor {
       const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures});
       event.suppressLogging(e);
       wanIntfPlugin.propagateEvent(e);
-
-      this._checkHttpConnectivity(wanIntfPlugin);
     }));
   }
 
