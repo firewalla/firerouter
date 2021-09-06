@@ -701,6 +701,14 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
       return null;
     }
+
+    if(this.isHttpTesting) {
+      this.log.info("last round of http testing is not finished yet, this round is skipped.");
+      return null;
+    }
+
+    this.isHttpTesting = true;
+
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
@@ -708,11 +716,15 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
+
+    this.isHttpTesting = false;
+
     if (!output)
       return null;
     const [statusCode, redirectURL] = output.split(',', 2);
 
     const result = {
+      testURL,
       statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
       redirectURL: redirectURL,
       expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
@@ -739,7 +751,7 @@ class InterfaceBasePlugin extends Plugin {
     let active = true;
     let carrierResult = null;
     let pingResult = null;
-    let dnsResult = null;
+    let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
@@ -853,6 +865,10 @@ class InterfaceBasePlugin extends Plugin {
       failures: failures,
       ts: Math.floor(new Date() / 1000)
     };
+
+    if(!active) {
+      result.recentDownTime = result.ts; // record the recent down time
+    }
 
     if(this._wanStatus) {
       this._wanStatus = Object.assign(this._wanStatus, result);

@@ -66,6 +66,10 @@ class WanConnCheckSensor extends Sensor {
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain);
+      this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
+        log.error("Got error when checking http, err:", err.message);
+      });
+
       if (!result)
         return;
       const active = result.active;
@@ -75,6 +79,35 @@ class WanConnCheckSensor extends Sensor {
       event.suppressLogging(e);
       wanIntfPlugin.propagateEvent(e);
     }));
+  }
+
+  // test until http status code is 2xx or test status is reset
+  async _checkHttpConnectivity(intfPlugin, options = {}) {
+    const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
+
+    const carrierState = await intfPlugin.carrierState();
+    if(carrierState !== "1") {
+      this.log.debug("no need to check http as carrier is disconnected");
+      return;
+    }
+
+    const lastWanStatus = intfPlugin.getWanStatus();
+    const lastHttpResult = lastWanStatus && lastWanStatus.http;
+    const recentDownTime = (lastWanStatus && lastWanStatus.recentDownTime) || 0;
+
+    const isLastHttpSuccess = lastHttpResult && (lastHttpResult.statusCode >= 200 && lastHttpResult.statusCode < 300);
+    const testAtLeastOnceAfterPingTestPass = lastHttpResult && (lastHttpResult.ts >  recentDownTime);
+
+    if(isLastHttpSuccess && testAtLeastOnceAfterPingTestPass) {
+      return;
+    }
+
+    for(const site of sites) {
+      const httpResult = await intfPlugin.checkHttpStatus(site);
+      if (httpResult) {
+        break;
+      }
+    }
   }
 }
 
