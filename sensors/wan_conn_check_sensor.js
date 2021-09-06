@@ -67,7 +67,7 @@ class WanConnCheckSensor extends Sensor {
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain);
       this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
-        log.error("Got error when checking http, err:", err);
+        log.error("Got error when checking http, err:", err.message);
       });
 
       if (!result)
