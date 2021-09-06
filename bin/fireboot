@@ -70,8 +70,13 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   fi
 
   rm -f /dev/shm/firerouter.upgraded
-  echo "Restarting FireReset ..."
-  sudo systemctl restart firereset
+  if systemctl is-active firereset &>/dev/null; then
+    echo "Firereset is active, lazy-restarting FireReset with SIGINT..."
+    sudo pkill -SIGINT firereset
+  else
+    echo "Starting firereset..."
+    sudo systemctl start firereset
+  fi
 fi
 
 # step 4 - start fireupgrade
