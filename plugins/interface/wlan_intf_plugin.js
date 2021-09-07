@@ -164,14 +164,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
         // autoscan won't start until the first manual scan
-        const initialScan = async() => {
-          await util.delay(10)
-          await exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
-        }
         (async () => {
           for (;;) {
             try {
-              await initialScan()
+              await util.delay(10)
+              await exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
             } catch(err) {
               this.log.warn('Failed to start initial scan, trying again soon...')
               continue
