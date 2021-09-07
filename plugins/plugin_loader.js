@@ -187,6 +187,7 @@ async function reapply(config, dryRun = false) {
               }
               instance.propagateConfigChanged(true);
               instance.unsubscribeAllChanges();
+              pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
             }
           }
           // merge with new pluginCategoryMap
