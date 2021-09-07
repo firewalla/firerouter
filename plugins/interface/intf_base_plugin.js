@@ -663,11 +663,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+    try {
+      const file = `/sys/class/net/${this.name}/${key}`;
+      return await fs.readFileAsync(file, "utf8");
+    } catch(err) {
       this.log.debug(`Failed to get ${key} of ${this.name}`, err.message);
       return null;
-    })
-    return value;
+    }
   }
 
   _getWANConnState(name) {
