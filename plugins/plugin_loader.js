@@ -259,6 +259,7 @@ async function reapply(config, dryRun = false) {
       return;
     }, function(err, ret) {
       applyInProgress = false;
+      log.info(`reapply is complete ${err ? "with" : "without"} error`);
       if (err)
         reject(err);
       else

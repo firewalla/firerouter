@@ -24,7 +24,9 @@ const log = require('../util/logger.js')(__filename, 'info')
 
 const app = express();
 
-app.use(morgan('combined'));
+//app.use(morgan('combined'));
+app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :url HTTP/:http-version" :status :res[content-length] - :response-time ms ":referrer" ":user-agent"'));
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -43,6 +45,7 @@ function enableSubPath(path, lib) {
 enableSubPath('config');
 enableSubPath('interface');
 enableSubPath('system');
+enableSubPath('storage');
 
 const subpath_docs = express();
 subpath_v1.use("/docs", subpath_docs);

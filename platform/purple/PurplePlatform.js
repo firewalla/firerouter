@@ -48,6 +48,10 @@ class PurplePlatform extends Platform {
     return `${__dirname}/bin/wpa_cli`;
   }
 
+  getWpaPassphraseBinPath() {
+    return `${__dirname}/bin/wpa_passphrase`;
+  }
+
   async ledNormalVisibleStart() {
     await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
       log.error("Failed to set LED as WAN normal visible");
@@ -56,6 +60,18 @@ class PurplePlatform extends Platform {
 
   async ledNormalVisibleStop() {
     await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
+  async ledAllNetworkDown() {
+    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
+  async ledAnyNetworkUp() {
+    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
