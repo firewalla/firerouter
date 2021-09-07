@@ -1,6 +1,7 @@
 [Unit]
 Description=FireReset
-After=network.target
+After=network.target firestatus.service rtk-hciuart.service
+Requires=firestatus.service rtk-hciuart.service
 
 [Service]
 Environment="FIREROUTER_HOME=/home/pi/firerouter"
