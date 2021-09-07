@@ -365,18 +365,20 @@ class NetworkConfigManager {
   }
 
   async getWlansViaWpaSupplicant() {
-    // const pluginLoader = require('../plugins/plugin_loader.js')
-    // const plugins = pluginLoader.getPluginInstances('interface')
-    // const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
-    // const wanWlan = plugins.entries().find(p => p instanceof WLANInterfacePlugin && p.isWAN())
+    const pluginLoader = require('../plugins/plugin_loader.js')
+    const plugins = pluginLoader.getPluginInstances('interface')
+    if (!plugins) {
+      log.warn('No interface found, probably still initializing')
+      return []
+    }
+    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
+    const targetWlan = Object.values(plugins).find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+    if (!targetWlan) {
+      log.warn('No wlan interface configured for wpa_supplicant')
+      return []
+    }
 
-    const config = await this.getActiveConfig()
-    const wlans = _.get(config, 'interface.wlan')
-    if (!wlans) throw new Error('No wlan interface configured')
-    const wanWlan = Object.entries(wlans).find(intf => intf[1].enabled && intf[1].wpaSupplicant)
-    if (!wanWlan) throw new Error('wpa_supplicant not found')
-
-    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${wanWlan[0]}`
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
 
     const wpaCli = spawn('sudo', ['timeout', '5s', 'wpa_cli', '-p', ctlSocket, 'scan_results'])
     wpaCli.on('error', err => {
@@ -418,6 +420,7 @@ class NetworkConfigManager {
     }
 
     const selfWlanMacs = []
+    const config = await this.getActiveConfig()
     const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
     for (const intf of hostapdIntf) {
       const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
