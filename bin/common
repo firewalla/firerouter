@@ -13,13 +13,13 @@ init_network_config() {
   redis-cli set "fireboot:status" "apply_network"
   echo "Awaiting FireRouter API available ..."
   sleep 3
-  timeout=12
+  timeout=60
   api_ready=0
   while [[ timeout -gt 0 && api_ready -eq 0 ]]
   do
     HTTP_STATUS_CODE=`curl -m10 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
     if [[ $HTTP_STATUS_CODE != 200 ]]; then
-      sleep 10
+      sleep 2
     else
       api_ready=1
     fi
@@ -36,6 +36,7 @@ init_network_config() {
   redis-cli set "fireboot:status" "apply_network"
   echo "Applying last successful network config ..."
 
+  BEGIN=$(date +%s)
   if [[ ! -f /dev/shm/firerouter.prepared ]]; then
     echo "Preparing network environment ..."
     HTTP_STATUS_CODE=`curl -m30 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
@@ -57,7 +58,8 @@ init_network_config() {
 
   test $_rc -eq  0 || return $_rc
 
-  echo "Successfully apply last network config"
+  END=$(date +%s)
+  echo "Successfully apply last network config, took $(( $END - $BEGIN )) seconds to finish"
 
   test_network
 }
