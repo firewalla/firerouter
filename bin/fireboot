@@ -27,6 +27,8 @@ else
   test_network; rc=$?
 fi
 
+logger "Uptime after init_network_config: $(awk '{print $1}' /proc/uptime)"
+
 bootingComplete=$(redis-cli get bootingComplete)
 while [[ ! $rc -eq 0 ]]; do
   redis-cli set "fireboot:status" "network_down"
@@ -45,6 +47,7 @@ while [[ ! $rc -eq 0 ]]; do
   fi
 done
 redis-cli del "fireboot:network_down:code"
+logger "Uptime after test_network: $(awk '{print $1}' /proc/uptime)"
 
 update_timezone
 
@@ -78,11 +81,14 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
     sudo systemctl start firereset
   fi
 fi
+logger "Uptime after firerouter_upgrade: $(awk '{print $1}' /proc/uptime)"
 
 # step 4 - start fireupgrade
 redis-cli set "fireboot:status" "fireupgrade"
 echo "Starting Fireupgrade ..."
 sudo systemctl start fireupgrade
+
+logger "Uptime after fireupgrade: $(awk '{print $1}' /proc/uptime)"
 
 # step 5 - start firewalla
 redis-cli set "fireboot:status" "firewalla"
@@ -93,5 +99,7 @@ sudo systemctl start firewalla
 redis-cli set "fireboot:status" "firewalla_service_done"
 redis-cli HINCRBY "stats:systemd:restart" FireBoot 1
 update_timezone
+
+logger "Uptime after firewalla_service_done: $(awk '{print $1}' /proc/uptime)"
 
 exit 0
