@@ -19,7 +19,8 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const { exec, spawn } = require('child-process-promise');
+const { exec } = require('child-process-promise');
+const { spawn } = require('child_process')
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
@@ -262,18 +263,16 @@ class NetworkConfigManager {
   }
 
   async getWlanAvailable(intf) {
-    const promise = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
-    const cp = promise.childProcess
-    const rl = readline.createInterface({input: cp.stdout});
+    const iwScan = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
+    iwScan.on('error', err => {
+      log.error('Error running wpa_cli', err.message)
+    })
+    iwScan.on('exit', code => {
+      if (code)
+        log.warn('iw scan exited with code', code)
+    })
 
-    const config = await this.getActiveConfig()
-    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
-
-    const selfWlanMacs = []
-    for (const intf of hostapdIntf) {
-      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
-      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
-    }
+    const rl = readline.createInterface({input: iwScan.stdout});
 
     const results = []
     let wlan, ie
@@ -352,39 +351,45 @@ class NetworkConfigManager {
       }
     }
 
-    await promise
-
     if (wlan) results.push(wlan)
 
-    return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
-  }
-
-  async getWlansViaWpaSupplicant() {
-    // const pluginLoader = require('../plugins/plugin_loader.js')
-    // const plugins = pluginLoader.getPluginInstances('interface')
-    // const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
-    // const wanWlan = plugins.entries().find(p => p instanceof WLANInterfacePlugin && p.isWAN())
-
-    const config = await this.getActiveConfig()
-    const wlans = _.get(config, 'interface.wlan')
-    if (!wlans) throw new Error('No wlan interface configured')
-    const wanWlan = Object.entries(wlans).find(intf => intf[1].enabled && intf[1].wpaSupplicant)
-    if (!wanWlan) throw new Error('wpa_supplicant not found')
-
-    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${wanWlan[0]}`
-
-    const promise = spawn('sudo', ['timeout', '5s', 'wpa_cli', '-p', ctlSocket, 'scan_results'])
-    const cp = promise.childProcess
-    const rl = readline.createInterface({input: cp.stdout});
-
-    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
-
     const selfWlanMacs = []
+    const config = await this.getActiveConfig()
+    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
     for (const intf of hostapdIntf) {
       const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
+    return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
+  }
+
+  async getWlansViaWpaSupplicant() {
+    const pluginLoader = require('../plugins/plugin_loader.js')
+    const plugins = pluginLoader.getPluginInstances('interface')
+    if (!plugins) {
+      log.warn('No interface found, probably still initializing')
+      return []
+    }
+    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
+    const targetWlan = Object.values(plugins).find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+    if (!targetWlan) {
+      log.warn('No wlan interface configured for wpa_supplicant')
+      return []
+    }
+
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
+
+    const wpaCli = spawn('sudo', ['timeout', '5s', 'wpa_cli', '-p', ctlSocket, 'scan_results'])
+    wpaCli.on('error', err => {
+      log.error('Error running wpa_cli', err.message)
+    })
+    wpaCli.on('exit', code => {
+      if (code)
+        log.warn('wpa_cli exited with code', code)
+    })
+
+    const rl = readline.createInterface({input: wpaCli.stdout});
     const results = []
 
     for await (const line of rl) {
@@ -414,7 +419,13 @@ class NetworkConfigManager {
       }
     }
 
-    await promise
+    const selfWlanMacs = []
+    const config = await this.getActiveConfig()
+    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+    for (const intf of hostapdIntf) {
+      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
+    }
 
     return results.filter(r => !selfWlanMacs.includes(r.mac))
   }

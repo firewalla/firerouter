@@ -84,7 +84,7 @@ class IGMPProxyPlugin extends Plugin {
   }
 
   async apply() {
-    if (pl.getPluginInstances("igmp_proxy").length > 1)
+    if (pl.getPluginInstances("igmp_proxy") && Object.keys(pl.getPluginInstances("igmp_proxy")).some(name => name != this.name))
       this.fatal(`More than 1 igmp proxy instance is not allowed`);
 
     const intfPlugin = pl.getPluginInstance("interface", this.name);

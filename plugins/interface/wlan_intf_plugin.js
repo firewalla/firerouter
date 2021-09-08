@@ -34,6 +34,7 @@ const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`
 
 const WLAN_AVAILABLE_RETRY = 3
 const WLAN_BGSCAN_INTERVAL = 20
+const WLAN_INIT_SCAN_RETRY = 3
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -111,7 +112,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       const entries = [];
 
       let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
+      for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
         availableWLANs = await ncm.getWlansViaWpaSupplicant()
         if (availableWLANs && availableWLANs.length)
           break; // stop on first successful call
@@ -164,14 +165,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
         // autoscan won't start until the first manual scan
-        const initialScan = async() => {
-          await util.delay(10)
-          await exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
-        }
         (async () => {
-          for (;;) {
+          for (let i = WLAN_INIT_SCAN_RETRY; i--; i) {
             try {
-              await initialScan()
+              await util.delay(10)
+              await exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
             } catch(err) {
               this.log.warn('Failed to start initial scan, trying again soon...')
               continue
