@@ -140,3 +140,8 @@ process.on('uncaughtException',(err)=> {
     process.exit(1);
   }, 1000 * 2);
 });
+
+process.on('unhandledRejection', (reason, p)=>{
+  let msg = "Possibly Unhandled Rejection at: Promise " + p + " reason: "+ reason;
+  log.warn('###### Unhandled Rejection',msg,reason.stack);
+});
