@@ -701,6 +701,10 @@ class InterfaceBasePlugin extends Plugin {
     return state;
   }
 
+  async phystate() {
+    return this.carrierState();
+  }
+
   async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
@@ -777,11 +781,12 @@ class InterfaceBasePlugin extends Plugin {
 
     const carrierState = await this.carrierState();
     const operstateState = await this.operstateState();
-    if (carrierState !== "1" || operstateState !== "up") {
-      this.log.warn(`Interface ${this.name} is not ready, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
+    const phystate = await this.phystate();
+    if (phystate !== "1") {
+      this.log.warn(`Interface ${this.name} is not ready, phy: ${phystate}, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
       active = false;
       carrierResult = false;
-      failures.push({type: carrierState !== "1" ? "carrier" : "operstate"});
+      failures.push({type: "carrier"});
     } else
       carrierResult = true;
 

@@ -63,6 +63,16 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
   }
 
+  async phystate() {
+    const carrier = await this.carrierState();
+    const operstate = await this.operstateState();
+    if (carrier !== "1") {
+      return carrier;
+    }
+
+    return operstate !== "up" ? "0" : "1";
+  }
+
   async flush() {
     await super.flush();
 

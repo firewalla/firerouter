@@ -74,11 +74,8 @@ class NetworkConfigManager {
     const plugin = pluginLoader.getPluginInstance('interface', intf);
     // ethX interfaces are always presented in config for now
 
-    // if any of the physical interfaces are not configured in firerouter config
-    // it will be recorded as 0 & "down" respectively
-    const carrier = plugin && parseInt(await plugin.carrierState()) || 0;
-    const operstate = plugin && (await plugin.operstateState()) || "down";
-    return { carrier, operstate };
+    const phystate = plugin && (await plugin.phystate()) || 0;
+    return { carrier : phystate };
   }
 
   async switchWifi(intf, ssid, params = {}, testOnly = false) {
