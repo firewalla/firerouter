@@ -74,7 +74,7 @@ class NetworkConfigManager {
     const plugin = pluginLoader.getPluginInstance('interface', intf);
     // ethX interfaces are always presented in config for now
 
-    const phystate = plugin && (await plugin.phystate()) || 0;
+    const phystate = plugin && (await plugin.phystate()) || "0";
     return { carrier : phystate };
   }
 
