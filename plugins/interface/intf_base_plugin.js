@@ -718,7 +718,8 @@ class InterfaceBasePlugin extends Plugin {
 
   // is the interface physically ready to connect
   async readyToConnect() {
-    return this.carrierState() === "1";
+    const carrierState = await this.carrierState();
+    return carrierState === "1";
   }
 
   async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
