@@ -74,8 +74,12 @@ class NetworkConfigManager {
     const plugin = pluginLoader.getPluginInstance('interface', intf);
     // ethX interfaces are always presented in config for now
 
-    const phystate = plugin && (await plugin.phystate()) || "0";
-    return { carrier : phystate };
+    if(!plugin) {
+      return {carrier : "0"};
+    }
+
+    const result = (await plugin.readyToConnect()) ? "1" : "0";
+    return { carrier : result };
   }
 
   async switchWifi(intf, ssid, params = {}, testOnly = false) {

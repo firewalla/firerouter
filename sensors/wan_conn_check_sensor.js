@@ -85,9 +85,9 @@ class WanConnCheckSensor extends Sensor {
   async _checkHttpConnectivity(intfPlugin, options = {}) {
     const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
-    const phystate = await intfPlugin.phystate();
-    if(phystate !== "1") {
-      this.log.debug("no need to check http as carrier is disconnected");
+    const r2c = await intfPlugin.readyToConnect();
+    if(!r2c) {
+      this.log.debug("no need to check http as physically not ready to connect");
       return;
     }
 

@@ -27,6 +27,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
+const ip = require('ip');
 
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
@@ -690,6 +691,20 @@ class InterfaceBasePlugin extends Plugin {
     return ip4s;
   }
 
+  async getIPv6Addresses() {
+    const ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
+    return ip6s;
+  }
+
+  async getRoutableIPv6Addresses() {
+    const ip6s = await this.getIPv6Addresses();
+    if(_.isEmpty(ip6s)) {
+      return ip6s;
+    }
+
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+  }
+
   // use a dedicated carrier state for fast processing
   async carrierState() {
     const state = await this._getSysFSClassNetValue("carrier");
@@ -701,8 +716,9 @@ class InterfaceBasePlugin extends Plugin {
     return state;
   }
 
-  async phystate() {
-    return this.carrierState();
+  // is the interface physically ready to connect
+  async readyToConnect() {
+    return this.carrierState() === "1";
   }
 
   async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
@@ -781,9 +797,9 @@ class InterfaceBasePlugin extends Plugin {
 
     const carrierState = await this.carrierState();
     const operstateState = await this.operstateState();
-    const phystate = await this.phystate();
-    if (phystate !== "1") {
-      this.log.warn(`Interface ${this.name} is not ready, phy: ${phystate}, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
+    const r2c = await this.readyToConnect();
+    if (!r2c) {
+      this.log.warn(`Interface ${this.name} is not ready, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
       active = false;
       carrierResult = false;
       failures.push({type: "carrier"});
