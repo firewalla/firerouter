@@ -17,9 +17,9 @@ run_host_light_until_paired &
 # use this user firereset binary if configured, for debugging purpose only
 USER_FIRERESET=/home/pi/.firewalla/run/firereset
 if [[ -e $USER_FIRERESET ]]; then
-  sudo $USER_FIRERESET -timeout 3600
+  sudo BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout 3600
   exit 0
 fi
 
 FIRERESET_BINARY=$(get_firereset_path)
-sudo $FIRERESET_BINARY -timeout 3600
+sudo BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout 3600
