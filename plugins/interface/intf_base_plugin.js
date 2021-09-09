@@ -692,7 +692,9 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
-    const ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
+    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
+    if (ip6s)
+      ip6s = ip6s.split("\n").filter(l => l.length > 0);
     return ip6s;
   }
 
