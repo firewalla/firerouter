@@ -116,6 +116,9 @@ class NetworkConfigManager {
           return {id, ssid, ssidHex, bssid, flags};
         })).catch(err => []);
         const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
+        // refresh interface link state to relinquish resources due to potential driver bug
+        await exec(`sudo ip link set ${intf} down`).catch((err) => {});
+        await exec(`sudo ip link set ${intf} up`).catch((err) => {});
         let selectedNetwork = networks.find(n => n.ssid === ssid || n.ssidHex === ssidHex); // in case of non-ascii characters, need to compare with hex string
         if (!selectedNetwork) {
           log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
@@ -162,6 +165,9 @@ class NetworkConfigManager {
           // if timeout exceeded or test only is set and connection is successful, switch back to previous setup 
           if (t2 - t1 > 15 || state === true && testOnly) {
             clearInterval(checkTask);
+            // refresh interface link state to relinquish resources due to potential driver bug
+            await exec(`sudo ip link set ${intf} down`).catch((err) => {});
+            await exec(`sudo ip link set ${intf} up`).catch((err) => {});
             // restore config from configuration file
             await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} reconfigure`).catch((err) => { });
             if (currentNetwork) // switch back to previous ssid
