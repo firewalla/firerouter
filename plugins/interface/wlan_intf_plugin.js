@@ -113,6 +113,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       this.log.warn(`Interface ${this.name} already exists`);
     }
 
+    // refresh interface state in case something is not relinquished in driver
+    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
+    await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
+
     if (this.networkConfig.wpaSupplicant) {
       const entries = [];
 
