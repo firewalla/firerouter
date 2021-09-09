@@ -33,8 +33,8 @@ const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firer
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
 const WLAN_AVAILABLE_RETRY = 3
-const WLAN_BGSCAN_INTERVAL = 20
-const WLAN_INIT_SCAN_RETRY = 3
+const WLAN_DEFAULT_SCAN_INTERVAL = 300
+const WLAN_BSS_EXPIRATION = 630
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -77,6 +77,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
+      if (this.scanTask) {
+        cancelInterval(this.scanTask)
+        this.scanTask = null
+      }
+
       await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       await fs.unlinkAsync(this._getWpaSupplicantConfigPath()).catch((err) => {});
     }
@@ -118,17 +123,12 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
           break; // stop on first successful call
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(2)
+        await util.delay(3)
       }
       availableWLANs = availableWLANs || []
 
       entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
-      // use high shreshold to force constant bgscan
-      // simple - Periodic background scans based on signal strength
-      // bgscan="simple:<short bgscan interval in seconds>:<signal strength threshold>:<long interval>"
-      entries.push(`bgscan="simple:${WLAN_BGSCAN_INTERVAL}:0:${WLAN_BGSCAN_INTERVAL}"`);
-      // autoscan is like bgscan but on disconnected or inactive state.
-      entries.push(`autoscan=periodic:${WLAN_BGSCAN_INTERVAL}`);
+      entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
 
       const networks = this.networkConfig.wpaSupplicant.networks || [];
       for (const network of networks) {
@@ -164,20 +164,19 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
-        // autoscan won't start until the first manual scan
-        (async () => {
-          for (let i = WLAN_INIT_SCAN_RETRY; i--; i) {
-            try {
-              await util.delay(10)
-              await exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
-            } catch(err) {
-              this.log.warn('Failed to start initial scan, trying again soon...')
-              continue
-            }
-            break
-          }
-        })()
+
+        // scan at a slow pace regularly to give instant response when requested
+        const scan = () => exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
+          .catch(err => log.warn('Failed to scan', err.message) )
+
+        // start first scan a little bit slower for the service to be initialized
+        setTimeout(scan, 10 * 1000)
+        this.scanTask = setInterval(scan, (this.networkConfig.wpaSupplicant.scanInterval || WLAN_DEFAULT_SCAN_INTERVAL) * 1000)
       } else {
+        if (this.scanTask) {
+          cancelInterval(this.scanTask)
+          this.scanTask = null
+        }
         await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       }
     }
