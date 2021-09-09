@@ -73,8 +73,11 @@ class NetworkConfigManager {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const plugin = pluginLoader.getPluginInstance('interface', intf);
     // ethX interfaces are always presented in config for now
+
+    // if any of the physical interfaces are not configured in firerouter config
+    // it will be recorded as 0 & "down" respectively
     const carrier = plugin && parseInt(await plugin.carrierState()) || 0;
-    const operstate = plugin && (await plugin.operstateState());
+    const operstate = plugin && (await plugin.operstateState()) || "down";
     return { carrier, operstate };
   }
 
