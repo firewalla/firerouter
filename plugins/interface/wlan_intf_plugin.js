@@ -77,6 +77,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
+      if (this.scanTask) {
+        cancelInterval(this.scanTask)
+        this.scanTask = null
+      }
+
       await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       await fs.unlinkAsync(this._getWpaSupplicantConfigPath()).catch((err) => {});
     }
