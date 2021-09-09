@@ -78,7 +78,7 @@ class NetworkConfigManager {
       return {carrier : "0"};
     }
 
-    const result = (await plugin.readyToConnect()) ? "1" : "0";
+    const result = (await plugin.readyToConnect().catch((err) => false)) ? "1" : "0";
     return { carrier : result };
   }
 
