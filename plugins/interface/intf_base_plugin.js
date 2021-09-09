@@ -889,7 +889,7 @@ class InterfaceBasePlugin extends Plugin {
     const result = {
       active: active, 
       forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
-      // Note! here the carrier result sent back to app is FALSE when carrier != 1 || operstate != up
+      // Note! here the carrier result sent back to app is FALSE when interface is not ready to connect (carrier down or operstatus not ready or no ip address)
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
