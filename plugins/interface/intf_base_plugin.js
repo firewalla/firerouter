@@ -696,6 +696,11 @@ class InterfaceBasePlugin extends Plugin {
     return state;
   }
 
+  async operstateState() {
+    const state = await this._getSysFSClassNetValue("operstate");
+    return state;
+  }
+
   async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
@@ -771,11 +776,12 @@ class InterfaceBasePlugin extends Plugin {
     const forceState = (extraConf && extraConf.forceState) || undefined;
 
     const carrierState = await this.carrierState();
-    if (carrierState !== "1") {
-      this.log.warn(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
+    const operstateState = await this.operstateState();
+    if (carrierState !== "1" || operstateState !== "up") {
+      this.log.warn(`Interface ${this.name} is not ready, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
       active = false;
       carrierResult = false;
-      failures.push({type: "carrier"});
+      failures.push({type: carrierState !== "1" ? "carrier" : "operstate"});
     } else
       carrierResult = true;
 
@@ -859,6 +865,7 @@ class InterfaceBasePlugin extends Plugin {
     const result = {
       active: active, 
       forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
+      // Note! here the carrier result sent back to app is FALSE when carrier != 1 || operstate != up
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
