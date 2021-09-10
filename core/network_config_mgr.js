@@ -70,11 +70,16 @@ class NetworkConfigManager {
   }
 
   async getInterfaceSimple(intf) {
-    const pluginLoader = require('../plugins/plugin_loader.js')
-    const plugin = pluginLoader.getPluginInstance('interface', intf)
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
     // ethX interfaces are always presented in config for now
-    const carrier = plugin && parseInt(await plugin.carrierState()) || 0
-    return { carrier }
+
+    if(!plugin) {
+      return {carrier : "0"};
+    }
+
+    const result = (await plugin.readyToConnect().catch((err) => false)) ? "1" : "0";
+    return { carrier : result };
   }
 
   async switchWifi(intf, ssid, params = {}, testOnly = false) {

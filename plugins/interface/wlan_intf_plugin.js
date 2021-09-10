@@ -28,6 +28,7 @@ const event = require('../../core/event.js');
 const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
@@ -61,6 +62,27 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async installWpaSupplicantScript() {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
+  }
+
+  async readyToConnect() {
+    const carrier = await this.carrierState();
+    if (carrier !== "1") {
+      return false;
+    }
+
+    const operstate = await this.operstateState();
+    if (operstate !== "up") {
+      return false;
+    }
+
+    const ipv4Addrs = await this.getIPv4Addresses();
+    const ipv6Addrs = await this.getRoutableIPv6Addresses();
+
+    if (_.isEmpty(ipv4Addrs) && _.isEmpty(ipv6Addrs)) {
+      return false;
+    }
+
+    return true;
   }
 
   async flush() {

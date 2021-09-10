@@ -27,6 +27,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
+const ip = require('ip');
 
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
@@ -690,10 +691,37 @@ class InterfaceBasePlugin extends Plugin {
     return ip4s;
   }
 
+  async getIPv6Addresses() {
+    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
+    if (ip6s)
+      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    return ip6s;
+  }
+
+  async getRoutableIPv6Addresses() {
+    const ip6s = await this.getIPv6Addresses();
+    if(_.isEmpty(ip6s)) {
+      return ip6s;
+    }
+
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+  }
+
   // use a dedicated carrier state for fast processing
   async carrierState() {
     const state = await this._getSysFSClassNetValue("carrier");
     return state;
+  }
+
+  async operstateState() {
+    const state = await this._getSysFSClassNetValue("operstate");
+    return state;
+  }
+
+  // is the interface physically ready to connect
+  async readyToConnect() {
+    const carrierState = await this.carrierState();
+    return carrierState === "1";
   }
 
   async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
@@ -771,8 +799,10 @@ class InterfaceBasePlugin extends Plugin {
     const forceState = (extraConf && extraConf.forceState) || undefined;
 
     const carrierState = await this.carrierState();
-    if (carrierState !== "1") {
-      this.log.warn(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
+    const operstateState = await this.operstateState();
+    const r2c = await this.readyToConnect();
+    if (!r2c) {
+      this.log.warn(`Interface ${this.name} is not ready, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
       active = false;
       carrierResult = false;
       failures.push({type: "carrier"});
@@ -859,6 +889,7 @@ class InterfaceBasePlugin extends Plugin {
     const result = {
       active: active, 
       forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
+      // Note! here the carrier result sent back to app is FALSE when interface is not ready to connect (carrier down or operstatus not ready or no ip address)
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
