@@ -192,7 +192,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         });
 
         // scan at a slow pace regularly to give instant response when requested
-        const scan = () => exec(`sudo wpa_cli -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} scan`)
+        const scan = () => exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} scan`)
           .catch(err => this.log.warn('Failed to scan', err.message) )
 
         // start first scan a little bit slower for the service to be initialized

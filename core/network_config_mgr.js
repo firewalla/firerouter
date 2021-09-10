@@ -393,11 +393,11 @@ class NetworkConfigManager {
 
     // this function is usually called multiple times by the same caller
     // start a scan here to give latest result to succeeding calls
-    exec(`sudo wpa_cli -p ${ctlSocket} scan`).catch(err => {
+    exec(`sudo ${platform.getWpaCliBinPath()} -p ${ctlSocket} -i ${targetWlan.name} scan`).catch(err => {
       log.warn('Failed to start scan', err.message)
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '5s', 'wpa_cli', '-p', ctlSocket, 'scan_results'])
+    const wpaCli = spawn('sudo', ['timeout', '5s', `${platform.getWpaCliBinPath()}`, '-p', ctlSocket, '-i', targetWlan.name, 'scan_results'])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
