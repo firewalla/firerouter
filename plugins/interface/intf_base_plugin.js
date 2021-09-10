@@ -931,7 +931,7 @@ class InterfaceBasePlugin extends Plugin {
     });
 
     if(dnsResult) {
-      return lines[0];
+      return dnsResult;
     } else {
       throw new Error("no dns result");
     }
