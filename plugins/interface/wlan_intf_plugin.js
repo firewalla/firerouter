@@ -78,7 +78,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
       if (this.scanTask) {
-        cancelInterval(this.scanTask)
+        clearInterval(this.scanTask)
         this.scanTask = null
       }
 
@@ -178,7 +178,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         this.scanTask = setInterval(scan, (this.networkConfig.wpaSupplicant.scanInterval || WLAN_DEFAULT_SCAN_INTERVAL) * 1000)
       } else {
         if (this.scanTask) {
-          cancelInterval(this.scanTask)
+          clearInterval(this.scanTask)
           this.scanTask = null
         }
         await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
