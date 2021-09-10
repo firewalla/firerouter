@@ -760,7 +760,7 @@ class InterfaceBasePlugin extends Plugin {
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m10 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
+    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
     const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
@@ -870,31 +870,13 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     if (active && dnsTestEnabled) {
-      const nameservers = await this.getDNSNameservers();
-      const ip4s = await this.getIPv4Addresses();
-      if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
-        const srcIP = ip4s[0].split('/')[0];
-        await Promise.all(nameservers.map(async (nameserver) => {
-          const result = await this._getDNSResult(dnsTestDomain, srcIP, nameserver).then(() => true).catch((err) => {
-            this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${this.name}`);
-            failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-            return false;
-          });
-          era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, result ? 0 : 1, {
-            "wan_intf_name":wanName,
-            "wan_intf_uuid":wanUUID,
-            "name_server":nameserver,
-            "dns_test_domain":dnsTestDomain
-          });
-          return result;
-        })).then(results => {
-          if (!results.some(result => result === true)) {
-            this.log.error(`DNS test failed on all nameservers on ${this.name}`);
-            dnsResult = false;
-            active = false;
-          } else
-            dnsResult = true;
-        });
+      const _dnsResult = await this.getDNSResult(dnsTestDomain);
+      if(!_dnsResult) {
+        this.log.error(`DNS test failed on all nameservers on ${this.name}`);
+        active = false;
+        dnsResult = false;
+      } else {
+        dnsResult = true;
       }
     }
 
@@ -920,23 +902,39 @@ class InterfaceBasePlugin extends Plugin {
     return result;
   }
 
+  // use throw error for Promise.any
   async _getDNSResult(dnsTestDomain, srcIP, nameserver) {
     const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
     const result = await exec(cmd);
-    if (!result || !result.stdout || result.stdout.trim().length === 0)  {
-      throw new Error("no dns result");
+
+    let dnsResult = null;
+
+    if (result && result.stdout && result.stdout.trim().length !== 0)  {
+      let lines = result.stdout.trim().split("\n");
+      lines = lines.filter((l) => {
+        return ip.isV4Format(l) || ip.isV6Format(l);
+      });
+      if (lines.length === 0) {
+        dnsResult = lines[0];
+      }
     }
 
-    let lines = result.stdout.trim().split("\n");
-    lines = lines.filter((l) => {
-      return ip.isV4Format(l) || ip.isV6Format(l);
+
+    const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
+    const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
+
+    era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
+      "wan_intf_name":wanName,
+      "wan_intf_uuid":wanUUID,
+      "name_server":nameserver,
+      "dns_test_domain":dnsTestDomain
     });
 
-    if (lines.length === 0) {
+    if(dnsResult) {
+      return lines[0];
+    } else {
       throw new Error("no dns result");
     }
-
-    return lines[0];
   }
 
   async getDNSResult(dnsTestDomain) {
