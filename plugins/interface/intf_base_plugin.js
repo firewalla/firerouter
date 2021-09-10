@@ -872,17 +872,8 @@ class InterfaceBasePlugin extends Plugin {
       if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
         const srcIP = ip4s[0].split('/')[0];
         await Promise.all(nameservers.map(async (nameserver) => {
-          const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
-          const result = await exec(cmd).then((result) => {
-            if (!result || !result.stdout || result.stdout.trim().length === 0)  {
-              this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${this.name}`);
-              failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-              return false;
-            } else {
-              return true;
-            }
-          }).catch((err) => {
-            this.log.error(`Failed to do DNS test using ${nameserver} on ${this.name}`, err.message);
+          const result = await this._getDNSResult(dnsTestDomain, srcIP, nameserver).catch((err) => {
+            this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${this.name}`);
             failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
             return false;
           });
@@ -927,7 +918,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getDNSResult(dnsTestDomain, srcIP, nameserver) {
-    const cmd = `dig -4 -b ${srcIP} +short +tries=2 @${nameserver} ${dnsTestDomain}`;
+    const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
     const result = await exec(cmd);
     if (!result || !result.stdout || result.stdout.trim().length === 0)  {
       throw new Error("no dns result");

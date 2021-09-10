@@ -210,12 +210,17 @@ class NetworkConfigManager {
 
     const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
-    for(const site of sites) {
-      const httpResult = await intfPlugin.checkHttpStatus(site);
-      if (httpResult) {
-        result.http = httpResult;
-        break;
+    const httpResult = await Promise.any(sites.map(async (site) => {
+      const result = await intfPlugin.checkHttpStatus(site);
+      if(!result) {
+        throw new Error("invalid");
       }
+    })).catch((err) => {
+      this.log.error("Failed to check http status on all sites, err:", err);
+    });
+
+    if (httpResult) {
+      result.http = httpResult;
     }
 
     result.ts = Math.floor(new Date() / 1000);
