@@ -102,11 +102,12 @@ class HostapdPlugin extends Plugin {
 
       let availableWLANs
       for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
-        availableWLANs = await ncm.getWlanAvailable(this.name)
-        break; // stop on first successful call
+        availableWLANs = await ncm.getWlansViaWpaSupplicant(this.name)
+        if (availableWLANs && availableWLANs.length)
+          break; // stop on first successful call
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await delay(2)
+        await delay(3)
       }
 
       if (!Array.isArray(availableWLANs)) {
@@ -116,6 +117,10 @@ class HostapdPlugin extends Plugin {
       }
       else {
         for (const network of availableWLANs) {
+          if (network.freq == 2484) network.channel = 14
+          else if (network.freq < 5000) network.channel = Math.round((network.freq - 2407) / 5)
+          else network.channel = Math.round((network.freq - 5000) / 5)
+
           const channelConfig = pluginConfig.channel[network.channel]
           if (!channelConfig) continue
 
