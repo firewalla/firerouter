@@ -18,6 +18,7 @@
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const _ = require('lodash');
+const url = require('url');
 
 const r = require('../../util/firerouter');
 
@@ -735,12 +736,29 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     }
 
+    const u = url.parse(defaultTestURL);
+    const hostname = u.hostname;
+    const protocol = u.protocol;
+    const port = u.port || protocol === "http:" && 80 || protocol === "https:" && 443;
+
+    if(!hostname || !port) {
+      this.log.error("invalid test url:", defaultTestURL);
+      return null;
+    }
+
     this.isHttpTesting = true;
+
+    const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
+    if(!dnsResult) {
+      this.log.error("failed to resolve dns on domain", u.hostname);
+      this.isHttpTesting = false;
+      return null;
+    }
 
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const output = await exec(`curl -${testURL.startsWith("https") ? 'k' : ''}sq -m10 --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
+    const output = await exec(`curl -${testURL.startsWith("https") ? 'k' : ''}sq -m10 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
@@ -906,6 +924,44 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     return result;
+  }
+
+  async _getDNSResult(dnsTestDomain, srcIP, nameserver) {
+    const cmd = `dig -4 -b ${srcIP} +short +tries=2 @${nameserver} ${dnsTestDomain}`;
+    const result = await exec(cmd);
+    if (!result || !result.stdout || result.stdout.trim().length === 0)  {
+      throw new Error("no dns result");
+    }
+
+    let lines = result.stdout.trim().split("\n");
+    lines = lines.filter((l) => {
+      return ip.isV4Format(l) || ip.isV6Format(l);
+    });
+
+    if (lines.length === 0) {
+      throw new Error("no dns result");
+    }
+
+    return lines[0];
+  }
+
+  async getDNSResult(dnsTestDomain) {
+    const nameservers = await this.getDNSNameservers();
+    const ip4s = await this.getIPv4Addresses();
+
+    if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
+      const srcIP = ip4s[0].split('/')[0];
+
+      const promises = [];
+      for(const nameserver of nameservers) {
+        promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver));
+      }
+
+      const result = await Promise.any(promises).catch((err) => null);
+      return result;
+    }
+
+    return null;
   }
 
   async state() {
