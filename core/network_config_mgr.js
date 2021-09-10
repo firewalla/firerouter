@@ -211,7 +211,7 @@ class NetworkConfigManager {
     }
 
     // if carrier not ready, just skip http testings
-    if(result.carrierResult) {
+    if(result.carrier) {
       const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
       // return if any of them succeeds

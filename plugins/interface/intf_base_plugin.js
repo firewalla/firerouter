@@ -831,6 +831,8 @@ class InterfaceBasePlugin extends Plugin {
       carrierResult = true;
 
     if (active && pingTestEnabled) {
+      // no need to use Promise.any as ping test time for each target is the same
+      // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
@@ -914,7 +916,7 @@ class InterfaceBasePlugin extends Plugin {
       lines = lines.filter((l) => {
         return ip.isV4Format(l) || ip.isV6Format(l);
       });
-      if (lines.length === 0) {
+      if (lines.length !== 0) {
         dnsResult = lines[0];
       }
     }
@@ -949,7 +951,10 @@ class InterfaceBasePlugin extends Plugin {
         promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver));
       }
 
-      const result = await Promise.any(promises).catch((err) => null);
+      const result = await Promise.any(promises).catch((err) => {
+        this.log.error("no valid dns from any nameservers", err.message);
+        return null;
+      });
       return result;
     }
 
