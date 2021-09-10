@@ -35,6 +35,8 @@ const util = require('../util/util.js');
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 
+const Promise = require('bluebird');
+
 class NetworkConfigManager {
   constructor() {
     if(instance === null) {
@@ -210,13 +212,15 @@ class NetworkConfigManager {
 
     const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
+    // return if any of them succeeds
     const httpResult = await Promise.any(sites.map(async (site) => {
       const result = await intfPlugin.checkHttpStatus(site);
       if(!result) {
-        throw new Error("invalid");
+        throw new Error("http check failed on site " + site);
       }
+      return result;
     })).catch((err) => {
-      this.log.error("Failed to check http status on all sites, err:", err);
+      log.error("Failed to check http status on all sites, err:", err);
     });
 
     if (httpResult) {

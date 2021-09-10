@@ -731,7 +731,9 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     }
 
-    if(this.isHttpTesting) {
+    this.isHttpTesting = this.isHttpTesting || {};
+
+    if(this.isHttpTesting[defaultTestURL]) {
       this.log.info("last round of http testing is not finished yet, this round is skipped.");
       return null;
     }
@@ -746,24 +748,25 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     }
 
-    this.isHttpTesting = true;
+    this.isHttpTesting[defaultTestURL] = true;
 
     const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
     if(!dnsResult) {
       this.log.error("failed to resolve dns on domain", u.hostname);
-      this.isHttpTesting = false;
+      delete this.isHttpTesting[defaultTestURL];
       return null;
     }
 
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const output = await exec(`curl -${testURL.startsWith("https") ? 'k' : ''}sq -m10 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
+    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m10 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
+    const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
 
-    this.isHttpTesting = false;
+    delete this.isHttpTesting[defaultTestURL];
 
     if (!output)
       return null;
@@ -872,7 +875,7 @@ class InterfaceBasePlugin extends Plugin {
       if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
         const srcIP = ip4s[0].split('/')[0];
         await Promise.all(nameservers.map(async (nameserver) => {
-          const result = await this._getDNSResult(dnsTestDomain, srcIP, nameserver).catch((err) => {
+          const result = await this._getDNSResult(dnsTestDomain, srcIP, nameserver).then(() => true).catch((err) => {
             this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${this.name}`);
             failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
             return false;
