@@ -77,10 +77,10 @@ class NetworkConfigManager {
     // ethX interfaces are always presented in config for now
 
     if(!plugin) {
-      return {carrier : "0"};
+      return {carrier : 0};
     }
 
-    const result = (await plugin.readyToConnect().catch((err) => false)) ? "1" : "0";
+    const result = (await plugin.readyToConnect().catch((err) => false)) ? 1 : 0;
     return { carrier : result };
   }
 
