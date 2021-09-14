@@ -770,7 +770,7 @@ class RoutingPlugin extends Plugin {
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
-    }, 10000);
+    }, 6000);
   }
 
   async enrichWanStatus(wanStatus) {
