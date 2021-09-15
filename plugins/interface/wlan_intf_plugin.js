@@ -113,6 +113,42 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return `${r.getUserConfigFolder()}/wpa_supplicant/${this.name}.conf`;
   }
 
+  async writeConfigFile(availableWLANs) {
+    const entries = []
+    entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
+    entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
+
+    const networks = this.networkConfig.wpaSupplicant.networks || [];
+    for (const network of networks) {
+      const prioritizedNetworks = (availableWLANs || [])
+        .filter(n => n.ssid == network.ssid && n.freq > 5000 && n.signal > -80)
+      if (prioritizedNetworks.length) {
+        entries.push("network={");
+        for (const key of Object.keys(network)) {
+          if (key == 'priority')
+            entries.push(`\tpriority=${network[key]+1}`);
+          else {
+            const value = await util.generateWpaSupplicantConfig(key, network);
+            entries.push(`\t${key}=${value}`);
+          }
+        }
+        if (!'priority' in network) {
+          entries.push(`\tpriority=1`);
+        }
+        entries.push(`\tfreq_list=${prioritizedNetworks.map(p => p.freq).join(' ')}`);
+        entries.push("}\n");
+      }
+
+      entries.push("network={");
+      for (const key of Object.keys(network)) {
+        const value = await util.generateWpaSupplicantConfig(key, network);
+        entries.push(`\t${key}=${value}`);
+      }
+      entries.push("}\n");
+    }
+    await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
+  }
+
   async createInterface() {
     const ifaceExists = await exec(`ip link show dev ${this.name}`).then(() => true).catch((err) => false);
     if (!ifaceExists) {
@@ -140,51 +176,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
 
     if (this.networkConfig.wpaSupplicant) {
-      const entries = [];
 
-      let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
-        availableWLANs = await ncm.getWlansViaWpaSupplicant()
-        if (availableWLANs && availableWLANs.length)
-          break; // stop on first successful call
-      } catch(err) {
-        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(3)
-      }
-      availableWLANs = availableWLANs || []
-
-      entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
-      entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
-
-      const networks = this.networkConfig.wpaSupplicant.networks || [];
-      for (const network of networks) {
-
-        const prioritizedNetworks = availableWLANs
-          .filter(n => n.ssid == network.ssid && n.freq > 5000 && n.signal > -80)
-        if (prioritizedNetworks.length) {
-          entries.push("network={");
-          for (const key of Object.keys(network)) {
-            if (key == 'priority')
-              entries.push(`\tpriority=${network[key]+1}`);
-            else {
-              const value = await util.generateWpaSupplicantConfig(key, network);
-              entries.push(`\t${key}=${value}`);
-            }
-          }
-          if (!network.priority) {
-            entries.push(`\tpriority=1`);
-          }
-          entries.push(`\tfreq_list=${prioritizedNetworks.map(p => p.freq).join(' ')}`);
-          entries.push("}\n");
-        }
-        entries.push("network={");
-        for (const key of Object.keys(network)) {
-          const value = await util.generateWpaSupplicantConfig(key, network);
-          entries.push(`\t${key}=${value}`);
-        }
-        entries.push("}\n");
-      }
-      await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
+      await this.writeConfigFile()
 
       if (this.networkConfig.enabled) {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
@@ -198,6 +191,29 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         // start first scan a little bit slower for the service to be initialized
         setTimeout(scan, 10 * 1000)
         this.scanTask = setInterval(scan, (this.networkConfig.wpaSupplicant.scanInterval || WLAN_DEFAULT_SCAN_INTERVAL) * 1000)
+
+        setTimeout(async () => {
+          this.log.info('Calibrating wpa_supplicant')
+          let availableWLANs
+          for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
+            availableWLANs = await ncm.getWlansViaWpaSupplicant()
+            if (availableWLANs && availableWLANs.length)
+              break; // stop on first successful call
+            else
+              this.log.info('No wlan found, trying again ...')
+            await util.delay(2)
+          } catch(err) {
+            this.log.warn('Error scanning WLAN, trying again ...', err.message)
+            await util.delay(2)
+          }
+
+          if (!availableWLANs || !availableWLANs.length) {
+            this.log.error('Failed to retrieve WLAN list, exit')
+            return
+          }
+          await this.writeConfigFile(availableWLANs)
+          await exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} reconfigure`)
+        }, 20 * 1000)
       } else {
         if (this.scanTask) {
           clearInterval(this.scanTask)

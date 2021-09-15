@@ -401,19 +401,21 @@ class NetworkConfigManager {
       return []
     }
 
+    const wpaCliPath = platform.getWpaCliBinPath();
     const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
 
     // this function is usually called multiple times by the same caller
     // start a scan here to give latest result to succeeding calls
-    exec(`sudo ${platform.getWpaCliBinPath()} -p ${ctlSocket} -i ${targetWlan.name} scan`).catch(err => {
+    exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${targetWlan.name} scan`).catch(err => {
       log.warn('Failed to start scan', err.message)
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '5s', `${platform.getWpaCliBinPath()}`, '-p', ctlSocket, '-i', targetWlan.name, 'scan_results'])
+    const wpaCli = spawn('sudo', ['timeout', '5s', `${wpaCliPath}`, '-p', ctlSocket, '-i', targetWlan.name, 'scan_results'])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
     wpaCli.on('exit', code => {
+      // if the code is 255, wpa_supplicant is probably not initialized
       if (code)
         log.warn('wpa_cli exited with code', code)
     })

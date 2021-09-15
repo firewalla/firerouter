@@ -19,7 +19,6 @@ const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const ncm = require('../../core/network_config_mgr')
 const platform = require('../../platform/PlatformLoader').getPlatform()
-const { delay } = require('../../util/util')
 
 const hostapdServiceFileTemplate = __dirname + "/firerouter_hostapd@.template.service";
 const hostapdScript = __dirname + "/hostapd.sh";
@@ -101,16 +100,19 @@ class HostapdPlugin extends Plugin {
       const scores = {}
 
       let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--;) try {
-        availableWLANs = await ncm.getWlansViaWpaSupplicant(this.name)
+      for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
+        availableWLANs = await ncm.getWlansViaWpaSupplicant()
         if (availableWLANs && availableWLANs.length)
           break; // stop on first successful call
+        else
+          this.log.warn('No wlan found, trying again...')
+        await util.delay(2)
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await delay(3)
+        await util.delay(2)
       }
 
-      if (!Array.isArray(availableWLANs)) {
+      if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
         // 5G network is preferred
         parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
         this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
