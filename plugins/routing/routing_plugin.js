@@ -760,7 +760,7 @@ class RoutingPlugin extends Plugin {
       return hasCarrierError ? 0.5 : 3;
     }
 
-    return hasCarrierError ? 3 : 10;
+    return hasCarrierError ? 3 : 6;
   }
 
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
