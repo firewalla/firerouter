@@ -741,17 +741,30 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  shouldSwitchFaster(changeDesc = {}) {
+  // in seconds
+  getApplyTimeoutInterval(changeDesc = {}) {
     const failures = changeDesc.failures || [];
     const carrierFailures = failures.filter((x) => x.type === 'carrier');
-    return !_.isEmpty(carrierFailures);
+    const hasCarrierError = !_.isEmpty(carrierFailures);
+
+    if(!this.lastApplyTimestamp) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    const secondsSinceLastApply = Math.floor(new Date() / 1000 - this.lastApplyTimestamp / 1000);
+    if(secondsSinceLastApply > 20) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    return hasCarrierError ? 3 : 10;
   }
 
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
     this._pendingChangeDescs = this._pendingChangeDescs || [];
     this._pendingChangeDescs.push(changeDesc);
 
-    const timeoutInterval = this.shouldSwitchFaster(changeDesc) ? 1 : 10; // 1s or 10seconds
+    const timeoutInterval = this.getApplyTimeoutInterval(changeDesc);
+    this.log.info("Going to change global default routing in ${timeoutInterval} seconds...");
 
     if (this.applyActiveGlobalDefaultRoutingTask)
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
