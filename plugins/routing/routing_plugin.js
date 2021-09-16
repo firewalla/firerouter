@@ -152,10 +152,14 @@ class RoutingPlugin extends Plugin {
 
   meterApplyActiveGlobalDefaultRouting() {
     const now = new Date();
+
     if(this.lastApplyTimestamp) {
       const diff = Math.floor(now / 1000 - this.lastApplyTimestamp / 1000);
       this.log.info(`applying active global default routing, ${diff} seconds since last time apply`);
+    } else {
+      this.log.info(`applying active global default routing, first time since firerouter starting up`);
     }
+
     this.lastApplyTimestamp = now;
   }
 
@@ -780,7 +784,7 @@ class RoutingPlugin extends Plugin {
       }));
       // in async context here
       this._applyActiveGlobalDefaultRouting(true).then(() => {
-        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
+        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {});
         this.propagateEvent(e);
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
