@@ -741,9 +741,18 @@ class RoutingPlugin extends Plugin {
     }
   }
 
+  shouldSwitchFaster(changeDesc = {}) {
+    const failures = changeDesc.failures || [];
+    const carrierFailures = failures.filter((x) => x.type === 'carrier');
+    return !_.isEmpty(carrierFailures);
+  }
+
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
     this._pendingChangeDescs = this._pendingChangeDescs || [];
     this._pendingChangeDescs.push(changeDesc);
+
+    const timeoutInterval = this.shouldSwitchFaster(changeDesc) ? 1 : 10; // 1s or 10seconds
+
     if (this.applyActiveGlobalDefaultRoutingTask)
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
@@ -754,7 +763,7 @@ class RoutingPlugin extends Plugin {
           seq: this._wanStatus[i].seq,
           successCount: this._wanStatus[i].successCount,
           failureCount:  this._wanStatus[i].failureCount
-        }
+        };
       }));
       // in async context here
       this._applyActiveGlobalDefaultRouting(true).then(() => {
@@ -770,7 +779,7 @@ class RoutingPlugin extends Plugin {
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
-    }, 10000);
+    }, timeoutInterval * 1000);
   }
 
   async enrichWanStatus(wanStatus) {
