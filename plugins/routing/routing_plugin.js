@@ -768,7 +768,7 @@ class RoutingPlugin extends Plugin {
     this._pendingChangeDescs.push(changeDesc);
 
     const timeoutInterval = this.getApplyTimeoutInterval(changeDesc);
-    this.log.info("Going to change global default routing in ${timeoutInterval} seconds...");
+    this.log.info(`Going to change global default routing in ${timeoutInterval} seconds...`);
 
     if (this.applyActiveGlobalDefaultRoutingTask)
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
