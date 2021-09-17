@@ -131,7 +131,8 @@
     {
       "file_path": "./ifplug_sensor.js",
       "config": {
-        "up_delay": 5
+        "up_delay": 5,
+        "down_delay": 5
       }
     },
     {
