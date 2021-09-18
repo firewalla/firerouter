@@ -105,10 +105,11 @@ class NetworkConfigManager {
         if (!config.wpaSupplicant) {
           done(null, [`wpa_supplicant is not configured on ${intf}`]);
           return;
-        } 
+        }
         const wpaCliPath = platform.getWpaCliBinPath();
         const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
         const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
+          // TODO: taking care of SSID with '\t'?
           const [id, ssid, bssid, flags] = line.split('\t', 4);
           const hexArray = [];
           for (let i = 0; i < ssid.length; i++) {
@@ -121,7 +122,10 @@ class NetworkConfigManager {
           }
           const ssidHex = hexArray.map(hex => `\\x${hex}`).join("");
           return {id, ssid, ssidHex, bssid, flags};
-        })).catch(err => []);
+        })).catch(err => {
+          log.error('Failed to parse network list', err)
+          return []
+        });
         const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
         // refresh interface link state to relinquish resources due to potential driver bug
         await exec(`sudo ip link set ${intf} down`).catch((err) => {});
@@ -133,7 +137,7 @@ class NetworkConfigManager {
           if (networkId === null) {
             done(null, [`Failed to add new network ${ssid}`]);
             return;
-          }  
+          }
           selectedNetwork = {id: networkId, ssid: ssid, bssid: params.bssid, flags: null};
         }
         if (!params.hasOwnProperty("ssid"))
@@ -169,7 +173,7 @@ class NetworkConfigManager {
           } else {
             t2 = Date.now() / 1000;
           }
-          // if timeout exceeded or test only is set and connection is successful, switch back to previous setup 
+          // if timeout exceeded or test only is set and connection is successful, switch back to previous setup
           if (t2 - t1 > 15 || state === true && testOnly) {
             clearInterval(checkTask);
             // refresh interface link state to relinquish resources due to potential driver bug
@@ -210,7 +214,7 @@ class NetworkConfigManager {
       throw new Error(`Interface ${iface} is not a WAN interface`);
 
     let result = {};
-    
+
     result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 1, 0.5, "github.com", options);
     if (result.dns === null) {
       result.dns = false;

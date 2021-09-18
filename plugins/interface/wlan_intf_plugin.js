@@ -33,7 +33,7 @@ const _ = require('lodash');
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
-const WLAN_AVAILABLE_RETRY = 3
+const WLAN_INIT_SCAN_DELAY = 10
 const WLAN_DEFAULT_SCAN_INTERVAL = 300
 const WLAN_BSS_EXPIRATION = 630
 
@@ -189,31 +189,9 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
           .catch(err => this.log.warn('Failed to scan', err.message) )
 
         // start first scan a little bit slower for the service to be initialized
-        setTimeout(scan, 10 * 1000)
+        setTimeout(scan, WLAN_INIT_SCAN_DELAY * 1000)
         this.scanTask = setInterval(scan, (this.networkConfig.wpaSupplicant.scanInterval || WLAN_DEFAULT_SCAN_INTERVAL) * 1000)
 
-        setTimeout(async () => {
-          this.log.info('Calibrating wpa_supplicant')
-          let availableWLANs
-          for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
-            availableWLANs = await ncm.getWlansViaWpaSupplicant()
-            if (availableWLANs && availableWLANs.length)
-              break; // stop on first successful call
-            else
-              this.log.info('No wlan found, trying again ...')
-            await util.delay(2)
-          } catch(err) {
-            this.log.warn('Error scanning WLAN, trying again ...', err.message)
-            await util.delay(2)
-          }
-
-          if (!availableWLANs || !availableWLANs.length) {
-            this.log.error('Failed to retrieve WLAN list, exit')
-            return
-          }
-          await this.writeConfigFile(availableWLANs)
-          await exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} reconfigure`)
-        }, 20 * 1000)
       } else {
         if (this.scanTask) {
           clearInterval(this.scanTask)
