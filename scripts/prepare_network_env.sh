@@ -9,6 +9,12 @@ sudo iptables -w -t nat -N FR_UPNP &> /dev/null
 sudo iptables -w -t nat -F FR_UPNP
 sudo iptables -w -t nat -A FR_PREROUTING -j FR_UPNP
 
+# not used, but it is required for miniupnpd to populate rules in forward chains
+sudo iptables -w -t nat -N FR_UPNP_POSTROUTING &> /dev/null
+sudo iptables -w -t nat -F FR_UPNP_POSTROUTING
+
+sudo iptables -w -N FR_UPNP_ACCEPT &>/dev/null
+
 sudo iptables -w -t nat -N FR_WIREGUARD &> /dev/null
 sudo iptables -w -t nat -F FR_WIREGUARD
 
@@ -84,10 +90,6 @@ sudo iptables -w -A FR_FORWARD -j FR_IGMP
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
 sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
-
-sudo ip6tables -w -t nat -N FR_UPNP &> /dev/null
-sudo ip6tables -w -t nat -F FR_UPNP
-sudo ip6tables -w -t nat -A FR_PREROUTING -j FR_UPNP
 
 sudo ip6tables -w -t nat -N FR_WIREGUARD &> /dev/null
 sudo ip6tables -w -t nat -F FR_WIREGUARD

@@ -9,6 +9,8 @@ enable_natpmp=%ENABLE_NATPMP%
 enable_upnp=%ENABLE_UPNP%
 
 upnp_nat_chain=UPNP_%INTERNAL_INTERFACE%
+upnp_filter_chain=UPNP_%INTERNAL_INTERFACE%
+upnp_nat_postrouting_chain=UPNP_PR_%INTERNAL_INTERFACE%
 
 lease_file=/var/run/upnp.%INTERNAL_INTERFACE%.leases
 
