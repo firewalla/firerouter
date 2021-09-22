@@ -152,10 +152,14 @@ class RoutingPlugin extends Plugin {
 
   meterApplyActiveGlobalDefaultRouting() {
     const now = new Date();
+
     if(this.lastApplyTimestamp) {
       const diff = Math.floor(now / 1000 - this.lastApplyTimestamp / 1000);
       this.log.info(`applying active global default routing, ${diff} seconds since last time apply`);
+    } else {
+      this.log.info(`applying active global default routing, first time since firerouter starting up`);
     }
+
     this.lastApplyTimestamp = now;
   }
 
@@ -741,11 +745,36 @@ class RoutingPlugin extends Plugin {
     }
   }
 
+  // in seconds
+  getApplyTimeoutInterval(changeDesc = {}) {
+    const failures = changeDesc.failures || [];
+    const carrierFailures = failures.filter((x) => x.type === 'carrier');
+    const hasCarrierError = !_.isEmpty(carrierFailures);
+
+    if(!this.lastApplyTimestamp) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    const secondsSinceLastApply = Math.floor(new Date() / 1000 - this.lastApplyTimestamp / 1000);
+    if(secondsSinceLastApply > 20) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    return hasCarrierError ? 3 : 10;
+  }
+
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
     this._pendingChangeDescs = this._pendingChangeDescs || [];
     this._pendingChangeDescs.push(changeDesc);
-    if (this.applyActiveGlobalDefaultRoutingTask)
+
+    const timeoutInterval = this.getApplyTimeoutInterval(changeDesc);
+
+    if (this.applyActiveGlobalDefaultRoutingTask) {
+      this.log.info("Cancelled scheduled active global default routing change");
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
+    }
+
+    this.log.info(`Going to change global default routing in ${timeoutInterval} seconds...`);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
       this.log.info("Apply active global default routing", Object.keys(this._wanStatus).map(i => {
         return {
@@ -754,11 +783,11 @@ class RoutingPlugin extends Plugin {
           seq: this._wanStatus[i].seq,
           successCount: this._wanStatus[i].successCount,
           failureCount:  this._wanStatus[i].failureCount
-        }
+        };
       }));
       // in async context here
       this._applyActiveGlobalDefaultRouting(true).then(() => {
-        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
+        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {});
         this.propagateEvent(e);
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
@@ -770,7 +799,7 @@ class RoutingPlugin extends Plugin {
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
-    }, 10000);
+    }, timeoutInterval * 1000);
   }
 
   async enrichWanStatus(wanStatus) {
