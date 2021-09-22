@@ -46,6 +46,7 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
     await exec(`ip a show ${this.name} || sudo ip tuntap add mode tun user ${user} name ${this.name}`).catch((err) => {
       this.log.error(`Failed to create interface ${this.name}, err:`, err);
     }); // catch the error as it's likely not to be critical
+    return true;
   }
 
   async changeRoutingTables() {

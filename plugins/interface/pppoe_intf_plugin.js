@@ -65,7 +65,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     // create config file instead
     if (!this.networkConfig || !this.networkConfig.username || !this.networkConfig.password) {
       this.log.error("username or password is not specified for pppoe", this.name);
-      return;
+      return false;
     }
     let config = await fs.readFileAsync(pppoeTemplateFilePath, {encoding: "utf8"});
     const username = this.networkConfig.username;
@@ -91,6 +91,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     } else {
       this.fatal(`Failed to find interface plugin ${intf}`);
     }
+    return true;
   }
 
   async interfaceUpDown() {
@@ -127,6 +128,11 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     if (eventType === event.EVENT_PPPOE_IPV6_UP) {
       this.applyIpv6Settings().catch((err) => {
         this.log.error(`Failed to apply IPv6 settings on ${this.name}`, err.message);
+      });
+    }
+    if (eventType === event.EVENT_IP_CHANGE) {
+      this.setSysOpts().catch((err) => {
+        this.log.error(`Failed to set sys opts on ${this.name}`, err.message);
       });
     }
   }

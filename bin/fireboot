@@ -10,6 +10,14 @@ redis-cli del "fireboot:network_down:code"
 source ${FIREROUTER_HOME}/bin/common
 source ${FIREROUTER_HOME}/platform/platform.sh
 
+NODE_MODULES_PATH=$(get_node_modules_dir)
+if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
+  if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
+    rm ${FIREROUTER_HOME}/node_modules
+    ln -s $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+  fi
+fi
+
 # step 1 - init network config
 rc=0
 
@@ -78,7 +86,7 @@ touch /home/pi/.firewalla/managed_reboot
 sudo systemctl start firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"
-
+redis-cli HINCRBY "stats:systemd:restart" FireBoot 1
 update_timezone
 
 exit 0

@@ -15,7 +15,6 @@
 
 'use strict';
 
-const log = require('./util/logger')(__filename);
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -25,6 +24,18 @@ class Platform {
   }
 
   getType() {
+  }
+
+  getDefaultNetworkJsonFile() {
+    return `${__dirname}/../network/default_setup.json`;
+  }
+
+  async getWlanVendor() {
+    return '';
+  }
+
+  getWpaCliBinPath() {
+    return null;
   }
 }
 

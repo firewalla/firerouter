@@ -66,6 +66,10 @@ class MDNSReflectorPlugin extends Plugin {
         this.log.warn(`Interface ${this.name} is not enabled`);
         return;
       }
+      if (await ifacePlugin.isInterfacePresent() === false) {
+        this.log.warn(`Interface ${iface} is not present yet`);
+        return;
+      }
       // create a dummy file which indicates mDNS reflector is enabled on this interface
       await fs.writeFileAsync(confPath, iface, {encoding: 'utf8'});
     } else {
