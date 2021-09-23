@@ -61,6 +61,7 @@ init_network_config() {
   END=$(date +%s)
   echo "Successfully apply last network config, took $(( $END - $BEGIN )) seconds to finish"
 
+  wait_until_any_wan_carrier_connected
   test_network
 }
 
