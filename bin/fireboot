@@ -28,6 +28,8 @@ fi
 
 logger "Uptime after init_network_config: $(awk '{print $1}' /proc/uptime)"
 
+wait_until_any_wan_carrier_connected
+
 bootingComplete=$(redis-cli get bootingComplete)
 while [[ ! $rc -eq 0 ]]; do
   redis-cli set "fireboot:status" "network_down"

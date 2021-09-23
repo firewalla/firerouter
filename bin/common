@@ -83,6 +83,23 @@ test_curl_http_code() {
     fi
 }
 
+test_any_wan_carrier_connected() {
+  count=$(curl -s localhost:8837/v1/config/wan/connectivity | jq '.wans | with_entries(select(.value.carrier == true)) | length')
+  test $? -ne 0 && return 1
+  test $count -gt 0 && return 0
+  return 2
+}
+
+wait_until_any_wan_carrier_connected() {
+  redis-cli set "fireboot:status" "wait_wan_carrier"
+  _cnt=0
+  while !test_any_wan_carrier_connected; do
+    (( _cnt++ ))
+    redis-cli set "fireboot:status:code" $_cnt
+    sleep 2
+  done
+}
+
 test_network() {
   echo "Testing network connectivity ..."
   # if fireboot:status is network_down, this function will be invoked in an infinite loop in fireboot, do not override network_down in such case
