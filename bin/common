@@ -100,6 +100,7 @@ wait_until_any_wan_carrier_connected() {
     redis-cli set "fireboot:status:code" $_cnt
     sleep 2
   done
+  echo "Confirmed that wan carrier is connected"
 }
 
 test_network() {
