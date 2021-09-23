@@ -81,6 +81,14 @@ cur_branch=$(git rev-parse --abbrev-ref HEAD)
 switch_branch $cur_branch $branch || exit 1
 # remove prepared flag file to trigger prepare_env during next init_network_config
 rm -f /dev/shm/firerouter.prepared
+# set node_modules link to the proper directory
+NODE_MODULES_PATH=$(get_node_modules_dir)
+if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
+  if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
+    rm ${FIREROUTER_HOME}/node_modules
+    ln -s $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+  fi
+fi
 
 if [[ $NETWORK_SETUP == "yes" ]]; then
   sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
