@@ -142,8 +142,7 @@ eval $GIT_COMMAND ||
 NODE_MODULES_PATH=$(get_node_modules_dir)
 if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
   if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
-    rm ${FIREROUTER_HOME}/node_modules
-    ln -s $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+    ln -sfT $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
   fi
 fi
 
