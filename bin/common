@@ -93,6 +93,7 @@ test_any_wan_carrier_connected() {
 
 wait_until_any_wan_carrier_connected() {
   redis-cli set "fireboot:status" "wait_wan_carrier"
+  echo "Checking if any wan carrier is connected"
   _cnt=0
   while ! test_any_wan_carrier_connected; do
     (( _cnt++ ))
