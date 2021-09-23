@@ -85,7 +85,7 @@ test_curl_http_code() {
 }
 
 test_any_wan_carrier_connected() {
-  count=$(curl -s localhost:8837/v1/config/wan/connectivity | jq '.wans | with_entries(select(.value.carrier == true)) | length')
+  count=$(curl -s localhost:8837/v1/config/wan/connectivity?live=true | jq '.wans | with_entries(select(.value.carrier == true)) | length')
   test $? -ne 0 && return 1
   test $count -gt 0 && return 0
   return 2
