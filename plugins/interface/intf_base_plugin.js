@@ -609,6 +609,18 @@ class InterfaceBasePlugin extends Plugin {
       });
   }
 
+  getDefaultMTU() {
+    return null;
+  }
+
+  async setMTU() {
+    const mtu = this.networkConfig.mtu || this.getDefaultMTU();
+    if (mtu)
+      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
+        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
+      });
+  }
+
   async setSysOpts() {
     if (this.networkConfig.sysOpts) {
       for (const key of Object.keys(this.networkConfig.sysOpts)) {
@@ -646,6 +658,8 @@ class InterfaceBasePlugin extends Plugin {
       return;
 
     await this.setHardwareAddress();
+
+    await this.setMTU();
 
     await this.applyIpSettings();
 
