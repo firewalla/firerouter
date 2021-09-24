@@ -24,11 +24,12 @@ const platformLoader = require('../platform/PlatformLoader.js');
 const platform = platformLoader.getPlatform();
 const era = require('../event/EventRequestApi.js');
 const EventConstants = require('../event/EventConstants.js');
-const ncm = require('../core/network_config_mgr')
+const util = require('../util/util.js');
 
 class WPAConnectionSensor extends Sensor {
 
   async run() {
+    this.reconfigFlags = {}
     sclient.on("message", async (channel, message) => {
       try {
         let eventType = null;
@@ -55,34 +56,14 @@ class WPAConnectionSensor extends Sensor {
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
           let ssid = null;
           if (wpaId !== undefined) {
-            ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid | tr -d '"'`).then(result => result.stdout.trim()).catch((err) => null);
-            if (eventType == event.EVENT_WPA_CONNECTED) {
-              const freq = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} status | grep freq=`)
-                .then(result => result.stdout.trim().split('=')[1])
-                .catch(err => {
-                  this.log.error('Error parsing wlan status', err)
-                  return NaN
-                });
-              if (freq < 5000) {
-                this.log.info(`Connected on freq ${freq}, looking for 5G options`)
-                const availableWLANs = await ncm.getWlansViaWpaSupplicant()
-                if (!availableWLANs || !availableWLANs.length) {
-                  this.log.error('Failed to retrieve WLAN list, exit')
-                  return
-                }
-                this.log.debug('availableWLANs', availableWLANs)
-                const prioritizedNetworks = availableWLANs
-                  .filter(n => n.ssid == ssid && n.freq > 5000 && n.signal > -80)
-                this.log.debug('prioritizedNetworks', prioritizedNetworks)
-                if (prioritizedNetworks.length) {
-                  await ncm.switchWifi(iface, ssid, {freq_list: prioritizedNetworks.map(p => p.freq).join(' ')})
-                } else {
-                  this.log.info('Nothing better is found')
-                }
-              }
-            } else if (eventType == event.EVENT_WPA_DISCONNECTED) {
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} reconfig`)
-            }
+            ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid`)
+              .then(result => result.stdout.trim())
+              .then(str => str.startsWith('\"') && str.endsWith('\"') ?
+                str.slice(1, -1) : util.parseHexString(str)
+              ).catch(err => {
+                this.log.error('Failed to get ssid', err)
+                return null
+              });
           }
           const ifaceName = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.name;
           const ifaceUUID = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;

@@ -215,6 +215,19 @@ function parseEscapedString(escaped) {
   return Buffer.from(chArray.join(''), 'latin1').toString()
 }
 
+function parseHexString(str) {
+  if (!str) return ''
+  if (!_.isString(str)) throw new Error('Invalid Input', str)
+
+  const chArray = []
+  let i = 0
+  while (i < str.length) {
+    const num = parseInt(str[i++] + str[i++], 16)
+    chArray.push(String.fromCharCode(num))
+  }
+  return Buffer.from(chArray.join(''), 'latin1').toString()
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -226,4 +239,5 @@ module.exports = {
   generatePSK: generatePSK,
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
   parseEscapedString,
+  parseHexString,
 };

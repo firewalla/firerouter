@@ -16,7 +16,6 @@
 'use strict';
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
-const ncm = require('../../core/network_config_mgr')
 
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
@@ -33,7 +32,7 @@ const _ = require('lodash');
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
-const WLAN_INIT_SCAN_DELAY = 10
+const WLAN_INIT_SCAN_DELAY = 3
 const WLAN_DEFAULT_SCAN_INTERVAL = 300
 const WLAN_BSS_EXPIRATION = 630
 
@@ -185,8 +184,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         });
 
         // scan at a slow pace regularly to give instant response when requested
-        const scan = () => exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} scan`)
-          .catch(err => this.log.warn('Failed to scan', err.message) )
+        const scan = () => {
+          this.log.debug('Initiate background scan')
+          exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} scan`)
+            .catch(err => this.log.warn('Failed to scan', err.message) )
+        }
 
         // start first scan a little bit slower for the service to be initialized
         setTimeout(scan, WLAN_INIT_SCAN_DELAY * 1000)
