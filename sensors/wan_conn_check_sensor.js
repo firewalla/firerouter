@@ -20,8 +20,6 @@ const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
-const era = require('../event/EventRequestApi.js');
-const EventConstants = require('../event/EventConstants.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const _ = require('lodash');
 
@@ -65,7 +63,7 @@ class WanConnCheckSensor extends Sensor {
     const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
-      const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain);
+      const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain, null, true);
       this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
         this.log.error("Got error when checking http, err:", err.message);
       });
@@ -77,6 +75,8 @@ class WanConnCheckSensor extends Sensor {
       const failures = result.failures;
       const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures});
       event.suppressLogging(e);
+      if (!active)
+        this.log.warn(`Wan connectivity test failed on ${wanIntfPlugin.name}, failures: ${JSON.stringify(failures)}`);
       wanIntfPlugin.propagateEvent(e);
     }));
   }
