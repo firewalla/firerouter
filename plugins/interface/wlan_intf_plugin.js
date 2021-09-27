@@ -206,15 +206,22 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
-  async state() {
-    const state = await super.state();
-    const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
+  async getEssid() {
+    const carrier = await this.carrierState();
+    const operstate = await this.operstateState();
     let essid = null;
     // iwgetid will still return the essid during authentication process, when operstate is dormant
     // need to make sure the authentication is passed and operstate is up
-    if (state.carrier === "1" && state.operstate === "up") {
+    if (carrier === "1" && operstate === "up") {
       essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
     }
+    return essid;
+  }
+
+  async state() {
+    const state = await super.state();
+    const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
+    const essid = await this.getEssid();
     state.essid = essid;
     state.vendor = vendor;
     return state;

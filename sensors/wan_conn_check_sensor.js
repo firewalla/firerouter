@@ -22,6 +22,7 @@ const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const _ = require('lodash');
+const InterfaceBasePlugin = require('../plugins/interface/intf_base_plugin.js');
 
 class WanConnCheckSensor extends Sensor {
 
@@ -44,9 +45,17 @@ class WanConnCheckSensor extends Sensor {
     sclient.on("message", (channel, message) => {
       switch (channel) {
       case "ifdown": {
-        this._checkWanConnectivity().catch((err) => {
-          this.log.error("Failed to do WAN connectivity check", err.message);
-        });
+        const intf = message;
+        const intfPlugin = pl.getPluginInstance("interface", intf);
+        if (intfPlugin) {
+          // ifdown of an underlying interface will affect the wan connectivity of the upper layer wan interface
+          const wanSubscriberNames = (intfPlugin.getRecursiveSubscriberPlugins() || []).filter(plugin => plugin && plugin instanceof InterfaceBasePlugin && plugin.isWAN()).map(plugin => plugin.name);
+          if (intfPlugin.isWAN())
+            wanSubscriberNames.push(intf);
+          this._checkWanConnectivity([wanSubscriberNames]).catch((err) => {
+            this.log.error("Failed to do WAN connectivity check", err.message);
+          });
+        }
         break;
       }
       default:
@@ -56,8 +65,8 @@ class WanConnCheckSensor extends Sensor {
     sclient.subscribe("ifdown");
   }
 
-  async _checkWanConnectivity() {
-    const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin.isWAN());
+  async _checkWanConnectivity(ifaces = null) {
+    const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).filter(name => !_.isArray(ifaces) || ifaces.includes(name)).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin && ifacePlugin.isWAN());
     const defaultPingTestIP = this.config.ping_test_ip || ["1.1.1.1", "8.8.8.8", "9.9.9.9"];
     const defaultPingTestCount = this.config.ping_test_count || 8;
     const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
