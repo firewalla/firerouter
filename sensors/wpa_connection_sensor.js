@@ -55,7 +55,7 @@ class WPAConnectionSensor extends Sensor {
         if (intfPlugin) {
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
           let ssid = null;
-          if (wpaId !== undefined) {
+          if (!isNaN(wpaId)) {
             ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid`)
               .then(result => result.stdout.trim())
               .then(str => str.startsWith('\"') && str.endsWith('\"') ?
