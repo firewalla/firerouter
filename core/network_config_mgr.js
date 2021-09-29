@@ -248,10 +248,6 @@ class NetworkConfigManager {
       }
     }
 
-    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
-    if (intfPlugin instanceof WLANInterfacePlugin)
-      result.essid = await intfPlugin.getEssid();
-
     result.ts = Math.floor(new Date() / 1000);
 
     this.wanTestResult[iface] = result.ts;
