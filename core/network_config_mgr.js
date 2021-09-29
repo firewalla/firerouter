@@ -29,8 +29,8 @@ const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
-const Message = require('../../core/Message.js');
-const pclient = require('../../util/redis_manager.js').getPublishClient();
+const Message = require('./Message.js');
+const pclient = require('../util/redis_manager.js').getPublishClient();
 
 const fsp = require('fs').promises;
 const util = require('../util/util.js');
@@ -255,7 +255,7 @@ class NetworkConfigManager {
       }
     }
 
-    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
+    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin');
     if (intfPlugin instanceof WLANInterfacePlugin)
       result.essid = await intfPlugin.getEssid();
 
