@@ -250,6 +250,7 @@ class NetworkConfigManager {
 
         // keep bluetooth up if status code is 3xx
         if(httpResult.statusCode >= 300 && httpResult.statusCode < 400) {
+          log.info(`looks like ${iface} has captive on, sending bluetooth control message...`);
           await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
         }
       }
