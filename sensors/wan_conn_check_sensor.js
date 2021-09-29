@@ -37,6 +37,16 @@ class WanConnCheckSensor extends Sensor {
         });
       }, 20000);
     }, 60000);
+
+    const checkInterval = 20;
+
+    setInterval(() => {
+      this.log.info(`Checking if should send wan down notifications for every ${checkInterval} mins`);
+      this._checkSendingWanDownNotification().catch((err) => {
+        this.log.error("Failed to check if should send wan down notifications", err.message);
+      });
+    }, checkInterval * 60 * 1000);
+
     this.hookOnInterfaceEvents();
   }
 
@@ -88,6 +98,25 @@ class WanConnCheckSensor extends Sensor {
         this.log.warn(`Wan connectivity test failed on ${wanIntfPlugin.name}, failures: ${JSON.stringify(failures)}`);
       wanIntfPlugin.propagateEvent(e);
     }));
+  }
+
+  async _checkSendingWanDownNotification() {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
+    if (!routingPlugin) {
+      this.log.error("routing plugin is not found");
+      return;
+    }
+
+    const state = routingPlugin.isAnyWanConnected();
+    const anyUp = state && state.connected;
+
+    if(anyUp) {
+      return;
+    }
+
+    this.log.info("notifying others on all wan down...", state);
+    await routingPlugin.notifyAllWanDown(state);
   }
 
   // test until http status code is 2xx or test status is reset
