@@ -29,6 +29,8 @@ const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
+const Message = require('../../core/Message.js');
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 
 const fsp = require('fs').promises;
 const util = require('../util/util.js');
@@ -245,6 +247,11 @@ class NetworkConfigManager {
 
       if (httpResult) {
         result.http = httpResult;
+
+        // keep bluetooth up if status code is 3xx
+        if(httpResult.statusCode >= 300 && httpResult.statusCode < 400) {
+          await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+        }
       }
     }
 

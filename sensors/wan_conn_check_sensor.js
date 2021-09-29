@@ -19,8 +19,10 @@ const Sensor = require('./sensor.js');
 const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
+const Message = require('../../core/Message.js');
 const event = require('../core/event.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 const _ = require('lodash');
 const InterfaceBasePlugin = require('../plugins/interface/intf_base_plugin.js');
 
@@ -112,6 +114,23 @@ class WanConnCheckSensor extends Sensor {
     const anyUp = state && state.connected;
 
     if(anyUp) {
+
+      // if http status code on all active wans is 3xx, bring bluetooth up
+      if(state && state.wans) {
+        const intfStates = Object.values(state.wans);
+
+        const active3xxIntfStates = intfStates.filter((s) => s.active &&
+                                                      s.http &&
+                                                      s.http.statusCode >= 300 &&
+                                                      s.http.statusCode < 400);
+
+        if(_.isEmpty(active3xxIntfStates)) {
+          // bring bluetooth up if captive
+          await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+        }
+
+      }
+
       return;
     }
 
@@ -143,6 +162,10 @@ class WanConnCheckSensor extends Sensor {
     for(const site of sites) {
       const httpResult = await intfPlugin.checkHttpStatus(site);
       if (httpResult) {
+        // keep bluetooth up if status code is 3xx
+        if(httpResult.statusCode >= 300 && httpResult.statusCode < 400) {
+          await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+        }
         break;
       }
     }
