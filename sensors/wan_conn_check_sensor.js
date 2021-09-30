@@ -52,7 +52,7 @@ class WanConnCheckSensor extends Sensor {
           const wanSubscriberNames = (intfPlugin.getRecursiveSubscriberPlugins() || []).filter(plugin => plugin && plugin instanceof InterfaceBasePlugin && plugin.isWAN()).map(plugin => plugin.name);
           if (intfPlugin.isWAN())
             wanSubscriberNames.push(intf);
-          this._checkWanConnectivity([wanSubscriberNames]).catch((err) => {
+          this._checkWanConnectivity(wanSubscriberNames).catch((err) => {
             this.log.error("Failed to do WAN connectivity check", err.message);
           });
         }
