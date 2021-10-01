@@ -19,10 +19,11 @@ const Sensor = require('./sensor.js');
 const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
-const Message = require('../../core/Message.js');
+const Message = require('../core/Message.js');
+const ncm = require('../core/network_config_mgr.js');
 const event = require('../core/event.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
-const pclient = require('../../util/redis_manager.js').getPublishClient();
+const pclient = require('../util/redis_manager.js').getPublishClient();
 const _ = require('lodash');
 const InterfaceBasePlugin = require('../plugins/interface/intf_base_plugin.js');
 
@@ -44,7 +45,7 @@ class WanConnCheckSensor extends Sensor {
 
     setInterval(() => {
       this.log.info(`Checking if should send wan down notifications for every ${checkInterval} mins`);
-      this._checkSendingWanDownNotification().catch((err) => {
+      this._checkCaptive().catch((err) => {
         this.log.error("Failed to check if should send wan down notifications", err.message);
       });
     }, checkInterval * 60 * 1000);
@@ -102,40 +103,22 @@ class WanConnCheckSensor extends Sensor {
     }));
   }
 
-  async _checkSendingWanDownNotification() {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const routingPlugin = pluginLoader.getPluginInstance("routing", "global");
-    if (!routingPlugin) {
-      this.log.error("routing plugin is not found");
-      return;
-    }
+  async _checkCaptive() {
+    const state = ncm.isAnyWanConnected();
 
-    const state = routingPlugin.isAnyWanConnected();
-    const anyUp = state && state.connected;
+    // if http status code on all active wans is 3xx, bring bluetooth up
+    if(state && state.wans) {
+      const intfStates = Object.values(state.wans);
 
-    if(anyUp) {
+      const statesWith3xx = intfStates.filter((s) => s.http &&
+                                                    s.http.statusCode >= 300 &&
+                                                    s.http.statusCode < 400);
 
-      // if http status code on all active wans is 3xx, bring bluetooth up
-      if(state && state.wans) {
-        const intfStates = Object.values(state.wans);
-
-        const active3xxIntfStates = intfStates.filter((s) => s.active &&
-                                                      s.http &&
-                                                      s.http.statusCode >= 300 &&
-                                                      s.http.statusCode < 400);
-
-        if(_.isEmpty(active3xxIntfStates)) {
-          // bring bluetooth up if captive
-          await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
-        }
-
+      if(!_.isEmpty(statesWith3xx)) {
+        // bring bluetooth up if captive
+        await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
       }
-
-      return;
     }
-
-    this.log.info("notifying others on all wan down...", state);
-    await routingPlugin.notifyAllWanDown(state);
   }
 
   // test until http status code is 2xx or test status is reset
