@@ -30,11 +30,13 @@ const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
 const ip = require('ip');
 
+const Message = require('../../core/Message.js');
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
 const event = require('../../core/event.js');
 const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 
 Promise.promisifyAll(fs);
 
@@ -609,6 +611,18 @@ class InterfaceBasePlugin extends Plugin {
       });
   }
 
+  getDefaultMTU() {
+    return null;
+  }
+
+  async setMTU() {
+    const mtu = this.networkConfig.mtu || this.getDefaultMTU();
+    if (mtu)
+      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
+        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
+      });
+  }
+
   async setSysOpts() {
     if (this.networkConfig.sysOpts) {
       for (const key of Object.keys(this.networkConfig.sysOpts)) {
@@ -646,6 +660,8 @@ class InterfaceBasePlugin extends Plugin {
       return;
 
     await this.setHardwareAddress();
+
+    await this.setMTU();
 
     await this.applyIpSettings();
 
@@ -784,6 +800,12 @@ class InterfaceBasePlugin extends Plugin {
       this._wanStatus.http = result;
     }
 
+    // keep bluetooth up if status code is 3xx
+    if(result.statusCode >= 300 && result.statusCode < 400) {
+      this.log.info(`looks like ${this.name} has captive on, sending bluetooth control message...`);
+      await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+    }
+
     return result;
   }
 
@@ -791,7 +813,7 @@ class InterfaceBasePlugin extends Plugin {
     return this._wanStatus;
   }
 
-  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
+  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}, sendEvent = false) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
       return null;
@@ -839,22 +861,24 @@ class InterfaceBasePlugin extends Plugin {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
             failures.push({type: "ping", target: ip});
-            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
-            });
+            if (sendEvent)
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+              });
             return false;
           } else
-            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate":Number(result.stdout.trim())/pingTestCount
-            });
+            if (sendEvent)
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate":Number(result.stdout.trim())/pingTestCount
+              });
           return true;
         }).catch((err) => {
           this.log.error(`Failed to do ping test to ${ip} on ${this.name}`, err.message);
@@ -872,7 +896,7 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     if (active && dnsTestEnabled) {
-      const _dnsResult = await this.getDNSResult(dnsTestDomain);
+      const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
       if(!_dnsResult) {
         this.log.error(`DNS test failed on all nameservers on ${this.name}`);
         active = false;
@@ -897,6 +921,10 @@ class InterfaceBasePlugin extends Plugin {
       result.recentDownTime = result.ts; // record the recent down time
     }
 
+    const WLANInterfacePlugin = require('./wlan_intf_plugin.js')
+    if (this instanceof WLANInterfacePlugin)
+      result.essid = await this.getEssid();
+
     if(this._wanStatus) {
       this._wanStatus = Object.assign(this._wanStatus, result);
     }
@@ -905,7 +933,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   // use throw error for Promise.any
-  async _getDNSResult(dnsTestDomain, srcIP, nameserver) {
+  async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
     const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
     const result = await exec(cmd);
 
@@ -925,12 +953,13 @@ class InterfaceBasePlugin extends Plugin {
     const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
     const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
 
-    era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
-      "wan_intf_name":wanName,
-      "wan_intf_uuid":wanUUID,
-      "name_server":nameserver,
-      "dns_test_domain":dnsTestDomain
-    });
+    if (sendEvent)
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
+        "wan_intf_name":wanName,
+        "wan_intf_uuid":wanUUID,
+        "name_server":nameserver,
+        "dns_test_domain":dnsTestDomain
+      });
 
     if(dnsResult) {
       return dnsResult;
@@ -939,7 +968,7 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
-  async getDNSResult(dnsTestDomain) {
+  async getDNSResult(dnsTestDomain, sendEvent = false) {
     const nameservers = await this.getDNSNameservers();
     const ip4s = await this.getIPv4Addresses();
 
@@ -948,7 +977,7 @@ class InterfaceBasePlugin extends Plugin {
 
       const promises = [];
       for(const nameserver of nameservers) {
-        promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver));
+        promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent));
       }
 
       const result = await Promise.any(promises).catch((err) => {

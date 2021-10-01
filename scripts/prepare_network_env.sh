@@ -152,14 +152,14 @@ sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
 # ------ flush routing tables
 sudo ip r flush table global_local
 sudo ip r flush table global_default
-sudo ip r flush table wan_routable
-sudo ip r flush table lan_routable
+sudo ip r flush table wan_routable metric 0 # only delete routes with metric 0, routes with non-zero metric are not added by firerouter
+sudo ip r flush table lan_routable metric 0
 sudo ip r flush table static
 
 sudo ip -6 r flush table global_local
 sudo ip -6 r flush table global_default
-sudo ip -6 r flush table wan_routable
-sudo ip -6 r flush table lan_routable
+sudo ip -6 r flush table wan_routable metric 0
+sudo ip -6 r flush table lan_routable metric 0
 sudo ip -6 r flush table static
 
 # ------ initialize ip rules

@@ -24,46 +24,60 @@ const platformLoader = require('../platform/PlatformLoader.js');
 const platform = platformLoader.getPlatform();
 const era = require('../event/EventRequestApi.js');
 const EventConstants = require('../event/EventConstants.js');
+const util = require('../util/util.js');
 
 class WPAConnectionSensor extends Sensor {
 
   async run() {
+    this.reconfigFlags = {}
     sclient.on("message", async (channel, message) => {
-      let eventType = null;
-      let wpaState = false;
-      switch (channel) {
-        case "wpa.connected": {
-          eventType = event.EVENT_WPA_CONNECTED;
-          wpaState = true;
-          break;
+      try {
+        let eventType = null;
+        let wpaState = false;
+        switch (channel) {
+          case "wpa.connected": {
+            eventType = event.EVENT_WPA_CONNECTED;
+            wpaState = true;
+            break;
+          }
+          case "wpa.disconnected": {
+            eventType = event.EVENT_WPA_DISCONNECTED;
+            wpaState = false;
+            break;
+          }
+          default:
+            return;
         }
-        case "wpa.disconnected": {
-          eventType = event.EVENT_WPA_DISCONNECTED;
-          wpaState = false;
-          break;
+        this.log.debug('message received:', channel, message)
+        const [iface, wpaId] = message.split(',', 2);
+        const wpaCliPath = platform.getWpaCliBinPath();
+        const intfPlugin = pl.getPluginInstance("interface", iface);
+        if (intfPlugin) {
+          const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
+          let ssid = null;
+          if (!isNaN(wpaId)) {
+            ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid`)
+              .then(result => result.stdout.trim())
+              .then(str => str.startsWith('\"') && str.endsWith('\"') ?
+                str.slice(1, -1) : util.parseHexString(str)
+              ).catch(err => {
+                this.log.error('Failed to get ssid', err)
+                return null
+              });
+          }
+          const ifaceName = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.name;
+          const ifaceUUID = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
+          era.addActionEvent(EventConstants.EVENT_WPA_CONNECTION_STATE, wpaState ? 0 : 1, {
+            "intf_name": ifaceName,
+            "intf_uuid": ifaceUUID,
+            "ssid": ssid,
+            "intf": iface
+          });
+          const e = event.buildEvent(eventType, { intf: iface });
+          intfPlugin.propagateEvent(e);
         }
-        default:
-          return;
-      }
-      const [iface, wpaId] = message.split(',', 2);
-      const wpaCliPath = platform.getWpaCliBinPath();
-      const intfPlugin = pl.getPluginInstance("interface", iface);
-      if (intfPlugin) {
-        const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
-        let ssid = null;
-        if (wpaId !== undefined) {
-          ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid | tr -d '"'`).then(result => result.stdout.trim()).catch((err) => null);
-        }
-        const ifaceName = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.name;
-        const ifaceUUID = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
-        era.addActionEvent(EventConstants.EVENT_WPA_CONNECTION_STATE, wpaState ? 0 : 1, {
-          "intf_name": ifaceName,
-          "intf_uuid": ifaceUUID,
-          "ssid": ssid,
-          "intf": iface
-        });
-        const e = event.buildEvent(eventType, { intf: iface });
-        intfPlugin.propagateEvent(e);
+      } catch(err) {
+        this.log.error('Error on wpa event handling', err)
       }
     });
 

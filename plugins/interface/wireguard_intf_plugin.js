@@ -59,6 +59,18 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return `${r.getUserConfigFolder()}/wireguard/${this.name}.conf`;
   }
 
+  getDefaultMTU() {
+    //  The overhead of WireGuard breaks down as follows:
+    // - 20-byte IPv4 header or 40 byte IPv6 header
+    // - 8-byte UDP header
+    // - 4-byte type
+    // - 4-byte key index
+    // - 8-byte nonce
+    // - 16-byte authentication tag
+    // in case of pppoe + ipv6, it will be 1492 - 40 - 8 - 4 - 4 - 8 - 16 = 1412
+    return 1412;
+  }
+
   async createInterface() {
     await exec(`sudo ip link add dev ${this.name} type wireguard`).catch((err) => {});
     if (!this.networkConfig.privateKey)

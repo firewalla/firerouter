@@ -16,7 +16,6 @@
 'use strict';
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
-const ncm = require('../../core/network_config_mgr')
 
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
@@ -33,7 +32,7 @@ const _ = require('lodash');
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
-const WLAN_AVAILABLE_RETRY = 3
+const WLAN_INIT_SCAN_DELAY = 3
 const WLAN_DEFAULT_SCAN_INTERVAL = 300
 const WLAN_BSS_EXPIRATION = 630
 
@@ -113,6 +112,42 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return `${r.getUserConfigFolder()}/wpa_supplicant/${this.name}.conf`;
   }
 
+  async writeConfigFile(availableWLANs) {
+    const entries = []
+    entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
+    entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
+
+    const networks = this.networkConfig.wpaSupplicant.networks || [];
+    for (const network of networks) {
+      const prioritizedNetworks = (availableWLANs || [])
+        .filter(n => n.ssid == network.ssid && n.freq > 5000 && n.signal > -80)
+      if (prioritizedNetworks.length) {
+        entries.push("network={");
+        for (const key of Object.keys(network)) {
+          if (key == 'priority')
+            entries.push(`\tpriority=${network[key]+1}`);
+          else {
+            const value = await util.generateWpaSupplicantConfig(key, network);
+            entries.push(`\t${key}=${value}`);
+          }
+        }
+        if (!'priority' in network) {
+          entries.push(`\tpriority=1`);
+        }
+        entries.push(`\tfreq_list=${prioritizedNetworks.map(p => p.freq).join(' ')}`);
+        entries.push("}\n");
+      }
+
+      entries.push("network={");
+      for (const key of Object.keys(network)) {
+        const value = await util.generateWpaSupplicantConfig(key, network);
+        entries.push(`\t${key}=${value}`);
+      }
+      entries.push("}\n");
+    }
+    await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
+  }
+
   async createInterface() {
     const ifaceExists = await exec(`ip link show dev ${this.name}`).then(() => true).catch((err) => false);
     if (!ifaceExists) {
@@ -140,51 +175,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
 
     if (this.networkConfig.wpaSupplicant) {
-      const entries = [];
 
-      let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
-        availableWLANs = await ncm.getWlansViaWpaSupplicant()
-        if (availableWLANs && availableWLANs.length)
-          break; // stop on first successful call
-      } catch(err) {
-        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(3)
-      }
-      availableWLANs = availableWLANs || []
-
-      entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
-      entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
-
-      const networks = this.networkConfig.wpaSupplicant.networks || [];
-      for (const network of networks) {
-
-        const prioritizedNetworks = availableWLANs
-          .filter(n => n.ssid == network.ssid && n.freq > 5000 && n.signal > -80)
-        if (prioritizedNetworks.length) {
-          entries.push("network={");
-          for (const key of Object.keys(network)) {
-            if (key == 'priority')
-              entries.push(`\tpriority=${network[key]+1}`);
-            else {
-              const value = await util.generateWpaSupplicantConfig(key, network);
-              entries.push(`\t${key}=${value}`);
-            }
-          }
-          if (!network.priority) {
-            entries.push(`\tpriority=1`);
-          }
-          entries.push(`\tfreq_list=${prioritizedNetworks.map(p => p.freq).join(' ')}`);
-          entries.push("}\n");
-        }
-        entries.push("network={");
-        for (const key of Object.keys(network)) {
-          const value = await util.generateWpaSupplicantConfig(key, network);
-          entries.push(`\t${key}=${value}`);
-        }
-        entries.push("}\n");
-      }
-      await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
+      await this.writeConfigFile()
 
       if (this.networkConfig.enabled) {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
@@ -192,12 +184,16 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         });
 
         // scan at a slow pace regularly to give instant response when requested
-        const scan = () => exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} scan`)
-          .catch(err => this.log.warn('Failed to scan', err.message) )
+        const scan = () => {
+          this.log.debug('Initiate background scan')
+          exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} scan`)
+            .catch(err => this.log.warn('Failed to scan', err.message) )
+        }
 
         // start first scan a little bit slower for the service to be initialized
-        setTimeout(scan, 10 * 1000)
+        setTimeout(scan, WLAN_INIT_SCAN_DELAY * 1000)
         this.scanTask = setInterval(scan, (this.networkConfig.wpaSupplicant.scanInterval || WLAN_DEFAULT_SCAN_INTERVAL) * 1000)
+
       } else {
         if (this.scanTask) {
           clearInterval(this.scanTask)
@@ -210,10 +206,22 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async getEssid() {
+    const carrier = await this.carrierState();
+    const operstate = await this.operstateState();
+    let essid = null;
+    // iwgetid will still return the essid during authentication process, when operstate is dormant
+    // need to make sure the authentication is passed and operstate is up
+    if (carrier === "1" && operstate === "up") {
+      essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+    }
+    return essid;
+  }
+
   async state() {
     const state = await super.state();
-    const essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
+    const essid = await this.getEssid();
     state.essid = essid;
     state.vendor = vendor;
     return state;

@@ -23,10 +23,12 @@ rc=0
 if [[ $NETWORK_SETUP == "yes" ]]; then
   init_network_config; rc=$?
 else
+  wait_until_any_wan_carrier_connected
   test_network; rc=$?
 fi
 
 logger "Uptime after init_network_config: $(awk '{print $1}' /proc/uptime)"
+
 
 bootingComplete=$(redis-cli get bootingComplete)
 while [[ ! $rc -eq 0 ]]; do

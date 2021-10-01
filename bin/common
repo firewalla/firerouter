@@ -61,6 +61,7 @@ init_network_config() {
   END=$(date +%s)
   echo "Successfully apply last network config, took $(( $END - $BEGIN )) seconds to finish"
 
+  wait_until_any_wan_carrier_connected
   test_network
 }
 
@@ -81,6 +82,30 @@ test_curl_http_code() {
         echo "fail($http_code_actual)"
         return 1
     fi
+}
+
+test_any_wan_carrier_connected() {
+  count=$(curl -s -m10 localhost:8837/v1/config/wan/connectivity?live=true | jq '.wans | with_entries(select(.value.carrier == true)) | length')
+  test $? -ne 0 && return 1
+  test $count -gt 0 && return 0
+  return 2
+}
+
+wait_until_any_wan_carrier_connected() {
+  redis-cli set "fireboot:status" "wait_wan_carrier"
+  echo "Checking if any wan carrier is connected"
+  _cnt=0
+  while ! test_any_wan_carrier_connected; do
+    (( _cnt++ ))
+    redis-cli set "fireboot:status:code" $_cnt
+    sleep 2
+
+    if [[ $_cnt -gt 10 ]]; then
+      redis-cli set "fireboot:status" "network_down"
+      redis-cli set "fireboot:network_down:code" $_cnt
+    fi
+  done
+  echo "Confirmed that wan carrier is connected"
 }
 
 test_network() {
