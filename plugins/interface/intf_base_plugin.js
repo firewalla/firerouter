@@ -802,7 +802,7 @@ class InterfaceBasePlugin extends Plugin {
 
     // keep bluetooth up if status code is 3xx
     if(result.statusCode >= 300 && result.statusCode < 400) {
-      log.info(`looks like ${this.name} has captive on, sending bluetooth control message...`);
+      this.log.info(`looks like ${this.name} has captive on, sending bluetooth control message...`);
       await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
     }
 
