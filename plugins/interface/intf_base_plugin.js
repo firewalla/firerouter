@@ -921,6 +921,10 @@ class InterfaceBasePlugin extends Plugin {
       result.recentDownTime = result.ts; // record the recent down time
     }
 
+    const WLANInterfacePlugin = require('./wlan_intf_plugin.js')
+    if (this instanceof WLANInterfacePlugin)
+      result.essid = await this.getEssid();
+
     if(this._wanStatus) {
       this._wanStatus = Object.assign(this._wanStatus, result);
     }

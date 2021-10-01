@@ -736,9 +736,15 @@ class RoutingPlugin extends Plugin {
           if (changeActiveWanNeeded) {
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
-            changeDesc.currentStatus = this.getWANConnStates();
-            this.publishWANConnChange(changeDesc);
-          }   
+            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+              if (enrichedWanStatus) {
+                changeDesc.currentStatus = enrichedWanStatus;
+                this.publishWANConnChange(changeDesc);
+              }
+            }).catch((err) => {
+              this.log.error("Failed to enrich WAN status", err.message);
+            });
+          }
         }
       }
       default:

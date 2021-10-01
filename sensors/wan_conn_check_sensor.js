@@ -53,7 +53,7 @@ class WanConnCheckSensor extends Sensor {
           const wanSubscriberNames = (intfPlugin.getRecursiveSubscriberPlugins() || []).filter(plugin => plugin && plugin instanceof InterfaceBasePlugin && plugin.isWAN()).map(plugin => plugin.name);
           if (intfPlugin.isWAN())
             wanSubscriberNames.push(intf);
-          this._checkWanConnectivity([wanSubscriberNames]).catch((err) => {
+          this._checkWanConnectivity(wanSubscriberNames).catch((err) => {
             this.log.error("Failed to do WAN connectivity check", err.message);
           });
         }
@@ -67,6 +67,10 @@ class WanConnCheckSensor extends Sensor {
   }
 
   async _checkWanConnectivity(ifaces = null) {
+    if (pl.isApplyInProgress()) {
+      this.log.info("A network config is being applied, skip WAN connectivity check this round");
+      return;
+    }
     const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).filter(name => !_.isArray(ifaces) || ifaces.includes(name)).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin && ifacePlugin.isWAN());
     const defaultPingTestIP = this.config.ping_test_ip || ["1.1.1.1", "8.8.8.8", "9.9.9.9"];
     const defaultPingTestCount = this.config.ping_test_count || 8;
