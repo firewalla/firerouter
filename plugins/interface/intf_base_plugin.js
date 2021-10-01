@@ -30,11 +30,13 @@ const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
 const ip = require('ip');
 
+const Message = require('../../core/Message.js');
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
 const event = require('../../core/event.js');
 const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 
 Promise.promisifyAll(fs);
 
@@ -796,6 +798,12 @@ class InterfaceBasePlugin extends Plugin {
 
     if(this._wanStatus) {
       this._wanStatus.http = result;
+    }
+
+    // keep bluetooth up if status code is 3xx
+    if(result.statusCode >= 300 && result.statusCode < 400) {
+      this.log.info(`looks like ${this.name} has captive on, sending bluetooth control message...`);
+      await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
     }
 
     return result;
