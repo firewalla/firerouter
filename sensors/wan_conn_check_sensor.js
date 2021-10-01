@@ -19,11 +19,8 @@ const Sensor = require('./sensor.js');
 const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
-const Message = require('../core/Message.js');
-const ncm = require('../core/network_config_mgr.js');
 const event = require('../core/event.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
-const pclient = require('../util/redis_manager.js').getPublishClient();
 const _ = require('lodash');
 const InterfaceBasePlugin = require('../plugins/interface/intf_base_plugin.js');
 
@@ -40,15 +37,6 @@ class WanConnCheckSensor extends Sensor {
         });
       }, 20000);
     }, 60000);
-
-    const checkInterval = 20;
-
-    setInterval(() => {
-      this.log.info(`Checking if should send wan down notifications for every ${checkInterval} mins`);
-      this._checkCaptive().catch((err) => {
-        this.log.error("Failed to check if should send wan down notifications", err.message);
-      });
-    }, checkInterval * 60 * 1000);
 
     this.hookOnInterfaceEvents();
   }
@@ -103,24 +91,6 @@ class WanConnCheckSensor extends Sensor {
     }));
   }
 
-  async _checkCaptive() {
-    const state = ncm.isAnyWanConnected();
-
-    // if http status code on all active wans is 3xx, bring bluetooth up
-    if(state && state.wans) {
-      const intfStates = Object.values(state.wans);
-
-      const statesWith3xx = intfStates.filter((s) => s.http &&
-                                                    s.http.statusCode >= 300 &&
-                                                    s.http.statusCode < 400);
-
-      if(!_.isEmpty(statesWith3xx)) {
-        // bring bluetooth up if captive
-        await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
-      }
-    }
-  }
-
   // test until http status code is 2xx or test status is reset
   async _checkHttpConnectivity(intfPlugin, options = {}) {
     const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
@@ -145,11 +115,6 @@ class WanConnCheckSensor extends Sensor {
     for(const site of sites) {
       const httpResult = await intfPlugin.checkHttpStatus(site);
       if (httpResult) {
-        // keep bluetooth up if status code is 3xx
-        if(httpResult.statusCode >= 300 && httpResult.statusCode < 400) {
-          log.info(`looks like ${intfPlugin.name} has captive on, sending bluetooth control message...`);
-          await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
-        }
         break;
       }
     }
