@@ -15,7 +15,7 @@ pd_changed=""
 
 case $reason in
 
-  BOUND6|REBOOT6|REBIND6)
+  BOUND6|REBOOT6)
     pd_changed="1"
     pd_id=1
     pds=""
@@ -35,7 +35,7 @@ case $reason in
     done
     echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
     ;;
-  RENEW6)
+  RENEW6|REBIND6)
     pd_id=1
     pds=""
     while [ $pd_id -lt 10 ]; do
