@@ -797,8 +797,12 @@ class RoutingPlugin extends Plugin {
         this.propagateEvent(e);
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
-            desc.currentStatus = this.getWANConnStates();
-            this.publishWANConnChange(desc);
+            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+              if (enrichedWanStatus) {
+                desc.currentStatus = enrichedWanStatus;
+                this.publishWANConnChange(desc);
+              }
+            });
           }
         }
         this._pendingChangeDescs = [];
