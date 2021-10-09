@@ -27,6 +27,10 @@ class GoldPlatform extends Platform {
   getWpaCliBinPath() {
     return `${__dirname}/bin/wpa_cli`;
   }
+
+  getWpaPassphraseBinPath() {
+    return `${__dirname}/bin/wpa_passphrase`;
+  }
 }
 
 module.exports = GoldPlatform;

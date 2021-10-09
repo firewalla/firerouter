@@ -159,7 +159,7 @@ function getInterfaceDelegatedPrefixPath(iface) {
 }
 
 function getInterfacePDCacheDirectory(iface) {
-  return `${getRuntimeFolder()}/dhcpcd/${iface}`;
+  return `${getRuntimeFolder()}/dhcpcd/${iface}/pd_cache`;
 }
 
 function getInterfaceSysFSDirectory(iface) {
