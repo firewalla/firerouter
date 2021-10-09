@@ -25,6 +25,7 @@ const platform = platformLoader.getPlatform();
 const era = require('../event/EventRequestApi.js');
 const EventConstants = require('../event/EventConstants.js');
 const util = require('../util/util.js');
+const _ = require('lodash');
 
 class WPAConnectionSensor extends Sensor {
 
@@ -55,7 +56,7 @@ class WPAConnectionSensor extends Sensor {
         if (intfPlugin) {
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
           let ssid = null;
-          if (!isNaN(wpaId)) {
+          if (!_.isEmpty(wpaId) && !isNaN(wpaId)) {
             ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid`)
               .then(result => result.stdout.trim())
               .then(str => str.startsWith('\"') && str.endsWith('\"') ?
