@@ -20,6 +20,7 @@ echo $$ > $LOCK_FILE
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
 source ${FIREROUTER_HOME}/bin/common
+source ${FIREROUTER_HOME}/platform/platform.sh
 
 # Run upgrade
 ${FIREROUTER_HOME}/scripts/firerouter_upgrade.sh

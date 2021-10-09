@@ -18,6 +18,7 @@
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const _ = require('lodash');
+const url = require('url');
 
 const r = require('../../util/firerouter');
 
@@ -27,10 +28,15 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
+const ip = require('ip');
 
+const Message = require('../../core/Message.js');
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
 const event = require('../../core/event.js');
+const era = require('../../event/EventRequestApi.js');
+const EventConstants = require('../../event/EventConstants.js');
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 
 Promise.promisifyAll(fs);
 
@@ -133,10 +139,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
-        const subPrefixId = await this._findSubPrefixId(fromIface);
-        if (subPrefixId >= 0) {
-          await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`).catch((err) =>{});
-        }
+        await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
       }
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
@@ -227,31 +230,44 @@ class InterfaceBasePlugin extends Plugin {
     return `${subPrefix.correctForm()}/64`;
   }
 
-  async _findSubPrefixId(fromIface) {
+  async _findSubPrefix(fromIface, prefixes) {
     const pdCacheDir = r.getInterfacePDCacheDirectory(fromIface);
-    let nextId = -1;
-    await fs.readdirAsync(pdCacheDir).then((files) => {
-      const existingId = files.filter(f => f.endsWith(`.${this.name}`));
-      if (existingId.length > 0) {
-        nextId = existingId[0].split('.')[0];
-        return;
-      }
-      for (let i = 0; true; i +=1) {
-        if (files.filter(f => f.startsWith(`${i}.`)).length == 0) {
-          nextId = i;
-          return;
+    if (!_.isArray(prefixes))
+      return null;
+    const prefixIfaceMap = {};
+    const files = await fs.readdirAsync(pdCacheDir);
+    for (const file of files) {
+      const addr = await fs.readFileAsync(`${pdCacheDir}/${file}`, { encoding: 'utf8' }).then(r => r.trim());
+      if (addr) {
+        const addr6 = new Address6(addr);
+        if (addr6.isValid()) {
+          prefixIfaceMap[addr] = file;
+          if (file === this.name
+            && prefixes.some(p => {
+              const prefix6 = new Address6(p);
+              return prefix6.isValid() && addr6.isInSubnet(prefix6)
+            })
+          ) {
+            return addr;
+          }
         }
       }
-    }).catch((err) => {
-      this.log.error(`Failed to get next id for prefix delegation from ${fromIface} for ${this.name}`, err.message);
-      nextId = -1;
-    });
-    return nextId;
+    }
+    for (const prefix of prefixes) {
+      for (let i = 0; true; i++) {
+        const addr = this._calculateSubPrefix(prefix, i);
+        if (!addr)
+          break;
+        if (!prefixIfaceMap.hasOwnProperty(addr))
+          return addr;
+      }
+    }
+    return null;
   }
 
   async prepareEnvironment() {
     // create runtime directory
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/dhcpcd/${this.name}`).catch((err) => {});
+    await exec(`mkdir -p ${r.getInterfacePDCacheDirectory(this.name)}`).catch((err) => {});
     // create routing tables and add rules for interface
     if (this.isWAN() || this.isLAN()) {
       await routing.initializeInterfaceRoutingTables(this.name);
@@ -292,11 +308,16 @@ class InterfaceBasePlugin extends Plugin {
       if (pdSize > 64)
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
-      content = content.replace(/%PD_SIZE%/g, pdSize);
+      const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
+      const pdOpts = [];
+      for (let i = 1; i <= numOfPDs; i++) {
+        pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
+      }
+      content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
-        this.fatal(`Failed to enable dhcpv6 client on interfacer ${this.name}: ${err.message}`);
+        this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
       });
       // TODO: do not support dns nameservers from DHCPv6 currently
     } else {
@@ -320,48 +341,35 @@ class InterfaceBasePlugin extends Plugin {
         if (await parentIntfPlugin.isInterfacePresent() === false) {
           this.log.warn(`Interface ${fromIface} is not present yet`);
         } else {
+          // assign sub prefix id for this interface
           const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
           const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
             this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
             return null;
           });
-          // assign sub prefix id for this interface
-          const subPrefixId = await this._findSubPrefixId(fromIface);
-          if (subPrefixId >= 0) {
+          const subPrefix = await this._findSubPrefix(fromIface, prefixes);
+          let ipChanged = false;
+          if (subPrefix) {
             // clear previously assigned prefixes in the cache file
-            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`).catch((err) =>{});
-            if (prefixes && _.isArray(prefixes)) {
-              const subPrefixes = [];
-              let ipChanged = false;
-              for (const prefixMask of prefixes) {
-                const subPrefix = this._calculateSubPrefix(prefixMask, subPrefixId);
-                if (!subPrefix) {
-                  this.log.error(`Failed to calculate sub prefix from ${prefixMask} and id ${subPrefixId} for ${this.name}`);
-                } else {
-                  // add link local route to interface local and default routing table
-                  await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
-                  await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-                  const addr = new Address6(subPrefix);
-                  if (!addr.isValid()) {
-                    this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
-                  } else {
-                    // the suffix of the delegated interface is always 1
-                    await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                      this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
-                    });
-                    subPrefixes.push(subPrefix);
-                    ipChanged = true;
-                  }
-                }
-              }
-              if (subPrefixes.length > 0) {
-                // write newly assigned prefixes to the cache file
-                await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${subPrefixId}.${this.name}`, subPrefixes.join("\n"), { encoding: 'utf8' }).catch((err) => { });
-              }
+            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+            // add link local route to interface local and default routing table
+            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => { });
+            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => { });
+            const addr = new Address6(subPrefix);
+            if (!addr.isValid()) {
+              this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
+            } else {
+              // the suffix of the delegated interface is always 1
+              await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
+                this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+              });
+              ipChanged = true;
+            }
+            if (ipChanged) {
+              // write newly assigned prefixes to the cache file
+              await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
               // trigger reapply of downstream plugins that are dependent on this interface
-              if (ipChanged) {
-                this.propagateConfigChanged(true);
-              }
+              this.propagateConfigChanged(true);
             }
           }
         }
@@ -463,8 +471,7 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.networkConfig.ipv6DelegateFrom) {
       // read delegated sub prefixes from cache file
-      const subPrefixId = await this._findSubPrefixId(this.networkConfig.ipv6DelegateFrom);
-      const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${subPrefixId}.${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
+      const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
         this.log.error(`Failed to read sub prefixes for ${this.name}`, err.message);
         return [];
       });
@@ -534,8 +541,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         // read delegated sub prefixes from cache file
-        const subPrefixId = await this._findSubPrefixId(this.networkConfig.ipv6DelegateFrom);
-        const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${subPrefixId}.${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
+        const prefixes = await fs.readFileAsync(`${r.getInterfacePDCacheDirectory(this.networkConfig.ipv6DelegateFrom)}/${this.name}`, {encoding: 'utf8'}).then((content) => content.trim().split('\n').filter(l => l.length > 0)).catch((err) => {
           this.log.error(`Failed to read sub prefixes for ${this.name}`, err.message);
           return [];
         });
@@ -605,6 +611,18 @@ class InterfaceBasePlugin extends Plugin {
       });
   }
 
+  getDefaultMTU() {
+    return null;
+  }
+
+  async setMTU() {
+    const mtu = this.networkConfig.mtu || this.getDefaultMTU();
+    if (mtu)
+      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
+        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
+      });
+  }
+
   async setSysOpts() {
     if (this.networkConfig.sysOpts) {
       for (const key of Object.keys(this.networkConfig.sysOpts)) {
@@ -643,6 +661,8 @@ class InterfaceBasePlugin extends Plugin {
 
     await this.setHardwareAddress();
 
+    await this.setMTU();
+
     await this.applyIpSettings();
 
     await this.applyDnsSettings();
@@ -650,6 +670,7 @@ class InterfaceBasePlugin extends Plugin {
     await this.changeRoutingTables();
 
     if (this.isWAN()) {
+      this._wanStatus = {};
 
       await this.updateRouteForDNS();
 
@@ -660,11 +681,11 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+    const file = `/sys/class/net/${this.name}/${key}`;
+    return fs.readFileAsync(file, "utf8").then(content => content.trim()).catch((err) => {
       this.log.debug(`Failed to get ${key} of ${this.name}`, err.message);
       return null;
-    })
-    return value;
+    });
   }
 
   _getWANConnState(name) {
@@ -685,6 +706,288 @@ class InterfaceBasePlugin extends Plugin {
     if (ip4s)
       ip4s = ip4s.split("\n").filter(l => l.length > 0).map(ip => ip.includes("/") ? ip : `${ip}/32`);
     return ip4s;
+  }
+
+  async getIPv6Addresses() {
+    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
+    if (ip6s)
+      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    return ip6s;
+  }
+
+  async getRoutableIPv6Addresses() {
+    const ip6s = await this.getIPv6Addresses();
+    if(_.isEmpty(ip6s)) {
+      return ip6s;
+    }
+
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+  }
+
+  // use a dedicated carrier state for fast processing
+  async carrierState() {
+    const state = await this._getSysFSClassNetValue("carrier");
+    return state;
+  }
+
+  async operstateState() {
+    const state = await this._getSysFSClassNetValue("operstate");
+    return state;
+  }
+
+  // is the interface physically ready to connect
+  async readyToConnect() {
+    const carrierState = await this.carrierState();
+    return carrierState === "1";
+  }
+
+  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
+    if (!this.isWAN()) {
+      this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
+      return null;
+    }
+
+    this.isHttpTesting = this.isHttpTesting || {};
+
+    if(this.isHttpTesting[defaultTestURL]) {
+      this.log.info("last round of http testing is not finished yet, this round is skipped.");
+      return null;
+    }
+
+    const u = url.parse(defaultTestURL);
+    const hostname = u.hostname;
+    const protocol = u.protocol;
+    const port = u.port || protocol === "http:" && 80 || protocol === "https:" && 443;
+
+    if(!hostname || !port) {
+      this.log.error("invalid test url:", defaultTestURL);
+      return null;
+    }
+
+    this.isHttpTesting[defaultTestURL] = true;
+
+    const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
+    if(!dnsResult) {
+      this.log.error("failed to resolve dns on domain", u.hostname);
+      delete this.isHttpTesting[defaultTestURL];
+      return null;
+    }
+
+    const extraConf = this.networkConfig && this.networkConfig.extra;
+    const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
+    const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
+    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
+    const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
+      this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
+      return null;
+    });
+
+    delete this.isHttpTesting[defaultTestURL];
+
+    if (!output)
+      return null;
+    const [statusCode, redirectURL] = output.split(',', 2);
+
+    const result = {
+      testURL,
+      statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
+      redirectURL: redirectURL,
+      expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
+      ts: Math.floor(new Date() / 1000)
+    };
+
+    if(this._wanStatus) {
+      this._wanStatus.http = result;
+    }
+
+    // keep bluetooth up if status code is 3xx
+    if(result.statusCode >= 300 && result.statusCode < 400) {
+      this.log.info(`looks like ${this.name} has captive on, sending bluetooth control message...`);
+      await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+    }
+
+    return result;
+  }
+
+  getWanStatus() {
+    return this._wanStatus;
+  }
+
+  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}, sendEvent = false) {
+    if (!this.isWAN()) {
+      this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
+      return null;
+    }
+    const failures = [];
+    let active = true;
+    let carrierResult = null;
+    let pingResult = null;
+    let dnsResult = false; // avoid sending null to app/web
+    const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
+    let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+    let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
+    let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
+    const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
+    const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
+    const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
+    const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
+    if (_.isString(pingTestIP))
+      pingTestIP = [pingTestIP];
+    if (pingTestIP.length > 3) {
+      this.log.warn(`Number of ping test target is greater than 3 on ${this.name}, will only use the first 3 for testing`);
+      pingTestIP = pingTestIP.slice(0, 3);
+    }
+    const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
+    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
+    const forceState = (extraConf && extraConf.forceState) || undefined;
+
+    const carrierState = await this.carrierState();
+    const operstateState = await this.operstateState();
+    const r2c = await this.readyToConnect();
+    if (!r2c) {
+      this.log.warn(`Interface ${this.name} is not ready, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
+      active = false;
+      carrierResult = false;
+      failures.push({type: "carrier"});
+    } else
+      carrierResult = true;
+
+    if (active && pingTestEnabled) {
+      // no need to use Promise.any as ping test time for each target is the same
+      // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
+      await Promise.all(pingTestIP.map(async (ip) => {
+        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+        return exec(cmd).then((result) => {
+          if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
+            this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
+            failures.push({type: "ping", target: ip});
+            if (sendEvent)
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+              });
+            return false;
+          } else
+            if (sendEvent)
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate":Number(result.stdout.trim())/pingTestCount
+              });
+          return true;
+        }).catch((err) => {
+          this.log.error(`Failed to do ping test to ${ip} on ${this.name}`, err.message);
+          failures.push({type: "ping", target: ip});
+          return false;
+        });
+      })).then(results => {
+        if (!results.some(result => result === true)) {
+          this.log.error(`Ping test failed to all ping test targets on ${this.name}`);
+          pingResult = false;
+          active = false;
+        } else
+          pingResult = true;
+      });
+    }
+
+    if (active && dnsTestEnabled) {
+      const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
+      if(!_dnsResult) {
+        this.log.error(`DNS test failed on all nameservers on ${this.name}`);
+        active = false;
+        dnsResult = false;
+      } else {
+        dnsResult = true;
+      }
+    }
+
+    const result = {
+      active: active, 
+      forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
+      // Note! here the carrier result sent back to app is FALSE when interface is not ready to connect (carrier down or operstatus not ready or no ip address)
+      carrier: carrierResult,
+      ping: pingResult,
+      dns: dnsResult,
+      failures: failures,
+      ts: Math.floor(new Date() / 1000)
+    };
+
+    if(!active) {
+      result.recentDownTime = result.ts; // record the recent down time
+    }
+
+    const WLANInterfacePlugin = require('./wlan_intf_plugin.js')
+    if (this instanceof WLANInterfacePlugin)
+      result.essid = await this.getEssid();
+
+    if(this._wanStatus) {
+      this._wanStatus = Object.assign(this._wanStatus, result);
+    }
+
+    return result;
+  }
+
+  // use throw error for Promise.any
+  async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
+    const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
+    const result = await exec(cmd);
+
+    let dnsResult = null;
+
+    if (result && result.stdout && result.stdout.trim().length !== 0)  {
+      let lines = result.stdout.trim().split("\n");
+      lines = lines.filter((l) => {
+        return ip.isV4Format(l) || ip.isV6Format(l);
+      });
+      if (lines.length !== 0) {
+        dnsResult = lines[0];
+      }
+    }
+
+
+    const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
+    const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
+
+    if (sendEvent)
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
+        "wan_intf_name":wanName,
+        "wan_intf_uuid":wanUUID,
+        "name_server":nameserver,
+        "dns_test_domain":dnsTestDomain
+      });
+
+    if(dnsResult) {
+      return dnsResult;
+    } else {
+      throw new Error("no dns result");
+    }
+  }
+
+  async getDNSResult(dnsTestDomain, sendEvent = false) {
+    const nameservers = await this.getDNSNameservers();
+    const ip4s = await this.getIPv4Addresses();
+
+    if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
+      const srcIP = ip4s[0].split('/')[0];
+
+      const promises = [];
+      for(const nameserver of nameservers) {
+        promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent));
+      }
+
+      const result = await Promise.any(promises).catch((err) => {
+        this.log.error("no valid dns from any nameservers", err.message);
+        return null;
+      });
+      return result;
+    }
+
+    return null;
   }
 
   async state() {
@@ -710,9 +1013,12 @@ class InterfaceBasePlugin extends Plugin {
     if (ip6)
       ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
-    if (this.isWAN())
-      wanConnState = this._getWANConnState(this.name);
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState};
+    let wanTestResult = null;
+    if (this.isWAN()) {
+      wanConnState = this._getWANConnState(this.name) || {};
+      wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
+    }
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
   }
 
   onEvent(e) {

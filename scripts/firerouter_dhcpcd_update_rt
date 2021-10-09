@@ -43,7 +43,7 @@ case $reason in
       ip_changed="1"
     fi
     ;;
-  BOUND6|REBOOT6|REBIND6)
+  BOUND6|REBOOT6)
     ip_changed="1"
     addr_id=1
     while [ $addr_id -lt 10 ]; do
@@ -59,7 +59,7 @@ case $reason in
       addr_id=$((addr_id + 1))
     done
     ;;
-  RENEW6)
+  RENEW6|REBIND6)
     # compare old address with new address
     addr_id=1
     while [ $addr_id -lt 10 ]; do
