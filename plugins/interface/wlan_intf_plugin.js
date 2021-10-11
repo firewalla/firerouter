@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc
+/*    Copyright 2021 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -37,6 +37,9 @@ const WLAN_BSS_EXPIRATION = 630
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
+    pl.scheduleRestartRsyslog();
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
