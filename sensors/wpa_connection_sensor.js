@@ -60,7 +60,7 @@ class WPAConnectionSensor extends Sensor {
   }
 
   async run() {
-    if (platform instanceof PurplePlatform) {
+    if (platform instanceof PurplePlatform && await platform.getWlanVendor() == '88x2cs') {
       this.rejects = []
       this.logWatcher = new LogReader(this.config.log_file, true)
       this.logWatcher.on('line', this.watchLog.bind(this))
