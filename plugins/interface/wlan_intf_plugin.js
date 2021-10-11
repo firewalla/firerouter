@@ -32,8 +32,6 @@ const _ = require('lodash');
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
-const WLAN_INIT_SCAN_DELAY = 3
-const WLAN_DEFAULT_SCAN_INTERVAL = 300
 const WLAN_BSS_EXPIRATION = 630
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
@@ -98,11 +96,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
-      if (this.scanTask) {
-        clearInterval(this.scanTask)
-        this.scanTask = null
-      }
-
       await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       await fs.unlinkAsync(this._getWpaSupplicantConfigPath()).catch((err) => {});
     }
@@ -182,23 +175,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
-
-        // scan at a slow pace regularly to give instant response when requested
-        const scan = () => {
-          this.log.debug('Initiate background scan')
-          exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} scan`)
-            .catch(err => this.log.warn('Failed to scan', err.message) )
-        }
-
-        // start first scan a little bit slower for the service to be initialized
-        setTimeout(scan, WLAN_INIT_SCAN_DELAY * 1000)
-        this.scanTask = setInterval(scan, (this.networkConfig.wpaSupplicant.scanInterval || WLAN_DEFAULT_SCAN_INTERVAL) * 1000)
-
       } else {
-        if (this.scanTask) {
-          clearInterval(this.scanTask)
-          this.scanTask = null
-        }
         await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       }
     }
