@@ -49,7 +49,7 @@ class WPAConnectionSensor extends Sensor {
           // sleep to allow IfPresenceSensor to catch the event
           await exec('sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
           this.rejects = []
-          await rclient.incrAsync('sys:wlan:kernalReload')
+          await rclient.incrAsync('sys:wlan:kernelReload')
         }
       }
     } else if (line.includes('CTRL-EVENT-CONNECTED')) {
@@ -60,12 +60,12 @@ class WPAConnectionSensor extends Sensor {
   }
 
   async run() {
-    if (!(platform instanceof PurplePlatform)) return
-
-    this.rejects = []
-    this.logWatcher = new LogReader(this.config.log_file, true)
-    this.logWatcher.on('line', this.watchLog.bind(this))
-    this.logWatcher.watch()
+    if (platform instanceof PurplePlatform) {
+      this.rejects = []
+      this.logWatcher = new LogReader(this.config.log_file, true)
+      this.logWatcher.on('line', this.watchLog.bind(this))
+      this.logWatcher.watch()
+    }
 
     this.reconfigFlags = {}
     sclient.on("message", async (channel, message) => {
