@@ -18,7 +18,7 @@ const Sensor = require("./sensor.js");
 const r = require('../util/firerouter.js');
 const event = require('../core/event.js');
 const pl = require('../plugins/plugin_loader.js');
-const rclient = require('../util/redis_manager.js').getRedisClient();
+const rclientDB0 = require('../util/redis_manager.js').getRedisClient(0);
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const exec = require('child-process-promise').exec;
 const platformLoader = require('../platform/PlatformLoader.js');
@@ -45,11 +45,11 @@ class WPAConnectionSensor extends Sensor {
           this.log.debug('removed reject', removed)
         }
         if (this.rejects.length >= this.config.reject_threshold_count) {
-          this.log.info('Threshold hit, reloading kernal module ...')
+          this.log.info('Threshold hit, reloading kernel module ...')
           // sleep to allow IfPresenceSensor to catch the event
           await exec('sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
           this.rejects = []
-          await rclient.incrAsync('sys:wlan:kernelReload')
+          await rclientDB0.incrAsync('sys:wlan:kernelReload')
         }
       }
     } else if (line.includes('CTRL-EVENT-CONNECTED')) {
