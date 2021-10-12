@@ -28,7 +28,10 @@ const exec = require('child-process-promise').exec;
 const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
 
-const pluginConfig = require('./config.json')
+const pluginConfig = require('./config.json');
+const util = require('../../util/util');
+
+const WLAN_AVAILABLE_RETRY = 3
 
 class HostapdPlugin extends Plugin {
 
@@ -94,32 +97,71 @@ class HostapdPlugin extends Plugin {
 
     if (!parameters.channel) {
       const availableChannels = pluginConfig.vendor[await platform.getWlanVendor()].channels
-
       const scores = {}
-      const availableWLANs = await ncm.getWlanAvailable(this.name)
-      for (const network of availableWLANs) {
-        const channelConfig = pluginConfig.channel[network.channel]
-        if (!channelConfig) continue
 
-        // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
-        for (const ch of channelConfig.ACI) {
-          if (!scores[ch]) scores[ch] = 0
-          scores[ch] += Math.pow(10, (network.signal/10)) * channelConfig.weight
+      let availableWLANs
+      for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
+        availableWLANs = await ncm.getWlansViaWpaSupplicant()
+        if (availableWLANs && availableWLANs.length)
+          break; // stop on first successful call
+        else
+          this.log.warn('No wlan found, trying again...')
+        await util.delay(2)
+      } catch(err) {
+        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
+        await util.delay(2)
+      }
+
+      if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
+        // 5G network is preferred
+        parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
+        this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
+      }
+      else {
+        for (const network of availableWLANs) {
+          if (network.freq == 2484) network.channel = 14
+          else if (network.freq < 5000) network.channel = Math.round((network.freq - 2407) / 5)
+          else network.channel = Math.round((network.freq - 5000) / 5)
+
+          const channelConfig = pluginConfig.channel[network.channel]
+          if (!channelConfig) continue
+
+          // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
+          for (const ch of channelConfig.ACI) {
+            if (!scores[ch]) scores[ch] = 0
+            scores[ch] += Math.pow(10, (network.signal/10)) * channelConfig.weight
+          }
         }
+
+        // print debug log
+        // this.log.info('channel score chart')
+        // Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
+
+        let bestChannel = undefined
+        for (const ch of availableChannels) {
+          if (!bestChannel || scores[bestChannel] > scores[ch])
+            bestChannel = ch
+        }
+        this.log.info('Best channel is', bestChannel)
+
+        parameters.channel = bestChannel
       }
+    }
 
-      // print debug log
-      this.log.info('channel score chart')
-      Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
+    if (parameters.ssid && parameters.wpa_passphrase) {
+      const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
+      parameters.wpa_psk = psk;
+      // use hexdump for ssid
+      parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
+      delete parameters["wpa_passphrase"];
+      delete parameters["ssid"];
+    }
 
-      let bestChannel = undefined
-      for (const ch of availableChannels) {
-        if (!bestChannel || scores[bestChannel] > scores[ch])
-          bestChannel = ch
+    const hexdumpKeys = ["wep_key0", "wep_key1", "wep_key2", "wep_key3"];
+    for (const key of hexdumpKeys) {
+      if (parameters.hasOwnProperty(key)) {
+        parameters[key] = util.getHexStrArray(parameters[key]).join("");
       }
-      this.log.info('Best channel is', bestChannel)
-
-      parameters.channel = bestChannel
     }
 
     const channelConfig = pluginConfig.channel[parameters.channel]
