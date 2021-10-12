@@ -19,6 +19,9 @@ Promise.promisifyAll(fs);
 
 const Platform = require('../Platform.js');
 
+const firestatusBaseURL = "http://127.0.0.1:9966";
+const exec = require('child-process-promise').exec;
+
 class PurplePlatform extends Platform {
   getName() {
     return "purple";
@@ -44,6 +47,35 @@ class PurplePlatform extends Platform {
   getWpaCliBinPath() {
     return `${__dirname}/bin/wpa_cli`;
   }
+
+  getWpaPassphraseBinPath() {
+    return `${__dirname}/bin/wpa_passphrase`;
+  }
+
+  async ledNormalVisibleStart() {
+    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
+      log.error("Failed to set LED as WAN normal visible");
+    });
+  }
+
+  async ledNormalVisibleStop() {
+    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
+  async ledAllNetworkDown() {
+    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
+  async ledAnyNetworkUp() {
+    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
+      log.error("Failed to set LED as WAN NOT normal visible");
+    });
+  }
+
 }
 
 module.exports = PurplePlatform;

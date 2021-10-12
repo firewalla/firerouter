@@ -9,6 +9,12 @@ sudo iptables -w -t nat -N FR_UPNP &> /dev/null
 sudo iptables -w -t nat -F FR_UPNP
 sudo iptables -w -t nat -A FR_PREROUTING -j FR_UPNP
 
+# not used, but it is required for miniupnpd to populate rules in forward chains
+sudo iptables -w -t nat -N FR_UPNP_POSTROUTING &> /dev/null
+sudo iptables -w -t nat -F FR_UPNP_POSTROUTING
+
+sudo iptables -w -N FR_UPNP_ACCEPT &>/dev/null
+
 sudo iptables -w -t nat -N FR_WIREGUARD &> /dev/null
 sudo iptables -w -t nat -F FR_WIREGUARD
 
@@ -85,10 +91,6 @@ sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
 sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
 
-sudo ip6tables -w -t nat -N FR_UPNP &> /dev/null
-sudo ip6tables -w -t nat -F FR_UPNP
-sudo ip6tables -w -t nat -A FR_PREROUTING -j FR_UPNP
-
 sudo ip6tables -w -t nat -N FR_WIREGUARD &> /dev/null
 sudo ip6tables -w -t nat -F FR_WIREGUARD
 
@@ -150,14 +152,14 @@ sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
 # ------ flush routing tables
 sudo ip r flush table global_local
 sudo ip r flush table global_default
-sudo ip r flush table wan_routable
-sudo ip r flush table lan_routable
+sudo ip r flush table wan_routable metric 0 # only delete routes with metric 0, routes with non-zero metric are not added by firerouter
+sudo ip r flush table lan_routable metric 0
 sudo ip r flush table static
 
 sudo ip -6 r flush table global_local
 sudo ip -6 r flush table global_default
-sudo ip -6 r flush table wan_routable
-sudo ip -6 r flush table lan_routable
+sudo ip -6 r flush table wan_routable metric 0
+sudo ip -6 r flush table lan_routable metric 0
 sudo ip -6 r flush table static
 
 # ------ initialize ip rules

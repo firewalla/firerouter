@@ -30,12 +30,20 @@ const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
+const PlatformLoader = require('../../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
 const FAST_OFF_ON_THRESHOLD = 2;
 
 class RoutingPlugin extends Plugin {
+
+  static async preparePlugin() {
+    // ensure ip forward is enabled
+    await exec(`sudo sysctl -w net.ipv4.ip_forward=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.all.forwarding=1`).catch((err) => {});
+  }
    
   async flush() {
     if (!this.networkConfig) {
@@ -142,7 +150,22 @@ class RoutingPlugin extends Plugin {
     }
   }
 
+  meterApplyActiveGlobalDefaultRouting() {
+    const now = new Date();
+
+    if(this.lastApplyTimestamp) {
+      const diff = Math.floor(now / 1000 - this.lastApplyTimestamp / 1000);
+      this.log.info(`applying active global default routing, ${diff} seconds since last time apply`);
+    } else {
+      this.log.info(`applying active global default routing, first time since firerouter starting up`);
+    }
+
+    this.lastApplyTimestamp = now;
+  }
+
   async _applyActiveGlobalDefaultRouting(inAsyncContext = false) {
+    this.meterApplyActiveGlobalDefaultRouting();
+    
     return new Promise((resolve, reject) => {
       // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
       lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async (done) => {
@@ -344,6 +367,7 @@ class RoutingPlugin extends Plugin {
           default:
         }
         await this._refreshOutputSNATRules();
+        this.processWANConnChange(); // no need to await, call this func again to ensure led is set correctly
         done(null);
       }, function(err, ret) {
         if (err)
@@ -597,6 +621,13 @@ class RoutingPlugin extends Plugin {
       return null;
   }
 
+  getAllWANPlugins() {
+    if (this._wanStatus)
+      return Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
+    else
+      return null;
+  }
+
   getPrimaryWANPlugin() {
     if (this._wanStatus) {
       const iface = Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq)[0];
@@ -701,23 +732,55 @@ class RoutingPlugin extends Plugin {
           };
         }
         if (changeDesc) {
+          this.processWANConnChange(); // no need to await
           if (changeActiveWanNeeded) {
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
-            changeDesc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(changeDesc);
-          }   
+            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+              if (enrichedWanStatus) {
+                changeDesc.currentStatus = enrichedWanStatus;
+                this.publishWANConnChange(changeDesc);
+              }
+            }).catch((err) => {
+              this.log.error("Failed to enrich WAN status", err.message);
+            });
+          }
         }
       }
       default:
     }
   }
 
+  // in seconds
+  getApplyTimeoutInterval(changeDesc = {}) {
+    const failures = changeDesc.failures || [];
+    const carrierFailures = failures.filter((x) => x.type === 'carrier');
+    const hasCarrierError = !_.isEmpty(carrierFailures);
+
+    if(!this.lastApplyTimestamp) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    const secondsSinceLastApply = Math.floor(new Date() / 1000 - this.lastApplyTimestamp / 1000);
+    if(secondsSinceLastApply > 20) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    return hasCarrierError ? 3 : 10;
+  }
+
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
     this._pendingChangeDescs = this._pendingChangeDescs || [];
     this._pendingChangeDescs.push(changeDesc);
-    if (this.applyActiveGlobalDefaultRoutingTask)
+
+    const timeoutInterval = this.getApplyTimeoutInterval(changeDesc);
+
+    if (this.applyActiveGlobalDefaultRoutingTask) {
+      this.log.info("Cancelled scheduled active global default routing change");
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
+    }
+
+    this.log.info(`Going to change global default routing in ${timeoutInterval} seconds...`);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
       this.log.info("Apply active global default routing", Object.keys(this._wanStatus).map(i => {
         return {
@@ -726,23 +789,23 @@ class RoutingPlugin extends Plugin {
           seq: this._wanStatus[i].seq,
           successCount: this._wanStatus[i].successCount,
           failureCount:  this._wanStatus[i].failureCount
-        }
+        };
       }));
       // in async context here
       this._applyActiveGlobalDefaultRouting(true).then(() => {
-        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
+        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {});
         this.propagateEvent(e);
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
             desc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(desc);
+            this.publishWANConnChange(desc);
           }
         }
         this._pendingChangeDescs = [];
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
-    }, 10000);
+    }, timeoutInterval * 1000);
   }
 
   async enrichWanStatus(wanStatus) {
@@ -770,12 +833,58 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  schedulePublishWANConnChanged(changeDesc) {
-    this.log.info("schedule publish WAN :",changeDesc);
+  async publishWANConnChange(changeDesc) {
+    this.log.info("publish WAN :",changeDesc);
+
     // publish to redis db used by Firewalla
-    setTimeout(async () => {
-      pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
-    }, 10000);
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  async processWANConnChange() {
+    const state = this.isAnyWanConnected();
+    const anyUp = state && state.connected;
+    const lastAnyUp = this.lastAnyUp;
+    if (anyUp === lastAnyUp) {
+      return;
+    }
+
+    this.lastAnyUp = anyUp;
+
+    if(anyUp) {
+      await this.notifyAnyWanUp(state);
+    } else {
+      await this.notifyAllWanDown(state);
+    }
+  }
+
+  async notifyAnyWanUp(state) {
+    this.log.info("at least one wan is back online, publishing redis message and set led...");
+    await platform.ledAnyNetworkUp();
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
+  }
+
+  async notifyAllWanDown(state) {
+    this.log.info("all wan are down, publishing redis message and set led...");
+    await platform.ledAllNetworkDown();
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
+    await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+  }
+
+  isAnyWanConnected() {
+    const states = this.getWANConnStates();
+    let connected = false;
+    const subStates = {};
+    for(const intf in states) {
+      const state = states[intf];
+      if(state.ready) {
+        connected = true;
+      }
+      subStates[intf] = {active: state.ready};
+    }
+    return {
+      connected,
+      wans: subStates
+    };
   }
 }
 

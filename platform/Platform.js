@@ -37,6 +37,18 @@ class Platform {
   getWpaCliBinPath() {
     return null;
   }
+
+  async ledNormalVisibleStart() {
+  }
+
+  async ledNormalVisibleStop() {
+  }
+
+  async ledAllNetworkDown() {
+  }
+
+  async ledAnyNetworkUp() {
+  }
 }
 
 module.exports = Platform;

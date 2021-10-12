@@ -81,6 +81,22 @@ cur_branch=$(git rev-parse --abbrev-ref HEAD)
 switch_branch $cur_branch $branch || exit 1
 # remove prepared flag file to trigger prepare_env during next init_network_config
 rm -f /dev/shm/firerouter.prepared
+# set node_modules link to the proper directory
+NODE_MODULES_PATH=$(get_node_modules_dir)
+if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
+  if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
+    ln -sfT $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+  fi
+fi
+
+if [[ $NETWORK_SETUP == "yes" ]]; then
+  sudo cp /home/pi/firerouter/scripts/firerouter.service /etc/systemd/system/.
+  sudo cp /home/pi/firerouter/scripts/fireboot.service /etc/systemd/system/.
+else
+  sudo cp /home/pi/firerouter/scripts/fireboot_standalone.service /etc/systemd/system/fireboot.service
+fi
+sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
+sudo systemctl daemon-reload
 
 sync
 logger "FireRouter: SWITCH branch from $cur_branch to $branch"
