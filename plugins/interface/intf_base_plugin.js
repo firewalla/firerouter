@@ -688,10 +688,10 @@ class InterfaceBasePlugin extends Plugin {
     });
   }
 
-  _getWANConnState(name) {
+  _getWANConnState() {
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      return routingPlugin.getWANConnState(name);
+      return routingPlugin.getWANConnState(this.name);
     }
     return null;
   }
@@ -914,7 +914,8 @@ class InterfaceBasePlugin extends Plugin {
       ping: pingResult,
       dns: dnsResult,
       failures: failures,
-      ts: Math.floor(new Date() / 1000)
+      ts: Math.floor(new Date() / 1000),
+      wanConnState: this._getWANConnState() || {}
     };
 
     if(!active) {
@@ -1015,7 +1016,7 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
-      wanConnState = this._getWANConnState(this.name) || {};
+      wanConnState = this._getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
     return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
