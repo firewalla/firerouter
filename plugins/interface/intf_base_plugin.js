@@ -898,6 +898,10 @@ class InterfaceBasePlugin extends Plugin {
     if (active && dnsTestEnabled) {
       const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
       if(!_dnsResult) {
+        const nameservers = await this.getDNSNameservers() || [];
+        // add all nameservers to failures array
+        for (const nameserver of nameservers)
+          failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
         this.log.error(`DNS test failed on all nameservers on ${this.name}`);
         active = false;
         dnsResult = false;

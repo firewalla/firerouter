@@ -153,13 +153,15 @@
     {
       "file_path": "./if_presence_sensor.js",
       "config": {
-        
+
       }
     },
     {
       "file_path": "./wpa_connection_sensor.js",
       "config": {
-        
+        "log_file": "/var/log/wpa_supplicant.log",
+        "reject_threshold_count": 3,
+        "reject_threshold_time_seconds": 300
       }
     }
   ]
