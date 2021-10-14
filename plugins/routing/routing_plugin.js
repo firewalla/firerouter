@@ -741,7 +741,8 @@ class RoutingPlugin extends Plugin {
         }
 
         if(wasPendingTest) {
-          this.log.info(`Finished 1st wan status testing after config change, ${intf} final status:`, currentStatus);
+          const stats = _.pick(currentStatus, ["active", "ready", "successCount", "failureCount", "pendingTest"]);
+          this.log.info(`Finished 1st wan status testing after config change, ${intf} final status:`, stats);
         }
 
         if (!changeDesc && wasPendingTest) {
