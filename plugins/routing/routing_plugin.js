@@ -409,7 +409,8 @@ class RoutingPlugin extends Plugin {
                         active: false,
                         ready: true,
                         successCount: 0,
-                        failureCount: 0
+                        failureCount: 0,
+                        pendingTest: true
                       };
                       // do not change WAN connectivity status
                       if (lastWanStatus[viaIntf2]) {
@@ -436,7 +437,8 @@ class RoutingPlugin extends Plugin {
                         active: false,
                         ready: true,
                         successCount: 0,
-                        failureCount: 0
+                        failureCount: 0,
+                        pendingTest: true
                       };
                       if (lastWanStatus[viaIntf]) {
                         wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
@@ -465,7 +467,8 @@ class RoutingPlugin extends Plugin {
                             active: false,
                             ready: true,
                             successCount: 0,
-                            failureCount: 0
+                            failureCount: 0,
+                            pendingTest: true
                           };
                           if (lastWanStatus[viaIntf]) {
                             wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
@@ -642,7 +645,8 @@ class RoutingPlugin extends Plugin {
       Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).forEach(i => {
         result[i] = {
           ready: this._wanStatus[i].ready,
-          active: this._wanStatus[i].active
+          active: this._wanStatus[i].active,
+          pendingTest: this._wanStatus[i].pendingTest
         };
       });
       return result;
@@ -654,7 +658,8 @@ class RoutingPlugin extends Plugin {
     if (this._wanStatus && this._wanStatus[name]) {
       return {
         ready: this._wanStatus[name].ready,
-        active: this._wanStatus[name].active
+        active: this._wanStatus[name].active,
+        pendingTest: this._wanStatus[name].pendingTest
       };
     }
     return null;
@@ -693,6 +698,8 @@ class RoutingPlugin extends Plugin {
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
         }
+        const wasPendingTest = currentStatus.pendingTest;
+        currentStatus.pendingTest = false;
         let changeActiveWanNeeded = false;
         let changeDesc = null;
         if (currentStatus.ready && (forceState !== true && currentStatus.failureCount >= ON_OFF_THRESHOLD || forceState === false)) {
@@ -729,6 +736,16 @@ class RoutingPlugin extends Plugin {
             ready: true,
             wanSwitched: changeActiveWanNeeded,
             failures: failures
+          };
+        }
+        if (!changeDesc && wasPendingTest) {
+          // send a wan conn change event with noNotify bit set to true
+          changeDesc = {
+            intf: intf,
+            ready: currentStatus.ready,
+            wanSwitched: false,
+            failures: failures,
+            noNotify: true
           };
         }
         if (changeDesc) {
