@@ -509,6 +509,7 @@ class RoutingPlugin extends Plugin {
                   }
                   // in apply context here
                   this._wanStatus = wanStatus;
+                  this.log.info("wan config change, routing is re/applied, set pendingTest to true for all wan interfaces");
                   await this._applyActiveGlobalDefaultRouting(false);
                   break;
                 }
@@ -738,6 +739,11 @@ class RoutingPlugin extends Plugin {
             failures: failures
           };
         }
+
+        if(wasPendingTest) {
+          this.log.info(`Finished 1st wan status testing after config change, ${intf} final status:`, currentStatus);
+        }
+
         if (!changeDesc && wasPendingTest) {
           // send a wan conn change event with noNotify bit set to true
           changeDesc = {
