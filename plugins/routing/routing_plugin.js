@@ -411,7 +411,7 @@ class RoutingPlugin extends Plugin {
                         successCount: 0,
                         failureCount: 0,
                         pendingTestTimestamp: Math.floor(new Date() / 1000),
-                        pendingTest: true
+                        pendingTest: viaIntf2Plugin.isPendingTest()
                       };
                       // do not change WAN connectivity status
                       if (lastWanStatus[viaIntf2]) {
@@ -440,7 +440,7 @@ class RoutingPlugin extends Plugin {
                         successCount: 0,
                         failureCount: 0,
                         pendingTestTimestamp: Math.floor(new Date() / 1000),
-                        pendingTest: true
+                        pendingTest: viaIntfPlugin.isPendingTest()
                       };
                       if (lastWanStatus[viaIntf]) {
                         wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
@@ -471,7 +471,7 @@ class RoutingPlugin extends Plugin {
                             successCount: 0,
                             failureCount: 0,
                             pendingTestTimestamp: Math.floor(new Date() / 1000),
-                            pendingTest: true
+                            pendingTest: viaIntfPlugin.isPendingTest()
                           };
                           if (lastWanStatus[viaIntf]) {
                             wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;

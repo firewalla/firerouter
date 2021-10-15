@@ -672,6 +672,8 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       this._wanStatus = {};
 
+      this.setPendingTest(true);
+
       await this.updateRouteForDNS();
 
       await this.markOutputConnection();
@@ -937,6 +939,14 @@ class InterfaceBasePlugin extends Plugin {
     return result;
   }
 
+  setPendingTest(v = false) {
+    this._pendingTest = v;
+  }
+
+  isPendingTest() {
+    return this._pendingTest || false;
+  }
+
   // use throw error for Promise.any
   async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
     const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
@@ -1074,6 +1084,14 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
         }
+      }
+      case event.EVENT_WAN_CONN_CHECK: {
+        const payload = event.getEventPayload(e);
+        if (!payload)
+          return;
+        const iface = payload.intf;
+        if (iface === this.name)
+          this.setPendingTest(false);
       }
       default:
     }
