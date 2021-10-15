@@ -410,7 +410,7 @@ class RoutingPlugin extends Plugin {
                         ready: true,
                         successCount: 0,
                         failureCount: 0,
-                        pendingTestTimestamp: Math.floor(new Date() / 1000),
+                        pendingTestTimestamp: viaIntf2Plugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
                         pendingTest: viaIntf2Plugin.isPendingTest()
                       };
                       // do not change WAN connectivity status
@@ -439,7 +439,7 @@ class RoutingPlugin extends Plugin {
                         ready: true,
                         successCount: 0,
                         failureCount: 0,
-                        pendingTestTimestamp: Math.floor(new Date() / 1000),
+                        pendingTestTimestamp: viaIntfPlugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
                         pendingTest: viaIntfPlugin.isPendingTest()
                       };
                       if (lastWanStatus[viaIntf]) {
@@ -470,7 +470,7 @@ class RoutingPlugin extends Plugin {
                             ready: true,
                             successCount: 0,
                             failureCount: 0,
-                            pendingTestTimestamp: Math.floor(new Date() / 1000),
+                            pendingTestTimestamp: viaIntfPlugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
                             pendingTest: viaIntfPlugin.isPendingTest()
                           };
                           if (lastWanStatus[viaIntf]) {
