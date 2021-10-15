@@ -410,6 +410,7 @@ class RoutingPlugin extends Plugin {
                         ready: true,
                         successCount: 0,
                         failureCount: 0,
+                        pendingTestTimestamp: Math.floor(new Date() / 1000),
                         pendingTest: true
                       };
                       // do not change WAN connectivity status
@@ -438,6 +439,7 @@ class RoutingPlugin extends Plugin {
                         ready: true,
                         successCount: 0,
                         failureCount: 0,
+                        pendingTestTimestamp: Math.floor(new Date() / 1000),
                         pendingTest: true
                       };
                       if (lastWanStatus[viaIntf]) {
@@ -468,6 +470,7 @@ class RoutingPlugin extends Plugin {
                             ready: true,
                             successCount: 0,
                             failureCount: 0,
+                            pendingTestTimestamp: Math.floor(new Date() / 1000),
                             pendingTest: true
                           };
                           if (lastWanStatus[viaIntf]) {
@@ -742,7 +745,9 @@ class RoutingPlugin extends Plugin {
 
         if(wasPendingTest) {
           const stats = _.pick(currentStatus, ["active", "ready", "successCount", "failureCount", "pendingTest"]);
-          this.log.info(`Finished 1st wan status testing after config change, ${intf} final status:`, stats);
+          const lastTS = currentStatus.pendingTestTimestamp;
+          const duration = lastTS ? Math.floor(new Date() / 1000) - currentStatus.pendingTestTimestamp : 0;
+          this.log.info(`Finished 1st wan status testing (took ${duration} seconds) after config change, ${intf} final status:`, stats);
         }
 
         if (!changeDesc && wasPendingTest) {
