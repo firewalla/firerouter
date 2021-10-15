@@ -410,6 +410,7 @@ class RoutingPlugin extends Plugin {
                         ready: true,
                         successCount: 0,
                         failureCount: 0,
+                        pendingTestTimestamp: Math.floor(new Date() / 1000),
                         pendingTest: true
                       };
                       // do not change WAN connectivity status
@@ -438,6 +439,7 @@ class RoutingPlugin extends Plugin {
                         ready: true,
                         successCount: 0,
                         failureCount: 0,
+                        pendingTestTimestamp: Math.floor(new Date() / 1000),
                         pendingTest: true
                       };
                       if (lastWanStatus[viaIntf]) {
@@ -468,6 +470,7 @@ class RoutingPlugin extends Plugin {
                             ready: true,
                             successCount: 0,
                             failureCount: 0,
+                            pendingTestTimestamp: Math.floor(new Date() / 1000),
                             pendingTest: true
                           };
                           if (lastWanStatus[viaIntf]) {
@@ -509,6 +512,7 @@ class RoutingPlugin extends Plugin {
                   }
                   // in apply context here
                   this._wanStatus = wanStatus;
+                  this.log.info("wan config change, routing is re/applied, set pendingTest to true for all wan interfaces");
                   await this._applyActiveGlobalDefaultRouting(false);
                   break;
                 }
@@ -738,6 +742,14 @@ class RoutingPlugin extends Plugin {
             failures: failures
           };
         }
+
+        if(wasPendingTest) {
+          const stats = _.pick(currentStatus, ["active", "ready", "successCount", "failureCount", "pendingTest"]);
+          const lastTS = currentStatus.pendingTestTimestamp;
+          const duration = lastTS ? Math.floor(new Date() / 1000) - currentStatus.pendingTestTimestamp : 0;
+          this.log.info(`Finished 1st wan status testing (took ${duration} seconds) after config change, ${intf} final status:`, stats);
+        }
+
         if (!changeDesc && wasPendingTest) {
           // send a wan conn change event with noNotify bit set to true
           changeDesc = {
