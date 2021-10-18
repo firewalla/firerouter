@@ -1,0 +1,14 @@
+/var/log/wpa_supplicant.log
+{
+  rotate 7
+  daily
+  maxsize 1M
+  missingok
+  notifempty
+  compress
+  delaycompress
+  nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}

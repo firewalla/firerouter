@@ -672,6 +672,8 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       this._wanStatus = {};
 
+      this.setPendingTest(true);
+
       await this.updateRouteForDNS();
 
       await this.markOutputConnection();
@@ -688,10 +690,10 @@ class InterfaceBasePlugin extends Plugin {
     });
   }
 
-  _getWANConnState(name) {
+  _getWANConnState() {
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      return routingPlugin.getWANConnState(name);
+      return routingPlugin.getWANConnState(this.name);
     }
     return null;
   }
@@ -898,6 +900,10 @@ class InterfaceBasePlugin extends Plugin {
     if (active && dnsTestEnabled) {
       const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
       if(!_dnsResult) {
+        const nameservers = await this.getDNSNameservers() || [];
+        // add all nameservers to failures array
+        for (const nameserver of nameservers)
+          failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
         this.log.error(`DNS test failed on all nameservers on ${this.name}`);
         active = false;
         dnsResult = false;
@@ -914,7 +920,8 @@ class InterfaceBasePlugin extends Plugin {
       ping: pingResult,
       dns: dnsResult,
       failures: failures,
-      ts: Math.floor(new Date() / 1000)
+      ts: Math.floor(new Date() / 1000),
+      wanConnState: this._getWANConnState() || {}
     };
 
     if(!active) {
@@ -930,6 +937,14 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     return result;
+  }
+
+  setPendingTest(v = false) {
+    this._pendingTest = v;
+  }
+
+  isPendingTest() {
+    return this._pendingTest || false;
   }
 
   // use throw error for Promise.any
@@ -1015,7 +1030,7 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
-      wanConnState = this._getWANConnState(this.name) || {};
+      wanConnState = this._getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
     return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
@@ -1069,6 +1084,14 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
         }
+      }
+      case event.EVENT_WAN_CONN_CHECK: {
+        const payload = event.getEventPayload(e);
+        if (!payload)
+          return;
+        const iface = payload.intf;
+        if (iface === this.name)
+          this.setPendingTest(false);
       }
       default:
     }

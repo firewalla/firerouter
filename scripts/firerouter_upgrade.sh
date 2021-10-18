@@ -77,7 +77,7 @@ fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync
 
-NETWORK_CHECK_URL=https://one.one.one.one
+NETWORK_CHECK_URL=https://1.1.1.1
 
 logger `date`
 rc=1
