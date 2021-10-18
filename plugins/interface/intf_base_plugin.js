@@ -1071,6 +1071,7 @@ class InterfaceBasePlugin extends Plugin {
           this._reapplyNeeded = true;
           pl.scheduleReapply();
         }
+        break;
       }
       case event.EVENT_IP_CHANGE: {
         const payload = event.getEventPayload(e);
@@ -1084,6 +1085,7 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
         }
+        break;
       }
       case event.EVENT_WAN_CONN_CHECK: {
         const payload = event.getEventPayload(e);
@@ -1092,6 +1094,7 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface === this.name)
           this.setPendingTest(false);
+        break;
       }
       default:
     }
