@@ -171,6 +171,13 @@ module.exports = function (component) {
     logger.log.apply(logger, ["warn", component + ": " + argumentsToString(arguments)]);
   };
 
+  wrap.verbose = function () {
+    if (logger.levels[getLogLevel()] < logger.levels['verbose']) {
+      return // do nothing
+    }
+    logger.log.apply(logger, ["verbose", component + ": " + argumentsToString(arguments)]);
+  };
+
   wrap.debug = function () {
     if (logger.levels[getLogLevel()] < logger.levels['debug']) {
       return // do nothing
