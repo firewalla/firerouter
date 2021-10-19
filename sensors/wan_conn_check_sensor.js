@@ -71,6 +71,7 @@ class WanConnCheckSensor extends Sensor {
       this.log.info("A network config is being applied, skip WAN connectivity check this round");
       return;
     }
+    const t1 = Date.now() / 1000;
     const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).filter(name => !_.isArray(ifaces) || ifaces.includes(name)).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin && ifacePlugin.isWAN());
     const defaultPingTestIP = this.config.ping_test_ip || ["1.1.1.1", "8.8.8.8", "9.9.9.9"];
     const defaultPingTestCount = this.config.ping_test_count || 8;
@@ -84,6 +85,15 @@ class WanConnCheckSensor extends Sensor {
 
       if (!result)
         return;
+      if (pl.isApplyInProgress()) {
+        this.log.info("A network config is being applied, discard WAN connectivity test result");
+        return;
+      }
+      const lastAppliedTimestamp = pl.getLastAppliedTimestamp();
+      if (lastAppliedTimestamp > t1) {
+        this.log.info("A network config was just applied during the current WAN connectivity test, discard WAN connectivity test result");
+        return;
+      }
       const active = result.active;
       const forceState = result.forceState;
       const failures = result.failures;
