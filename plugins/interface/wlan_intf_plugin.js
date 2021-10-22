@@ -74,10 +74,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
   }
 
-  static async installWpaSupplicantScript() {
-    await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
-  }
-
   async readyToConnect() {
     const carrier = await this.carrierState();
     if (carrier !== "1") {
