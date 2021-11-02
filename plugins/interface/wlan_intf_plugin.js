@@ -221,6 +221,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     super.onEvent(e);
     const eventType = event.getEventType(e);
     if (eventType === event.EVENT_WPA_CONNECTED) {
+      // need to re-check connectivity status after wifi is switched
+      this.setPendingTest(true);
       this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
         this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
       });
