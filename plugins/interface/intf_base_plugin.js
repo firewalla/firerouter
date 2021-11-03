@@ -18,6 +18,7 @@
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const _ = require('lodash');
+const url = require('url');
 
 const r = require('../../util/firerouter');
 
@@ -27,12 +28,15 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
+const ip = require('ip');
 
+const Message = require('../../core/Message.js');
 const wrapIptables = require('../../util/util.js').wrapIptables;
 
 const event = require('../../core/event.js');
 const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
+const pclient = require('../../util/redis_manager.js').getPublishClient();
 
 Promise.promisifyAll(fs);
 
@@ -607,6 +611,18 @@ class InterfaceBasePlugin extends Plugin {
       });
   }
 
+  getDefaultMTU() {
+    return null;
+  }
+
+  async setMTU() {
+    const mtu = this.networkConfig.mtu || this.getDefaultMTU();
+    if (mtu)
+      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
+        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
+      });
+  }
+
   async setSysOpts() {
     if (this.networkConfig.sysOpts) {
       for (const key of Object.keys(this.networkConfig.sysOpts)) {
@@ -645,6 +661,8 @@ class InterfaceBasePlugin extends Plugin {
 
     await this.setHardwareAddress();
 
+    await this.setMTU();
+
     await this.applyIpSettings();
 
     await this.applyDnsSettings();
@@ -653,6 +671,8 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       this._wanStatus = {};
+
+      this.setPendingTest(true);
 
       await this.updateRouteForDNS();
 
@@ -663,17 +683,17 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const value = await exec(`sudo cat /sys/class/net/${this.name}/${key}`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+    const file = `/sys/class/net/${this.name}/${key}`;
+    return fs.readFileAsync(file, "utf8").then(content => content.trim()).catch((err) => {
       this.log.debug(`Failed to get ${key} of ${this.name}`, err.message);
       return null;
-    })
-    return value;
+    });
   }
 
-  _getWANConnState(name) {
+  _getWANConnState() {
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      return routingPlugin.getWANConnState(name);
+      return routingPlugin.getWANConnState(this.name);
     }
     return null;
   }
@@ -690,10 +710,37 @@ class InterfaceBasePlugin extends Plugin {
     return ip4s;
   }
 
+  async getIPv6Addresses() {
+    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
+    if (ip6s)
+      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    return ip6s;
+  }
+
+  async getRoutableIPv6Addresses() {
+    const ip6s = await this.getIPv6Addresses();
+    if(_.isEmpty(ip6s)) {
+      return ip6s;
+    }
+
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+  }
+
   // use a dedicated carrier state for fast processing
   async carrierState() {
     const state = await this._getSysFSClassNetValue("carrier");
     return state;
+  }
+
+  async operstateState() {
+    const state = await this._getSysFSClassNetValue("operstate");
+    return state;
+  }
+
+  // is the interface physically ready to connect
+  async readyToConnect() {
+    const carrierState = await this.carrierState();
+    return carrierState === "1";
   }
 
   async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
@@ -701,18 +748,50 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
       return null;
     }
+
+    this.isHttpTesting = this.isHttpTesting || {};
+
+    if(this.isHttpTesting[defaultTestURL]) {
+      this.log.info("last round of http testing is not finished yet, this round is skipped.");
+      return null;
+    }
+
+    const u = url.parse(defaultTestURL);
+    const hostname = u.hostname;
+    const protocol = u.protocol;
+    const port = u.port || protocol === "http:" && 80 || protocol === "https:" && 443;
+
+    if(!hostname || !port) {
+      this.log.error("invalid test url:", defaultTestURL);
+      return null;
+    }
+
+    this.isHttpTesting[defaultTestURL] = true;
+
+    const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
+    if(!dnsResult) {
+      this.log.error("failed to resolve dns on domain", u.hostname);
+      delete this.isHttpTesting[defaultTestURL];
+      return null;
+    }
+
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const output = await exec(`curl -${testURL.startsWith("https") ? 'k' : ''}sq -m10 --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`).then(output => output.stdout.trim()).catch((err) => {
+    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
+    const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
+
+    delete this.isHttpTesting[defaultTestURL];
+
     if (!output)
       return null;
     const [statusCode, redirectURL] = output.split(',', 2);
 
     const result = {
+      testURL,
       statusCode: !isNaN(statusCode) ? Number(statusCode) : statusCode,
       redirectURL: redirectURL,
       expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
@@ -723,6 +802,12 @@ class InterfaceBasePlugin extends Plugin {
       this._wanStatus.http = result;
     }
 
+    // keep bluetooth up if status code is 3xx
+    if(result.statusCode >= 300 && result.statusCode < 400) {
+      this.log.info(`looks like ${this.name} has captive on, sending bluetooth control message...`);
+      await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+    }
+
     return result;
   }
 
@@ -730,7 +815,7 @@ class InterfaceBasePlugin extends Plugin {
     return this._wanStatus;
   }
 
-  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}) {
+  async checkWanConnectivity(defaultPingTestIP = ["1.1.1.1", "8.8.8.8", "9.9.9.9"], defaultPingTestCount = 8, defaultPingSuccessRate = 0.5, defaultDnsTestDomain = "github.com", forceExtraConf = {}, sendEvent = false) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkWanConnectivity is not supported`);
       return null;
@@ -739,7 +824,7 @@ class InterfaceBasePlugin extends Plugin {
     let active = true;
     let carrierResult = null;
     let pingResult = null;
-    let dnsResult = null;
+    let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
@@ -759,8 +844,10 @@ class InterfaceBasePlugin extends Plugin {
     const forceState = (extraConf && extraConf.forceState) || undefined;
 
     const carrierState = await this.carrierState();
-    if (carrierState !== "1") {
-      this.log.warn(`Carrier is not connected on interface ${this.name}, directly mark as non-active`);
+    const operstateState = await this.operstateState();
+    const r2c = await this.readyToConnect();
+    if (!r2c) {
+      this.log.warn(`Interface ${this.name} is not ready, carrier ${carrierState}, operstate ${operstateState}, directly mark as non-active`);
       active = false;
       carrierResult = false;
       failures.push({type: "carrier"});
@@ -768,28 +855,32 @@ class InterfaceBasePlugin extends Plugin {
       carrierResult = true;
 
     if (active && pingTestEnabled) {
+      // no need to use Promise.any as ping test time for each target is the same
+      // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
             failures.push({type: "ping", target: ip});
-            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
-            });
+            if (sendEvent)
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
+              });
             return false;
           } else
-            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate":Number(result.stdout.trim())/pingTestCount
-            });
+            if (sendEvent)
+              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
+                "wan_test_ip":ip,
+                "wan_intf_name":wanName,
+                "wan_intf_uuid":wanUUID,
+                "ping_test_count":pingTestCount,
+                "success_rate":Number(result.stdout.trim())/pingTestCount
+              });
           return true;
         }).catch((err) => {
           this.log.error(`Failed to do ping test to ${ip} on ${this.name}`, err.message);
@@ -807,58 +898,111 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     if (active && dnsTestEnabled) {
-      const nameservers = await this.getDNSNameservers();
-      const ip4s = await this.getIPv4Addresses();
-      if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
-        const srcIP = ip4s[0].split('/')[0];
-        await Promise.all(nameservers.map(async (nameserver) => {
-          const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
-          const result = await exec(cmd).then((result) => {
-            if (!result || !result.stdout || result.stdout.trim().length === 0)  {
-              this.log.warn(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${this.name}`);
-              failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-              return false;
-            } else {
-              return true;
-            }
-          }).catch((err) => {
-            this.log.error(`Failed to do DNS test using ${nameserver} on ${this.name}`, err.message);
-            failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-            return false;
-          });
-          era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, result ? 0 : 1, {
-            "wan_intf_name":wanName,
-            "wan_intf_uuid":wanUUID,
-            "name_server":nameserver,
-            "dns_test_domain":dnsTestDomain
-          });
-          return result;
-        })).then(results => {
-          if (!results.some(result => result === true)) {
-            this.log.error(`DNS test failed on all nameservers on ${this.name}`);
-            dnsResult = false;
-            active = false;
-          } else
-            dnsResult = true;
-        });
+      const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
+      if(!_dnsResult) {
+        const nameservers = await this.getDNSNameservers() || [];
+        // add all nameservers to failures array
+        for (const nameserver of nameservers)
+          failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
+        this.log.error(`DNS test failed on all nameservers on ${this.name}`);
+        active = false;
+        dnsResult = false;
+      } else {
+        dnsResult = true;
       }
     }
 
     const result = {
       active: active, 
       forceState: carrierResult === true ? forceState : false, // do not honor forceState if carrier is not detected at all
+      // Note! here the carrier result sent back to app is FALSE when interface is not ready to connect (carrier down or operstatus not ready or no ip address)
       carrier: carrierResult,
       ping: pingResult,
       dns: dnsResult,
       failures: failures,
-      ts: Math.floor(new Date() / 1000)
+      ts: Math.floor(new Date() / 1000),
+      wanConnState: this._getWANConnState() || {}
     };
+
+    if(!active) {
+      result.recentDownTime = result.ts; // record the recent down time
+    }
+
+    const WLANInterfacePlugin = require('./wlan_intf_plugin.js')
+    if (this instanceof WLANInterfacePlugin)
+      result.essid = await this.getEssid();
 
     if(this._wanStatus) {
       this._wanStatus = Object.assign(this._wanStatus, result);
     }
 
     return result;
+  }
+
+  setPendingTest(v = false) {
+    this._pendingTest = v;
+  }
+
+  isPendingTest() {
+    return this._pendingTest || false;
+  }
+
+  // use throw error for Promise.any
+  async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
+    const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
+    const result = await exec(cmd);
+
+    let dnsResult = null;
+
+    if (result && result.stdout && result.stdout.trim().length !== 0)  {
+      let lines = result.stdout.trim().split("\n");
+      lines = lines.filter((l) => {
+        return ip.isV4Format(l) || ip.isV6Format(l);
+      });
+      if (lines.length !== 0) {
+        dnsResult = lines[0];
+      }
+    }
+
+
+    const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
+    const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
+
+    if (sendEvent)
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
+        "wan_intf_name":wanName,
+        "wan_intf_uuid":wanUUID,
+        "name_server":nameserver,
+        "dns_test_domain":dnsTestDomain
+      });
+
+    if(dnsResult) {
+      return dnsResult;
+    } else {
+      throw new Error("no dns result");
+    }
+  }
+
+  async getDNSResult(dnsTestDomain, sendEvent = false) {
+    const nameservers = await this.getDNSNameservers();
+    const ip4s = await this.getIPv4Addresses();
+
+    if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
+      const srcIP = ip4s[0].split('/')[0];
+
+      const promises = [];
+      for(const nameserver of nameservers) {
+        promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent));
+      }
+
+      const result = await Promise.any(promises).catch((err) => {
+        this.log.error("no valid dns from any nameservers", err.message);
+        return null;
+      });
+      return result;
+    }
+
+    return null;
   }
 
   async state() {
@@ -886,7 +1030,7 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
-      wanConnState = this._getWANConnState(this.name) || {};
+      wanConnState = this._getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
     return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
@@ -927,6 +1071,7 @@ class InterfaceBasePlugin extends Plugin {
           this._reapplyNeeded = true;
           pl.scheduleReapply();
         }
+        break;
       }
       case event.EVENT_IP_CHANGE: {
         const payload = event.getEventPayload(e);
@@ -940,6 +1085,16 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
         }
+        break;
+      }
+      case event.EVENT_WAN_CONN_CHECK: {
+        const payload = event.getEventPayload(e);
+        if (!payload)
+          return;
+        const iface = payload.intf;
+        if (iface === this.name)
+          this.setPendingTest(false);
+        break;
       }
       default:
     }

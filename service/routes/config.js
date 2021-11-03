@@ -22,6 +22,17 @@ const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
 const ns = require('../../core/network_setup.js');
 
+
+const WLAN_FLAG_WEP         = 0b1
+const WLAN_FLAG_WPA         = 0b10
+const WLAN_FLAG_WPA2        = 0b100
+const WLAN_FLAG_PSK         = 0b1000
+const WLAN_FLAG_EAP         = 0b10000
+const WLAN_FLAG_SAE         = 0b100000
+const WLAN_FLAG_PSK_SHA256  = 0b1000000
+const WLAN_FLAG_EAP_SHA256  = 0b10000000
+
+
 const _ = require('lodash')
 
 router.get('/active', async (req, res, next) => {
@@ -53,9 +64,71 @@ router.get('/lans', async (req, res, next) => {
 
 router.get('/wlan/:intf/available', async (req, res, _next) => {
   try {
-    const detailed = await ncm.getWlanAvailable(req.params.intf)
-    const result = _.orderBy(detailed.map(w => _.pick(w, 'ssid', 'signal', 'rsn', 'wpa')), 'signal', 'desc')
-    res.status(200).json(result);
+    const detailed = await ncm.getWlansViaWpaSupplicant()
+    log.info(detailed.length)
+    const result = detailed
+      .filter(w => w.ssid != '')
+      .sort( (a, b) => b.signal - a.signal )
+      // combine same ssid
+      .reduce( (prev, curr) => {
+        const wlan = prev.find(e => e.ssid == curr.ssid)
+        if (wlan) wlan.flags = _.union(wlan.flags, curr.flags)
+        else prev.push(_.pick(curr, 'ssid', 'signal', 'flags'))
+        return prev
+      }, [])
+      // map result to a compact array
+      .map(w => {
+        const result = [ w.ssid, w.signal ]
+        const flags = w.flags.map(f => {
+          let bitFlag = 0
+          const split = f.split(/[+-]/)
+          switch (split[0]) {
+            case 'WEP':
+              bitFlag |= WLAN_FLAG_WEP
+              break
+            case 'EAP': // EAP without WPA
+              bitFlag |= WLAN_FLAG_EAP
+              break
+            case 'WPA':
+              bitFlag |= WLAN_FLAG_WPA
+              break
+            case 'RSN':
+            case 'WPA2':
+              bitFlag |= WLAN_FLAG_WPA2
+              break
+          }
+
+          let i = 1
+          while (i < split.length) {
+            switch (split[i++]) {
+              case 'PSK':
+                if (split[i] == 'SHA256') {
+                  bitFlag |= WLAN_FLAG_PSK_SHA256
+                  i ++
+                } else
+                  bitFlag |= WLAN_FLAG_PSK
+                break
+              case 'EAP':
+                if (split[i] == 'SHA256') {
+                  bitFlag |= WLAN_FLAG_EAP_SHA256
+                  i ++
+                } else
+                  bitFlag |= WLAN_FLAG_EAP
+                break
+              case 'SAE':
+                bitFlag |= WLAN_FLAG_SAE
+                break
+            }
+          }
+
+          return bitFlag
+        }).filter(Boolean)
+
+        if (flags.length) result.push(flags)
+
+        return result
+      })
+    res.status(200).json(result)
   } catch(err) {
     log.error(req.url, err)
     res.status(500).json({errors: [err.message]});

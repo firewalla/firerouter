@@ -51,11 +51,12 @@ class IfPlugSensor extends Sensor {
   async run() {
     const ifaces = await ncm.getPhyInterfaceNames();
     const upDelay = this.config.up_delay || 5;
+    const downDelay = this.config.down_delay || 5;
     const era = require('../event/EventRequestApi');
     for (let iface of ifaces) {
       await exec(`sudo ip link set ${iface} up`).catch((err) => {});
       await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
-      await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay}`).catch((err) => {
+      await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
         this.log.error(`Failed to start ifplugd on ${iface}`);
       });
       ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);

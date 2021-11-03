@@ -51,6 +51,18 @@ class Plugin {
     return null;
   }
 
+  getRecursiveSubscriberPlugins() {
+    const subscribers = [].concat(this.changeSubscribers); // return a new array, do not touch this.changeSubscribers
+    for (const subscriber of this.changeSubscribers) {
+      const recursiveSubscribers = subscriber.getRecursiveSubscriberPlugins();
+      for (const s of recursiveSubscribers) {
+        if (!subscribers.includes(s))
+          subscribers.push(s);
+      }
+    }
+    return subscribers;
+  }
+
   _publishChangeTo(pluginInstance) {
     if (pluginInstance) {
       if (!this.changeSubscribers.includes(pluginInstance)) {

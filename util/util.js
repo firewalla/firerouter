@@ -17,8 +17,8 @@
 
 const Promise = require('bluebird');
 const { exec } = require('child-process-promise');
-const PlatformLoader = require('../platform/PlatformLoader.js');
-const platform = PlatformLoader.getPlatform();
+
+const _ = require('lodash')
 
 function extend(target) {
   var sources = [].slice.call(arguments, 1);
@@ -88,20 +88,6 @@ function delay(t) {
   });
 }
 
-// pass in function arguments object and returns string with whitespaces
-function argumentsToString(v) {
-  // convert arguments object to real array
-  var args = Array.prototype.slice.call(v);
-  for (var k in args) {
-    if (typeof args[k] === "object") {
-      // args[k] = JSON.stringify(args[k]);
-      args[k] = require('util').inspect(args[k], false, null, true);
-    }
-  }
-  var str = args.join(" ");
-  return str;
-}
-
 function wrapIptables(rule) {
   const res = rule.match(/ -[AID] /);
 
@@ -121,6 +107,7 @@ function wrapIptables(rule) {
 }
 
 async function generatePSK(ssid, passphrase) {
+  const platform = require('../platform/PlatformLoader.js').getPlatform()
   const ssidHex = _getCLangHexString(ssid);
   const passphraseHex = _getCLangHexString(passphrase);
   const lines = await exec(`bash -c "${platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}"`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
@@ -182,14 +169,59 @@ async function generateWpaSupplicantConfig(key, values) {
   return value;
 }
 
+function parseEscapedString(escaped) {
+  if (!escaped) return ''
+  if (!_.isString(escaped)) throw new Error('Invalid Input', escaped)
+
+  const chArray = []
+  let i = 0
+  while (i < escaped.length) {
+    if (escaped[i] === '\\') {
+      i ++
+      switch(escaped[i]) {
+        case 't':
+          i ++
+          chArray.push('\t')
+          continue
+        case 'v':
+          i ++
+          chArray.push('\v')
+          continue
+        case 'x':
+          i ++
+          const num = parseInt(escaped[i++] + escaped[i++], 16)
+          chArray.push(String.fromCharCode(num))
+          continue
+      }
+    }
+    // \' \" \\ are pushed here
+    chArray.push(escaped[i++])
+  }
+  return Buffer.from(chArray.join(''), 'latin1').toString()
+}
+
+function parseHexString(str) {
+  if (!str) return ''
+  if (!_.isString(str)) throw new Error('Invalid Input', str)
+
+  const chArray = []
+  let i = 0
+  while (i < str.length) {
+    const num = parseInt(str[i++] + str[i++], 16)
+    chArray.push(String.fromCharCode(num))
+  }
+  return Buffer.from(chArray.join(''), 'latin1').toString()
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
   getPreferredName: getPreferredName,
   delay: delay,
-  argumentsToString: argumentsToString,
   wrapIptables: wrapIptables,
   getHexStrArray: getHexStrArray,
   generatePSK: generatePSK,
-  generateWpaSupplicantConfig: generateWpaSupplicantConfig
+  generateWpaSupplicantConfig: generateWpaSupplicantConfig,
+  parseEscapedString,
+  parseHexString,
 };

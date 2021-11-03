@@ -77,7 +77,7 @@ fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync
 
-NETWORK_CHECK_URL=https://one.one.one.one
+NETWORK_CHECK_URL=https://1.1.1.1
 
 logger `date`
 rc=1
@@ -137,6 +137,14 @@ eval $GIT_COMMAND ||
   (sleep 3; eval $GIT_COMMAND) ||
   (sleep 3; eval $GIT_COMMAND) ||
   (sleep 3; eval $GIT_COMMAND) || (date >> ~/.firerouter.upgrade.failed; exit 1)
+
+# set node_modules link to the proper directory
+NODE_MODULES_PATH=$(get_node_modules_dir)
+if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
+  if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
+    ln -sfT $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+  fi
+fi
 
 touch /dev/shm/firerouter.upgraded
 

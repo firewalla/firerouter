@@ -34,6 +34,7 @@ const fwpclient = require('../util/redis_manager.js').getPublishClient();
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 let applyInProgress = false;
+let lastAppliedTimestamp = null;
 
 async function initPlugins() {
   if(_.isEmpty(config.plugins)) {
@@ -123,9 +124,15 @@ function isApplyInProgress() {
   return applyInProgress;
 }
 
+function getLastAppliedTimestamp() {
+  return lastAppliedTimestamp;
+}
+
 async function reapply(config, dryRun = false) {
+  let t1, t2;
   return new Promise((resolve, reject) => {
     lock.acquire(LOCK_REAPPLY, async function(done) {
+      t1 = Date.now() / 1000;
       applyInProgress = true;
       const errors = [];
       let newPluginCategoryMap = {};
@@ -187,6 +194,7 @@ async function reapply(config, dryRun = false) {
               }
               instance.propagateConfigChanged(true);
               instance.unsubscribeAllChanges();
+              pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
             }
           }
           // merge with new pluginCategoryMap
@@ -226,6 +234,7 @@ async function reapply(config, dryRun = false) {
       // do not apply config in dry run
       if (dryRun) {
         applyInProgress = false;
+        lastAppliedTimestamp = Date.now() / 1000;
         done(null, errors);
         return;
       }
@@ -255,11 +264,14 @@ async function reapply(config, dryRun = false) {
       if (ifaceChangeApplied)
         await _publishIfaceChangeApplied();
       applyInProgress = false;
+      lastAppliedTimestamp = Date.now() / 1000;
       done(null, errors);
       return;
     }, function(err, ret) {
       applyInProgress = false;
-      log.info(`reapply is complete ${err ? "with" : "without"} error`);
+      lastAppliedTimestamp = Date.now() / 1000;
+      t2 = Date.now() / 1000;
+      log.info(`reapply is complete ${err ? "with" : "without"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
       if (err)
         reject(err);
       else
@@ -272,7 +284,7 @@ function scheduleReapply() {
   if (!scheduledReapplyTask) {
     scheduledReapplyTask = setTimeout(() => {
       reapply(null, false);
-    }, 10000);
+    }, 4000);
   } else {
     scheduledReapplyTask.refresh();
   }
@@ -295,5 +307,6 @@ module.exports = {
   reapply: reapply,
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,
-  isApplyInProgress: isApplyInProgress
+  isApplyInProgress: isApplyInProgress,
+  getLastAppliedTimestamp: getLastAppliedTimestamp
 };

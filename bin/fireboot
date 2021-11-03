@@ -13,8 +13,7 @@ source ${FIREROUTER_HOME}/platform/platform.sh
 NODE_MODULES_PATH=$(get_node_modules_dir)
 if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
   if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
-    rm ${FIREROUTER_HOME}/node_modules
-    ln -s $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+    ln -sfT $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
   fi
 fi
 
@@ -24,13 +23,17 @@ rc=0
 if [[ $NETWORK_SETUP == "yes" ]]; then
   init_network_config; rc=$?
 else
+  wait_until_any_wan_carrier_connected
   test_network; rc=$?
 fi
 
+logger "Uptime after init_network_config: $(awk '{print $1}' /proc/uptime)"
+
+
 bootingComplete=$(redis-cli get bootingComplete)
 while [[ ! $rc -eq 0 ]]; do
-  redis-cli set "fireboot:status" "network_down"
-  redis-cli set "fireboot:network_down:code" $rc
+  redis-cli set "fireboot:status" "network_down" &> /dev/null
+  redis-cli set "fireboot:network_down:code" $rc &> /dev/null
   if [[ $rc -eq 1 || $rc -eq 2 ]]; then
     # do not retry if there is error from network config apply
     exit $rc
@@ -45,6 +48,7 @@ while [[ ! $rc -eq 0 ]]; do
   fi
 done
 redis-cli del "fireboot:network_down:code"
+logger "Uptime after test_network: $(awk '{print $1}' /proc/uptime)"
 
 update_timezone
 
@@ -70,14 +74,22 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   fi
 
   rm -f /dev/shm/firerouter.upgraded
-  echo "Restarting FireReset ..."
-  sudo systemctl restart firereset
+  if systemctl is-active firereset &>/dev/null; then
+    echo "Firereset is active, lazy-restarting FireReset with SIGINT..."
+    sudo pkill -SIGINT firereset
+  else
+    echo "Starting firereset..."
+    sudo systemctl start firereset
+  fi
 fi
+logger "Uptime after firerouter_upgrade: $(awk '{print $1}' /proc/uptime)"
 
 # step 4 - start fireupgrade
 redis-cli set "fireboot:status" "fireupgrade"
 echo "Starting Fireupgrade ..."
 sudo systemctl start fireupgrade
+
+logger "Uptime after fireupgrade: $(awk '{print $1}' /proc/uptime)"
 
 # step 5 - start firewalla
 redis-cli set "fireboot:status" "firewalla"
@@ -88,5 +100,7 @@ sudo systemctl start firewalla
 redis-cli set "fireboot:status" "firewalla_service_done"
 redis-cli HINCRBY "stats:systemd:restart" FireBoot 1
 update_timezone
+
+logger "Uptime after firewalla_service_done: $(awk '{print $1}' /proc/uptime)"
 
 exit 0
