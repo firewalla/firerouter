@@ -32,8 +32,8 @@ logger "Uptime after init_network_config: $(awk '{print $1}' /proc/uptime)"
 
 bootingComplete=$(redis-cli get bootingComplete)
 while [[ ! $rc -eq 0 ]]; do
-  redis-cli set "fireboot:status" "network_down"
-  redis-cli set "fireboot:network_down:code" $rc
+  redis-cli set "fireboot:status" "network_down" &> /dev/null
+  redis-cli set "fireboot:network_down:code" $rc &> /dev/null
   if [[ $rc -eq 1 || $rc -eq 2 ]]; then
     # do not retry if there is error from network config apply
     exit $rc
