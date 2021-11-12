@@ -18,6 +18,7 @@
 const fs = require('fs');
 const log = require('../util/logger.js')(__filename);
 const r = require('../util/firerouter')
+const exec = require('child-process-promise').exec;
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
