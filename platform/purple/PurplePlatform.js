@@ -77,16 +77,18 @@ class PurplePlatform extends Platform {
   }
 
   async overrideEthernetKernelModule() {
-    await exec(`sudo cp ${this.getBinaryPath()}/r8168.ko /lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168/`)
-    await exec('sudo modprobe -r r8168')
-    await exec('sudo modprobe r8168')
+    await this.overrideKernelModule(
+      'r8168',
+      this.getBinaryPath(),
+      '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
   }
 
   async overrideWLANKernelModule() {
     if (await this.getWlanVendor() == '88x2cs') {
-      await exec(`sudo cp ${this.getBinaryPath()}/88x2cs.ko /lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs/`)
-      await exec('sudo rmmod 88x2cs')
-      await exec('sudo modprobe 88x2cs')
+      await this.overrideKernelModule(
+        '88x2cs',
+        this.getBinaryPath(),
+        '/lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs');
     }
   }
 
