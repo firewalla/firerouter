@@ -16,6 +16,7 @@
 'use strict';
 
 const fs = require('fs');
+const log = require('../util/logger.js')(__filename);
 const r = require('../util/firerouter')
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
