@@ -54,6 +54,12 @@ class Platform {
 
   async ledAnyNetworkUp() {
   }
+
+  async overrideEthernetKernelModule() {
+  }
+
+  async overrideWLANKernelModule() {
+  }
 }
 
 module.exports = Platform;

@@ -20,6 +20,7 @@ const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 const exec = require('child-process-promise').exec;
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 Promise.promisifyAll(fs);
 
@@ -27,6 +28,8 @@ Promise.promisifyAll(fs);
 class PhyInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
+    // override ethernet kernel module
+    await platform.overrideEthernetKernelModule();
     // copy dhclient hook script
     await exec(`sudo rm -f /etc/dhcp/dhclient-exit-hooks.d/firerouter_*`).catch((err) => {});
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_ip_change /etc/dhcp/dhclient-exit-hooks.d/`);
