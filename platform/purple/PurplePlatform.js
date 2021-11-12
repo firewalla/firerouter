@@ -77,7 +77,7 @@ class PurplePlatform extends Platform {
   }
 
   async overrideEthernetKernelModule() {
-    await exec(`sudo cp ${this.getBinaryPath()}/r8168.ko /lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/`)
+    await exec(`sudo cp ${this.getBinaryPath()}/r8168.ko /lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168/`)
     await exec('sudo modprobe -r r8168')
     await exec('sudo modprobe r8168')
   }
