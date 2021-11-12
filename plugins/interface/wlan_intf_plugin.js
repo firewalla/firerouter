@@ -27,7 +27,6 @@ const event = require('../../core/event.js');
 const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
-const PurplePlatform = require('../../platform/purple/PurplePlatform')
 const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
@@ -38,21 +37,13 @@ const WLAN_BSS_EXPIRATION = 630
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await this.overrideKernelModule()
+    await platform.overrideWLANKernelModule()
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
-  }
-
-  static async overrideKernelModule() {
-    if (platform instanceof PurplePlatform && await platform.getWlanVendor() == '88x2cs') {
-      await exec(`sudo cp ${platform.getBinaryPath()}/88x2cs.ko /lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs/`)
-      await exec('sudo rmmod 88x2cs')
-      await exec('sudo modprobe 88x2cs')
-    }
   }
 
   static async createDirectories() {
