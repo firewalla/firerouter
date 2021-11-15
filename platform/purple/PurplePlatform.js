@@ -78,18 +78,48 @@ class PurplePlatform extends Platform {
   }
 
   async overrideEthernetKernelModule() {
-    await this.overrideKernelModule(
+    const changed = await this.overrideKernelModule(
       'r8168',
       this.getBinaryPath(),
       '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
+    if (changed) {
+      // restore MAC address of eth1 from eprom
+      const mac = await exec("(for e in `seq 0 3`; do echo $e; for i in `seq 0 5`; do sudo i2cget -y 1 0x50 0x$e$i; done; done) | sed -n '9,14p' | cut -d'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+        log.error(`Failed to get MAC address of eth1 from EPROM`, err.message);
+      });
+      if (mac) {
+        await exec(`sudo ip link set eth1 address ${mac}`).catch((err) => {
+          log.error(`Failed to set MAC address of eth1`, err.message);
+        })
+      }
+    }
   }
 
   async overrideWLANKernelModule() {
     if (await this.getWlanVendor() == '88x2cs') {
-      await this.overrideKernelModule(
+      const changed = await this.overrideKernelModule(
         '88x2cs',
         this.getBinaryPath(),
         '/lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs');
+      /* ip link set on wlan0/1 does not work
+      if (changed) {
+        // restore MAC address of wlan0 from eprom
+        const wlan0Mac = await exec("(for e in `seq 0 3`; do echo $e; for i in `seq 0 5`; do sudo i2cget -y 1 0x50 0x$e$i; done; done) | sed -n '16,21p' | cut -d'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+          log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
+        });
+        const wlan1Mac = await exec("(for e in `seq 0 3`; do echo $e; for i in `seq 0 5`; do sudo i2cget -y 1 0x50 0x$e$i; done; done) | sed -n '23,28p' | cut -d'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+          log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
+        });
+        if (wlan0Mac && wlan1Mac) {
+          await exec(`sudo ip link set wlan0 address ${wlan0Mac}`).catch((err) => {
+            log.error(`Failed to set MAC address of eth0`, err.message);
+          });
+          await exec(`sudo ip link set wlan1 address ${wlan1Mac}`).catch((err) => {
+            log.error(`Failed to set MAC address of wlan1`, err.message);
+          });
+        }
+      }
+      */
     }
   }
 

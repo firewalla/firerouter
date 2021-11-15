@@ -60,16 +60,19 @@ class Platform {
   async overrideKernelModule(koName,srcDir,dstDir) {
     const srcPath = `${srcDir}/${koName}.ko`;
     const dstPath = `${dstDir}/${koName}.ko`;
+    let changed = false;
     try {
       await exec(`cmp -s ${srcPath} ${dstPath}`);
     } catch (err) {
       try {
         await exec(`sudo cp -f ${srcPath} ${dstPath}`);
         await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
+        changed = true;
       } catch(err) {
         log.error(`Failed to override kernel module ${koName}:`,err);
       }
     }
+    return changed;
   }
 
   async overrideEthernetKernelModule() {
