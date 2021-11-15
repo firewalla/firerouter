@@ -84,7 +84,7 @@ class PurplePlatform extends Platform {
       '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
     if (changed) {
       // restore MAC address of eth1 from eprom
-      const mac = await exec("(for e in `seq 0 3`; do echo $e; for i in `seq 0 5`; do sudo i2cget -y 1 0x50 0x$e$i; done; done) | sed -n '9,14p' | cut -d'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+      const mac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x1ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
         log.error(`Failed to get MAC address of eth1 from EPROM`, err.message);
       });
       if (mac) {
@@ -104,10 +104,10 @@ class PurplePlatform extends Platform {
       /* ip link set on wlan0/1 does not work
       if (changed) {
         // restore MAC address of wlan0 from eprom
-        const wlan0Mac = await exec("(for e in `seq 0 3`; do echo $e; for i in `seq 0 5`; do sudo i2cget -y 1 0x50 0x$e$i; done; done) | sed -n '16,21p' | cut -d'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+        const wlan0Mac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x2ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
           log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
         });
-        const wlan1Mac = await exec("(for e in `seq 0 3`; do echo $e; for i in `seq 0 5`; do sudo i2cget -y 1 0x50 0x$e$i; done; done) | sed -n '23,28p' | cut -d'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+        const wlan1Mac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x3ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
           log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
         });
         if (wlan0Mac && wlan1Mac) {
