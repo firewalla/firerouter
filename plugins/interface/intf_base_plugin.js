@@ -273,7 +273,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
