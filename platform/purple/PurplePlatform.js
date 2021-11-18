@@ -22,6 +22,7 @@ const Platform = require('../Platform.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
+const util = require('../../util/util.js');
 
 class PurplePlatform extends Platform {
   getName() {
@@ -95,31 +96,59 @@ class PurplePlatform extends Platform {
     }
   }
 
+  getWifiClientInterface() {
+    return "wlan0";
+  }
+
+  getWifiAPInterface() {
+    return "wlan1";
+  }
+
   async overrideWLANKernelModule() {
     if (await this.getWlanVendor() == '88x2cs') {
       const changed = await this.overrideKernelModule(
         '88x2cs',
         this.getBinaryPath(),
         '/lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs');
-      /* ip link set on wlan0/1 does not work
+
       if (changed) {
         // restore MAC address of wlan0 from eprom
-        const wlan0Mac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x2ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+        const clientMac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x2ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
           log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
         });
-        const wlan1Mac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x3ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
+        const apMac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x3ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
           log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
         });
-        if (wlan0Mac && wlan1Mac) {
-          await exec(`sudo ip link set wlan0 address ${wlan0Mac}`).catch((err) => {
-            log.error(`Failed to set MAC address of eth0`, err.message);
+        if (clientMac && apMac) {
+          const client = this.getWifiClientInterface();
+          const ap = this.getWifiAPInterface();
+
+          // shutdown dependant services
+          await exec(`sudo systemctl stop firerouter_wpa_supplicant@${client}`).catch((err) => {})
+          await exec(`sudo systemctl stop firerouter_hostapd@${ap}`).catch((err) => {})
+
+          // a hard code 1-second wait for system to release wifi interfaces
+          await util.delay(1000);
+
+          // force shutdown interfaces
+          await exec(`sudo ip link set ${client} down`).catch((err) => {
+            log.error(`Failed to turn off interface ${client}`, err.message);
           });
-          await exec(`sudo ip link set wlan1 address ${wlan1Mac}`).catch((err) => {
-            log.error(`Failed to set MAC address of wlan1`, err.message);
+
+          await exec(`sudo ip link set ${ap} down`).catch((err) => {
+            log.error(`Failed to turn off interface ${ap}`, err.message);
+          });
+
+          // set mac address
+          await exec(`sudo ip link set ${client} address ${clientMac}`).catch((err) => {
+            log.error(`Failed to set MAC address of ${client}`, err.message);
+          });
+
+          await exec(`sudo ip link set ${ap} address ${apMac}`).catch((err) => {
+            log.error(`Failed to set MAC address of ${ap}`, err.message);
           });
         }
       }
-      */
     }
   }
 
