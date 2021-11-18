@@ -34,6 +34,7 @@ const sl = require('../../sensors/sensor_loader.js');
 const ncm = require('../../core/network_config_mgr.js');
 const r = require('../../util/firerouter.js');
 const fwpclient = require('../../util/redis_manager.js').getPublishClient();
+const fwsclient = require('../../util/redis_manager.js').getSubscriptionClient();
 
 let server;
 
@@ -139,4 +140,28 @@ process.on('uncaughtException',(err)=> {
   setTimeout(() => {
     process.exit(1);
   }, 1000 * 2);
+});
+
+process.on('unhandledRejection', (reason, p)=>{
+  let msg = "Possibly Unhandled Rejection at: Promise " + p + " reason: "+ reason;
+  log.warn('###### Unhandled Rejection',msg,reason.stack);
+});
+
+fwsclient.subscribe("TO.FireRouter")
+fwsclient.on("message", (channel, message) => {
+  try {
+    if (channel != 'TO.FireRouter') return
+    const { type, name, level } = JSON.parse(message)
+    if (type != 'ChangeLogLevel') return
+    if (name && level) {
+      log.info(`Setting log level of ${name} to ${level}`)
+      if(name === "*") {
+        require('../../util/log_mgr.js').setGlobalLogLevel(level);
+      } else {
+        require('../../util/log_mgr.js').setLogLevel(name, level);
+      }
+    }
+  } catch(err) {
+    log.error('Error handling Redis message', channel, message)
+  }
 });

@@ -19,7 +19,6 @@ const winston = require('winston');
 const config = winston.config;
 
 const loggerManager = require('./log_mgr.js');
-const {argumentsToString} = require('./util.js');
 const path = require('path');
 const fs = require('fs');
 
@@ -40,6 +39,21 @@ if (process.env.FWDEBUG) {
   globalLogLevel = fs.readFileSync("/home/pi/.firewalla/config/FWDEBUG", "utf8").trim();
   console.log("LOGGER SET TO", globalLogLevel);
 }
+
+// pass in function arguments object and returns string with whitespaces
+function argumentsToString(v) {
+  // convert arguments object to real array
+  var args = Array.prototype.slice.call(v);
+  for (var k in args) {
+    if (typeof args[k] === "object") {
+      // args[k] = JSON.stringify(args[k]);
+      args[k] = require('util').inspect(args[k], false, null, true);
+    }
+  }
+  var str = args.join(" ");
+  return str;
+}
+
 
 function getFileTransport() {
   let loglevel = 'debug';
@@ -169,6 +183,13 @@ module.exports = function (component) {
       return // do nothing
     }
     logger.log.apply(logger, ["warn", component + ": " + argumentsToString(arguments)]);
+  };
+
+  wrap.verbose = function () {
+    if (logger.levels[getLogLevel()] < logger.levels['verbose']) {
+      return // do nothing
+    }
+    logger.log.apply(logger, ["verbose", component + ": " + argumentsToString(arguments)]);
   };
 
   wrap.debug = function () {
