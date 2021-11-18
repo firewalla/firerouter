@@ -131,6 +131,12 @@
       "config_path": "hostapd",
       "category": "hostapd",
       "init_seq": 9
+    },
+    {
+      "file_path": "./docker/docker_plugin.js",
+      "config_path": "docker",
+      "category": "docker",
+      "init_seq": 9
     }
   ],
   "sensors": [
