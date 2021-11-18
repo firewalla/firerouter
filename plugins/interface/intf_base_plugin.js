@@ -273,7 +273,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
@@ -328,7 +328,7 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
-            this.fatal(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
+            this.log.error(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
       }
@@ -413,7 +413,7 @@ class InterfaceBasePlugin extends Plugin {
         ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
-            this.fatal(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
+            this.log.error(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
       }
