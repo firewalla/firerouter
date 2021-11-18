@@ -85,9 +85,8 @@ class PurplePlatform extends Platform {
       '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
     if (changed) {
       // restore MAC address of eth1 from eprom
-      const mac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x1ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
-        log.error(`Failed to get MAC address of eth1 from EPROM`, err.message);
-      });
+      const mac = this.getMac(1); // 1 of 0-3
+
       if (mac) {
         await exec(`sudo ip link set eth1 address ${mac}`).catch((err) => {
           log.error(`Failed to set MAC address of eth1`, err.message);
@@ -113,12 +112,9 @@ class PurplePlatform extends Platform {
 
       if (changed) {
         // restore MAC address of wlan0 from eprom
-        const clientMac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x2ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
-          log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
-        });
-        const apMac = await exec("seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x3ZZZ | cut -d 'x' -f 2 | paste -sd ':'").then(result => result.stdout.trim()).catch((err) => {
-          log.error(`Failed to get MAC address of wlan0 from EPROM`, err.message);
-        });
+        const clientMac = await this.getMac(2); // 2 of 0-3
+        const apMac = await this.getMac(3); // 3 of 0-3
+
         if (clientMac && apMac) {
           const client = this.getWifiClientInterface();
           const ap = this.getWifiAPInterface();
@@ -152,6 +148,14 @@ class PurplePlatform extends Platform {
     }
   }
 
+  async getMac(index) {
+    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
+          .then(result => result.stdout.trim())
+          .catch((err) => {
+            log.error(`Failed to get MAC address for index ${index} from EPROM`, err.message);
+          });
+    return mac;
+  }
 }
 
 module.exports = PurplePlatform;
