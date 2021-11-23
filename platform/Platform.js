@@ -78,8 +78,18 @@ class Platform {
   async overrideEthernetKernelModule() {
   }
 
+  async setEthernetOffload(iface,feature,desc,onoff) {
+    await exec(`sudo ethtool -K ${iface} ${feature} ${onoff}`).catch( (err) => {
+      log.error(`Failed to turn ${onoff} ${desc} in ${iface}`);
+    });
+  }
+
+  async configEthernet() {
+  }
+
   async overrideWLANKernelModule() {
   }
+
 }
 
 module.exports = Platform;
