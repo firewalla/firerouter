@@ -95,6 +95,12 @@ class PurplePlatform extends Platform {
     }
   }
 
+  async configEthernet() {
+    await this.setEthernetOffload("eth1","sg","scatter-gather","on");
+    await this.setEthernetOffload("eth1","tso","TCP segmentation offload","on");
+    await this.setEthernetOffload("eth1","gso","generic segmentation offload","on");
+  }
+
   getWifiClientInterface() {
     return "wlan0";
   }
