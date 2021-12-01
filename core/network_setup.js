@@ -48,9 +48,13 @@ class NetworkSetup {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/rfc3442-classless-routes /etc/dhcp/dhclient-exit-hooks.d/`);
     // redirect dhcpcd log to specific log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhcpcd.conf /etc/rsyslog.d/`);
+    // redirect dhclient log to specific log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhclient.conf /etc/rsyslog.d/`)
     pl.scheduleRestartRsyslog();
     // copy logrotate config for dhcpcd log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhcpcd /etc/logrotate.d/`);
+    // copy logrotate config for dhclient log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhclient /etc/logrotate.d/`);
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
