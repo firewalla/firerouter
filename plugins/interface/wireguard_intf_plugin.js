@@ -49,7 +49,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
 
       if(this.networkConfig.bindIntf) {
-        const cmd = `sudo ip rule del pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+        let cmd = `sudo ip rule del pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+        await exec(cmd).catch((err) => {});
+        cmd = `sudo ip -6 rule del pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
         await exec(cmd).catch((err) => {});
       }
     }
@@ -134,7 +136,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
     // add specific routing for wireguard port
     if(this.networkConfig.bindIntf && this.networkConfig.listenPort) {
-      const cmd = `sudo ip rule add pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+      let cmd = `sudo ip rule add pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
+      await exec(cmd).catch((err) => {});
+      cmd = `sudo ip -6 rule add pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
       await exec(cmd).catch((err) => {});
     }
   }
