@@ -30,6 +30,10 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
       await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
+      // some newer linux kernel will bring down slave interfaces of a bond if the bond is deleted
+      for (const intf of this.networkConfig.intf) {
+        await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+      }
     }
   }
 
