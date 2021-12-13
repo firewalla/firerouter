@@ -17,8 +17,6 @@
 
 const Promise = require('bluebird');
 const { exec } = require('child-process-promise');
-const PlatformLoader = require('../platform/PlatformLoader.js');
-const platform = PlatformLoader.getPlatform();
 
 const _ = require('lodash')
 
@@ -90,20 +88,6 @@ function delay(t) {
   });
 }
 
-// pass in function arguments object and returns string with whitespaces
-function argumentsToString(v) {
-  // convert arguments object to real array
-  var args = Array.prototype.slice.call(v);
-  for (var k in args) {
-    if (typeof args[k] === "object") {
-      // args[k] = JSON.stringify(args[k]);
-      args[k] = require('util').inspect(args[k], false, null, true);
-    }
-  }
-  var str = args.join(" ");
-  return str;
-}
-
 function wrapIptables(rule) {
   const res = rule.match(/ -[AID] /);
 
@@ -123,6 +107,7 @@ function wrapIptables(rule) {
 }
 
 async function generatePSK(ssid, passphrase) {
+  const platform = require('../platform/PlatformLoader.js').getPlatform()
   const ssidHex = _getCLangHexString(ssid);
   const passphraseHex = _getCLangHexString(passphrase);
   const lines = await exec(`bash -c "${platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}"`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
@@ -233,7 +218,6 @@ module.exports = {
   getPreferredBName: getPreferredBName,
   getPreferredName: getPreferredName,
   delay: delay,
-  argumentsToString: argumentsToString,
   wrapIptables: wrapIptables,
   getHexStrArray: getHexStrArray,
   generatePSK: generatePSK,

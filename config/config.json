@@ -7,20 +7,20 @@
       "init_seq": 0
     },
     {
+      "file_path": "./interface/bond_intf_plugin.js",
+      "config_path": "interface.bond",
+      "category": "interface",
+      "init_seq": 1
+    },
+    {
       "file_path": "./interface/vlan_intf_plugin.js",
       "config_path": "interface.vlan",
       "category": "interface",
-      "init_seq": 1
+      "init_seq": 2
     },
     {
       "file_path": "./interface/wlan_intf_plugin.js",
       "config_path": "interface.wlan",
-      "category": "interface",
-      "init_seq": 1
-    },
-    {
-      "file_path": "./interface/bond_intf_plugin.js",
-      "config_path": "interface.bond",
       "category": "interface",
       "init_seq": 2
     },
@@ -51,6 +51,12 @@
     {
       "file_path": "./interface/tun_intf_plugin.js",
       "config_path": "interface.tun",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
+      "file_path": "./interface/docker_intf_plugin.js",
+      "config_path": "interface.docker",
       "category": "interface",
       "init_seq": 4
     },
@@ -124,6 +130,12 @@
       "file_path": "./hostapd/hostapd_plugin.js",
       "config_path": "hostapd",
       "category": "hostapd",
+      "init_seq": 9
+    },
+    {
+      "file_path": "./docker/docker_plugin.js",
+      "config_path": "docker",
+      "category": "docker",
       "init_seq": 9
     }
   ],
