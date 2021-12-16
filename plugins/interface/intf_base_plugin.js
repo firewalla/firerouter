@@ -273,7 +273,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
@@ -328,7 +328,7 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
-            this.fatal(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
+            this.log.error(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
       }
@@ -413,7 +413,7 @@ class InterfaceBasePlugin extends Plugin {
         ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
-            this.fatal(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
+            this.log.error(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
       }
@@ -1045,6 +1045,8 @@ class InterfaceBasePlugin extends Plugin {
         if (this.isWAN()) {
           // WAN interface plugged, need to reapply WAN interface config
           this._reapplyNeeded = true;
+          // although pending test flag will be set after apply() is scheduled later, still need to set it here to prevent inconsistency in intermediate state
+          this.setPendingTest(true);
           // reapply all plugins on the dependency chain if either IPv4 or IPv6 is static IP. 
           // otherwise, only reapply the WAN interface plugin itself. Downstream plugins, e.g., routing, will be triggered by events, e.g., IP_CHANGE from dhclient
           if (this.isStaticIP())
@@ -1071,6 +1073,7 @@ class InterfaceBasePlugin extends Plugin {
           this._reapplyNeeded = true;
           pl.scheduleReapply();
         }
+        break;
       }
       case event.EVENT_IP_CHANGE: {
         const payload = event.getEventPayload(e);
@@ -1084,6 +1087,7 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
         }
+        break;
       }
       case event.EVENT_WAN_CONN_CHECK: {
         const payload = event.getEventPayload(e);
@@ -1092,6 +1096,7 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface === this.name)
           this.setPendingTest(false);
+        break;
       }
       default:
     }
