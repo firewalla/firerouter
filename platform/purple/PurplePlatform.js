@@ -162,6 +162,10 @@ class PurplePlatform extends Platform {
           });
     return mac;
   }
+
+  getModelName() {
+    return "Firewalla Purple";
+  }
 }
 
 module.exports = PurplePlatform;
