@@ -90,6 +90,9 @@ class Platform {
   async overrideWLANKernelModule() {
   }
 
+  getModelName() {
+    return "";
+  }
 }
 
 module.exports = Platform;

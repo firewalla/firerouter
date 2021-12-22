@@ -25,6 +25,8 @@ const fs = require('fs');
 const ip = require('ip');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+const PlatformLoader = require('../../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 class UPnPPlugin extends Plugin {
   static async preparePlugin() {
@@ -77,6 +79,7 @@ class UPnPPlugin extends Plugin {
     content = content.replace(/%ENABLE_NATPMP%/g, natpmpEnabled ? "yes" : "no");
     content = content.replace(/%ENABLE_UPNP%/g, upnpEnabled ? "yes" : "no");
     content = content.replace(/%UUID%/g, uuid);
+    content = content.replace(/%MODEL_NAME%/g, platform.getModelName() || "Firewalla");
     const allowNetworks = internalNetworks.map(n => `allow 1024-65535 ${n} 1024-65535`);
     content = content.replace(/%ALLOW_NETWORK%/g, allowNetworks.join("\n"));
     await fs.writeFileAsync(this._getConfigFilePath(), content, {encoding: 'utf8'});
