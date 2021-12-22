@@ -4,6 +4,12 @@
       "file_path": "./interface/phy_intf_plugin.js",
       "config_path": "interface.phy",
       "category": "interface",
+      "init_seq": 0
+    },
+    {
+      "file_path": "./interface/bond_intf_plugin.js",
+      "config_path": "interface.bond",
+      "category": "interface",
       "init_seq": 1
     },
     {
@@ -27,12 +33,6 @@
     {
       "file_path": "./interface/bridge_intf_plugin.js",
       "config_path": "interface.bridge",
-      "category": "interface",
-      "init_seq": 4
-    },
-    {
-      "file_path": "./interface/bond_intf_plugin.js",
-      "config_path": "interface.bond",
       "category": "interface",
       "init_seq": 4
     },
@@ -131,7 +131,8 @@
     {
       "file_path": "./ifplug_sensor.js",
       "config": {
-        "up_delay": 5
+        "up_delay": 5,
+        "down_delay": 5
       }
     },
     {
@@ -152,13 +153,15 @@
     {
       "file_path": "./if_presence_sensor.js",
       "config": {
-        
+
       }
     },
     {
       "file_path": "./wpa_connection_sensor.js",
       "config": {
-        
+        "log_file": "/var/log/wpa_supplicant.log",
+        "reject_threshold_count": 3,
+        "reject_threshold_time_seconds": 300
       }
     }
   ]

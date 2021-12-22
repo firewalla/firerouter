@@ -19,6 +19,7 @@ const Plugin = require('../plugin.js');
 const exec = require('child-process-promise').exec;
 const util = require('../../util/util.js');
 const pl = require('../plugin_loader.js');
+const _  = require('lodash');
 
 class NatPlugin extends Plugin {
 
@@ -39,13 +40,23 @@ class NatPlugin extends Plugin {
 
     const iifPlugin = pl.getPluginInstance("interface", iif);
     if (iifPlugin) {
-      const state = await iifPlugin.state();
-      if (state && state.ip4s) {
-        for (const ip4 of state.ip4s) {
+      const ip4s = this._ip4s;
+      if (!_.isEmpty(ip4s)) {
+        for (const ip4 of ip4s) {
           await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_SNAT -s ${ip4} -o ${oif} -j MASQUERADE`));
         }
       } else {
         this.log.error("Failed to get ip4 of incoming interface " + iif);
+      }
+      if (this.networkConfig.ipv6) {
+        const ip6s = this._ip6s;
+        if (!_.isEmpty(ip6s)) {
+          for (const ip6 of ip6s) {
+            await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_SNAT -s ${ip6} -o ${oif} -j MASQUERADE`));
+          }
+        } else {
+          this.log.error("Failed to get ip6 of incoming interface " + iif);
+        }
       }
     }
 
@@ -78,13 +89,25 @@ class NatPlugin extends Plugin {
         this.log.warn(`Interface ${iif} is not enabled`);
         return;
       }
-      const state = await iifPlugin.state();
-      if (state && state.ip4s) {
-        for (const ip4 of state.ip4s) {
+      const ip4s = await iifPlugin.getIPv4Addresses();
+      if (!_.isEmpty(ip4s)) {
+        for (const ip4 of ip4s) {
           await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_SNAT -s ${ip4} -o ${oif} -j MASQUERADE`));
         }
       } else {
         this.log.error("Failed to get ip4 of incoming interface " + iif);
+      }
+      this._ip4s = ip4s;
+      if (this.networkConfig.ipv6) {
+        const ip6s = await iifPlugin.getRoutableIPv6Addresses();
+        if (!_.isEmpty(ip6s)) {
+          for (const ip6 of ip6s) {
+            await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A FR_SNAT -s ${ip6} -o ${oif} -j MASQUERADE`));
+          }
+        } else {
+          this.log.error("Failed to get ip6 of incoming interface " + iif);
+        }
+        this._ip6s = ip6s;
       }
     } else {
       this.log.error("Cannot find interface plugin " + iif);

@@ -2,8 +2,10 @@
 
 TEST_URLS='
     https://check.firewalla.com 204
+    http://cp.cloudflare.com 204
     http://clients3.google.com/generate_204 204
     https://www.gstatic.com/generate_204 204
+    http://detectportal.firefox.com/success.txt 200
 '
 
 init_network_config() {
@@ -11,13 +13,13 @@ init_network_config() {
   redis-cli set "fireboot:status" "apply_network"
   echo "Awaiting FireRouter API available ..."
   sleep 3
-  timeout=12
+  timeout=60
   api_ready=0
   while [[ timeout -gt 0 && api_ready -eq 0 ]]
   do
     HTTP_STATUS_CODE=`curl -m10 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/phy_interfaces' -XGET`
     if [[ $HTTP_STATUS_CODE != 200 ]]; then
-      sleep 10
+      sleep 2
     else
       api_ready=1
     fi
@@ -31,9 +33,18 @@ init_network_config() {
   test $_rc -eq  0 || return $_rc
   echo "FireRouter API is available"
 
+  # start fireapi so that app can talk to the box via HTTP
+  if ! systemctl is-active fireapi &>/dev/null; then
+    echo "Starting FireAPI ..."
+    sudo cp /home/pi/firewalla/etc/fireapi.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl restart fireapi
+  fi
+
   redis-cli set "fireboot:status" "apply_network"
   echo "Applying last successful network config ..."
 
+  BEGIN=$(date +%s)
   if [[ ! -f /dev/shm/firerouter.prepared ]]; then
     echo "Preparing network environment ..."
     HTTP_STATUS_CODE=`curl -m30 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
@@ -55,8 +66,10 @@ init_network_config() {
 
   test $_rc -eq  0 || return $_rc
 
-  echo "Successfully apply last network config"
+  END=$(date +%s)
+  echo "Successfully apply last network config, took $(( $END - $BEGIN )) seconds to finish"
 
+  wait_until_any_wan_carrier_connected
   test_network
 }
 
@@ -79,6 +92,30 @@ test_curl_http_code() {
     fi
 }
 
+test_any_wan_carrier_connected() {
+  count=$(curl -s -m10 localhost:8837/v1/config/wan/connectivity?live=true | jq '.wans | with_entries(select(.value.carrier == true)) | length')
+  test $? -ne 0 && return 1
+  test $count -gt 0 && return 0
+  return 2
+}
+
+wait_until_any_wan_carrier_connected() {
+  redis-cli set "fireboot:status" "wait_wan_carrier"
+  echo "Checking if any wan carrier is connected"
+  _cnt=0
+  while ! test_any_wan_carrier_connected; do
+    (( _cnt++ ))
+    redis-cli set "fireboot:status:code" $_cnt &> /dev/null
+    sleep 2
+
+    if [[ $_cnt -gt 10 ]]; then
+      redis-cli set "fireboot:status" "network_down" &> /dev/null
+      redis-cli set "fireboot:network_down:code" $_cnt &> /dev/null
+    fi
+  done
+  echo "Confirmed that wan carrier is connected"
+}
+
 test_network() {
   echo "Testing network connectivity ..."
   # if fireboot:status is network_down, this function will be invoked in an infinite loop in fireboot, do not override network_down in such case
@@ -88,9 +125,14 @@ test_network() {
 
   retry=30;_rc=0
   while [[ $retry -gt 0 ]]; do
-    redis-cli set "fireboot:status:code" $retry
+    redis-cli set "fireboot:status:code" $retry &> /dev/null
     sleep 3;
     (( retry-- ))
+
+    # report down if already retried for 10 times
+    if [[ $retry -eq 20 ]]; then
+      led_report_network_down
+    fi
 
     if ! nc -w 5 -z 1.1.1.1 443; then
         echo "Unable to reach 1.1.1.1, trying 8.8.8.8 ..."
@@ -127,6 +169,7 @@ test_network() {
     break;
   done
   test $_rc -eq 0 || return $_rc
+  led_report_network_up
   echo "Network connectivity test succeeded"
 }
 
