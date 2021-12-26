@@ -60,7 +60,7 @@ class InterfaceBasePlugin extends Plugin {
     // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
     const lease6Filename = await this._getDHCPCDLease6Filename();
     if (lease6Filename)
-      await exec(`rm -f ${lease6Filename}`).catch((err) => {});
+      await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
     // regenerate ipv6 link local address based on EUI64
     await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.addr_gen_mode=0`).catch((err) => {});
     await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=1`).catch((err) => {});
