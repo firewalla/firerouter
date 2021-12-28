@@ -973,7 +973,7 @@ class InterfaceBasePlugin extends Plugin {
   // use throw error for Promise.any
   async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
     const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
-    const result = await exec(cmd);
+    const result = await exec(cmd).catch((err) => null);
 
     let dnsResult = null;
 
