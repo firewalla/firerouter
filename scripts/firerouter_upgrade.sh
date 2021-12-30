@@ -77,18 +77,29 @@ fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync
 
-NETWORK_CHECK_URL=https://1.1.1.1
+NETWORK_CHECK_URLS='
+  https://1.1.1.1
+  https://1.0.0.1
+  https://8.8.8.8
+'
 
 logger `date`
 rc=1
 for i in `seq 1 10`; do
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" $NETWORK_CHECK_URL`
+  while read NETWORK_CHECK_URL ; do
+    test -n "$NETWORK_CHECK_URL" || continue
+    HTTP_STATUS_CODE=`curl -s -o /dev/null -m10 -w "%{http_code}" $NETWORK_CHECK_URL`
     if [[ $HTTP_STATUS_CODE == "200" ]]; then
       rc=0
       break
     fi
-    /usr/bin/logger "ERROR: FIREROUTER.UPGRADE NO Network $i"
-    sleep 1
+    /usr/bin/logger "ERROR: cannot access $NETWORK_CHECK_URL"
+  done < <(echo "$NETWORK_CHECK_URLS")
+  if [[ $rc -eq 0 ]]; then
+    break
+  fi
+  /usr/bin/logger "ERROR: FIREROUTER.UPGRADE NO Network $i"
+  sleep 1
 done
 
 if [[ $rc -ne 0 ]]
