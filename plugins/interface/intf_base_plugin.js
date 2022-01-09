@@ -328,11 +328,15 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async applyIpv6Settings() {
-    const acceptRA = this.isIPv6Enabled() ? 2 : 0;
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.accept_ra=${acceptRA}`)
+    const disabled = this.isIPv6Enabled() ? 0 : 1;
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=${disabled}`)
       .catch((err) => {
         this.log.error("Failed to set accept_ra, err", err)
       });
+
+    if(disabled) {
+      return;
+    }
 
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
