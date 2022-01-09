@@ -62,9 +62,9 @@ class InterfaceBasePlugin extends Plugin {
     if (lease6Filename)
       await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
     // regenerate ipv6 link local address based on EUI64
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.addr_gen_mode=0`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=1`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=0`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
   }
 
   async flush() {
@@ -94,7 +94,7 @@ class InterfaceBasePlugin extends Plugin {
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
         // restore reverse path filtering settings
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=1`).catch((err) => {});
+        await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
@@ -299,7 +299,7 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
-      await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=2`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
@@ -317,7 +317,27 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhcpcd6/${this.name}.conf`;
   }
 
+  isIPv6Enabled() {
+    return this.networkConfig.dhcp6 || // DHCP
+      this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6)) || // Static
+      this.networkConfig.ipv6DelegateFrom; // Delegate
+  }
+
+  getEscapedNameForSysctl() {
+    return this.name.replace(/\./gi, "/");
+  }
+
   async applyIpv6Settings() {
+    const disabled = this.isIPv6Enabled() ? 0 : 1;
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=${disabled}`)
+      .catch((err) => {
+        this.log.error("Failed to set accept_ra, err", err)
+      });
+
+    if(disabled) {
+      return;
+    }
+
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
