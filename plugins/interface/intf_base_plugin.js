@@ -317,7 +317,23 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhcpcd6/${this.name}.conf`;
   }
 
+  isIPv6Enabled() {
+    return this.networkConfig.dhcp6 || // DHCP
+      this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6)) || // Static
+      this.networkConfig.ipv6DelegateFrom; // Delegate
+  }
+
+  getEscapedNameForSysctl() {
+    return this.name.replace(/\./gi, "/");
+  }
+
   async applyIpv6Settings() {
+    const acceptRA = this.isIPv6Enabled() ? 2 : 0;
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.accept_ra=${acceptRA}`)
+      .catch((err) => {
+        this.log.error("Failed to set accept_ra, err", err)
+      });
+
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
