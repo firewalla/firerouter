@@ -77,26 +77,29 @@ fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync
 
-NETWORK_CHECK_URLS='
-  https://1.1.1.1
-  https://1.0.0.1
-  https://8.8.8.8
-  https://223.5.5.5
-  https://check.firewalla.com
+NETWORK_CHECK_HOSTS='
+  1.1.1.1 443
+  1.0.0.1 443
+  8.8.8.8 443
+  223.5.5.5 443
+  check.firewalla.com 443
 '
 
 logger `date`
 rc=1
 for i in `seq 1 10`; do
-  while read NETWORK_CHECK_URL ; do
-    test -n "$NETWORK_CHECK_URL" || continue
+  while read NETWORK_CHECK_HOST NETWORK_CHECK_PORT; do
+    test -n "$NETWORK_CHECK_HOST" || continue
+    test -n "$NETWORK_CHECK_PORT" || continue
+
     # no need to check status code, even 4xx/5xx means the network is accessible
-    if curl -s -o /dev/null -m5 $NETWORK_CHECK_URL; then
+    if nc -v -z -w 3 $NETWORK_CHECK_HOST $NETWORK_CHECK_PORT; then
       rc=0
       break
     fi
-    /usr/bin/logger "ERROR: cannot access $NETWORK_CHECK_URL"
-  done < <(echo "$NETWORK_CHECK_URLS")
+
+    /usr/bin/logger "ERROR: cannot access $NETWORK_CHECK_HOST"
+  done < <(echo "$NETWORK_CHECK_HOSTS")
   if [[ $rc -eq 0 ]]; then
     break
   fi
