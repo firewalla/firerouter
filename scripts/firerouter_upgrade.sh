@@ -81,6 +81,8 @@ NETWORK_CHECK_URLS='
   https://1.1.1.1
   https://1.0.0.1
   https://8.8.8.8
+  https://223.5.5.5
+  https://check.firewalla.com
 '
 
 logger `date`
@@ -88,8 +90,8 @@ rc=1
 for i in `seq 1 10`; do
   while read NETWORK_CHECK_URL ; do
     test -n "$NETWORK_CHECK_URL" || continue
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -m10 -w "%{http_code}" $NETWORK_CHECK_URL`
-    if [[ $HTTP_STATUS_CODE == "200" ]]; then
+    # no need to check status code, even 4xx/5xx means the network is accessible
+    if curl -s -o /dev/null -m5 $NETWORK_CHECK_URL; then
       rc=0
       break
     fi
