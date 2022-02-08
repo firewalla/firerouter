@@ -4,6 +4,11 @@
 # -m message
 #
 
+# !! DO NOT REMOVE THIS LINE !!
+# Horse must be killed so that firereset service can be terminated successfully after upgrade
+# This script is called here because this is the best place to call after this repo is upgraded
+#   fireboot -> fireupgrade -> firelog -> kill horse
+# Once horse is killed, this script is basically do nothing
 /home/pi/firerouter/scripts/kill_horse.sh
 
 while getopts t:m: option
