@@ -12,7 +12,7 @@ run_host_light_until_paired() {
   done
 }
 
-# run_host_light_until_paired &
+# run_host_light_until_paired &>/dev/null &
 
 # use this user firereset binary if configured, for debugging purpose only
 USER_FIRERESET=/home/pi/.firewalla/run/firereset
