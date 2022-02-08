@@ -4,6 +4,8 @@
 # -m message
 #
 
+/home/pi/firerouter/scripts/kill_horse.sh
+
 while getopts t:m: option
 do
  case "${option}"
