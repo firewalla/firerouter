@@ -169,7 +169,7 @@ class PurplePlatform extends Platform {
   }
 
   // must kill ifplugd before changing purple mac address
-  // FIXME: reset hardware address back
+  // TODO: support resetting hardware address back
   async setHardwareAddress(iface, hwAddr) {
     log.info(`Setting ${iface} hwaddr to`, hwAddr);
 

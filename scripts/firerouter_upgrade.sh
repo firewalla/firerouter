@@ -166,6 +166,7 @@ fi
 
 touch /dev/shm/firerouter.upgraded
 
+run-parts ${FIREROUTER_HOME}/scripts/post_upgrade.d/
 
 /home/pi/firerouter/scripts/firelog -t debug -m  "FIREROUTER.UPGRADE Done $branch"
 
