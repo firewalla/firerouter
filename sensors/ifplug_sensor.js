@@ -48,6 +48,16 @@ class IfPlugSensor extends Sensor {
       await platform.ledNormalVisibleStart();
   }
 
+  async stopMonitoringInterface(iface) {
+      await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
+  }
+
+  async startMonitoringInterface(iface, upDelay, downDelay) {
+      await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
+        this.log.error(`Failed to start ifplugd on ${iface}`);
+      });
+  }
+
   async run() {
     const ifaces = await ncm.getPhyInterfaceNames();
     const upDelay = this.config.up_delay || 5;
@@ -55,10 +65,8 @@ class IfPlugSensor extends Sensor {
     const era = require('../event/EventRequestApi');
     for (let iface of ifaces) {
       await exec(`sudo ip link set ${iface} up`).catch((err) => {});
-      await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
-      await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
-        this.log.error(`Failed to start ifplugd on ${iface}`);
-      });
+      await stopMonitoringInterface(iface);
+      await startMonitoringInterface(iface);
       ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);
     }
     this.log.info("initial ifStates:",ifStates);

@@ -21,6 +21,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 const exec = require('child-process-promise').exec;
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const sensorLoader = require('../../sensors/sensor_loader.js');
 
 Promise.promisifyAll(fs);
 
@@ -52,6 +53,23 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
       const txRingBuffer = this.networkConfig.txBuffer || 4096;
       const rxRingBuffer = this.networkConfig.rxBuffer || 4096;
       await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
+    }
+  }
+
+  async setHardwareAddress() {
+    if (this.networkConfig.hwAddr && this.networkConfig.enabled) {
+      const ifplug = sensorLoader.getSensor("IfPlugSensor");
+      if(ifplug) {
+        await ifplug.stopMonitoringInterface(this.name);
+      }
+      await exec(`sudo ip link set ${this.name} down`);
+      await exec(`sudo ip link set ${this.name} address ${this.networkConfig.hwAddr}`).catch((err) => {
+        this.log.error(`Failed to set hardware address of ${this.name} to ${this.networkConfig.hwAddr}`, err.message);
+      });
+      await exec(`sudo ip link set ${this.name} up`);
+      if(ifplug) {
+        await ifplug.startMonitoringInterface(this.name);
+      }
     }
   }
 

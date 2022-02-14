@@ -643,10 +643,11 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async setHardwareAddress() {
-    if (this.networkConfig.hwAddr)
+    if (this.networkConfig.hwAddr && this.networkConfig.enabled) {
       await exec(`sudo ip link set ${this.name} address ${this.networkConfig.hwAddr}`).catch((err) => {
         this.log.error(`Failed to set hardware address of ${this.name} to ${this.networkConfig.hwAddr}`, err.message);
       });
+    }
   }
 
   getDefaultMTU() {
