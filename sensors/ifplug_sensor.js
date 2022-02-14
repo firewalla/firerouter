@@ -52,16 +52,16 @@ class IfPlugSensor extends Sensor {
       await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
   }
 
-  async startMonitoringInterface(iface, upDelay, downDelay) {
-      await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
-        this.log.error(`Failed to start ifplugd on ${iface}`);
-      });
+  async startMonitoringInterface(iface) {
+    const upDelay = this.config.up_delay || 5;
+    const downDelay = this.config.down_delay || 5;
+    await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
+      this.log.error(`Failed to start ifplugd on ${iface}`);
+    });
   }
 
   async run() {
     const ifaces = await ncm.getPhyInterfaceNames();
-    const upDelay = this.config.up_delay || 5;
-    const downDelay = this.config.down_delay || 5;
     const era = require('../event/EventRequestApi');
     for (let iface of ifaces) {
       await exec(`sudo ip link set ${iface} up`).catch((err) => {});
