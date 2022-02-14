@@ -34,9 +34,17 @@ const WLAN_FLAG_EAP_SHA256  = 0b10000000
 
 
 const _ = require('lodash')
+let transactionTask = null;
+let inTransaction = false;
+
+const T_OP_APPEND = "append";
+const T_OP_COMMIT = "commit";
+const T_OP_REVERT = "revert";
+const validTransactionOps = [T_OP_APPEND, T_OP_COMMIT, T_OP_REVERT];
+const T_REVERT_TIMEOUT = 120 * 1000; // revert back to previous persisted config in 2 minutes
 
 router.get('/active', async (req, res, next) => {
-  const config = await ncm.getActiveConfig();
+  const config = await ncm.getActiveConfig(inTransaction);
   if(config) {
     res.json(config);
   } else {
@@ -227,7 +235,43 @@ router.get('/interfaces', async (req, res, next) => {
 router.post('/set',
   jsonParser,
   async (req, res, next) => {
-    const newConfig = req.body;
+    let newConfig = req.body;
+    const transactionOp = newConfig.transactionOp;
+    delete newConfig.transactionOp; // do not leave transactionOp in the saved config
+    if (inTransaction && !validTransactionOps.includes(transactionOp)) {
+      const errMsg = "A config change transaction context is in progress, reject non-transaction change request";
+      log.error(errMsg);
+      res.status(400).json({errors:[errMsg]});
+      return;
+    }
+    if (!inTransaction && (transactionOp === T_OP_COMMIT || transactionOp === T_OP_REVERT)) {
+      const errMsg = "No ongoing config change transaction context, cannot commit or revert";
+      log.error(errMsg);
+      res.status(400).json({errors: [errMsg]});
+      return;
+    }
+    if (inTransaction) {
+      switch (transactionOp) {
+        case T_OP_COMMIT:
+          newConfig = await ncm.getActiveConfig(true);
+          await ncm.saveConfig(newConfig, false); // save transaction config to persisted config
+          if (transactionTask)
+            clearTimeout(transactionTask)
+          inTransaction = false;
+          log.info("Commit config change transaction: " + JSON.stringify(newConfig));
+          res.status(200).json({errors: []});
+          return;
+        case T_OP_REVERT:
+          // previous persisted config will be applied in the code below
+          newConfig = await ncm.getActiveConfig(false);
+          log.info("Manually revert back to previous persisted config: " + JSON.stringify(newConfig));
+          if (transactionTask)
+            clearTimeout(transactionTask);
+          inTransaction = false;
+          break;
+        default:
+      }
+    }
     let errors = await ncm.validateConfig(newConfig);
     if (errors && errors.length != 0) {
       log.error("Invalid network config", errors);
@@ -239,7 +283,23 @@ router.post('/set',
         res.status(400).json({errors: errors});
       } else {
         log.info("New config is applied with no error");
-        await ncm.saveConfig(newConfig);
+        if (transactionOp === T_OP_APPEND) {
+          log.info("in transaction context now");
+          inTransaction = true;
+          // create or extend the timeout task
+          if (transactionTask)
+            clearTimeout(transactionTask);
+          transactionTask = setTimeout(async () => {
+            const oldConfig = await ncm.getActiveConfig(false);
+            log.info("Automatically revert back to previous persisted config: " + JSON.stringify(oldConfig));
+            await ncm.tryApplyConfig(oldConfig).catch((err) => {
+              log.error(`Failed to automatically revert to old config`, err.message);
+            });
+            transactionTask = null;
+            inTransaction = false;
+          }, T_REVERT_TIMEOUT);
+        }
+        await ncm.saveConfig(newConfig, inTransaction);
         res.status(200).json({errors: errors});
       }
     }
@@ -259,7 +319,7 @@ router.post('/prepare_env',
 router.post('/apply_current_config',
   jsonParser,
   async (req, res, next) => {
-    const currentConfig = await ncm.getActiveConfig();
+    const currentConfig = await ncm.getActiveConfig(inTransaction);
     if (currentConfig) {
       let errors = await ncm.validateConfig(currentConfig);
       if (errors && errors.length != 0) {
