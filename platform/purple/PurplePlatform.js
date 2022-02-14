@@ -25,6 +25,8 @@ const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 
+const macCache = {};
+
 class PurplePlatform extends Platform {
   getName() {
     return "purple";
@@ -119,8 +121,8 @@ class PurplePlatform extends Platform {
 
       if (changed) {
         // restore MAC address of wlan0 from eprom
-        const clientMac = await this.getMac(2); // 2 of 0-3
-        const apMac = await this.getMac(3); // 3 of 0-3
+        const clientMac = await this.getMacByIface(this.getWifiClientInterface());
+        const apMac = await this.getMacByIface(this.getWifiAPInterface());
 
         if (clientMac && apMac) {
           const client = this.getWifiClientInterface();
@@ -155,6 +157,31 @@ class PurplePlatform extends Platform {
     }
   }
 
+  async getMacByIface(iface) {
+    if(macCache[iface]) {
+      return macCache[iface];
+    }
+
+    const mac = await this._getMacByIface(iface);
+    macCache[iface] = mac;
+    return mac;
+  }
+
+  async _getMacByIface(iface) {
+    switch(iface) {
+      case "eth0":
+        return await this.getMac(0);
+      case "eth1":
+        return await this.getMac(1);
+      case "wlan0":
+        return await this.getMac(2);
+      case "wlan1":
+        return await this.getMac(3);
+    }
+
+    return;
+  }
+
   async getMac(index) {
     const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
           .then(result => result.stdout.trim())
@@ -168,9 +195,26 @@ class PurplePlatform extends Platform {
     return "Firewalla Purple";
   }
 
+  async getActiveMac(iface) {
+    return await fs.readFileAsync(`/sys/class/net/${iface}/address`, {encoding: 'utf8'}).then(result => result.trim().toUpperCase()).catch(() => "");
+  }
+
   // must kill ifplugd before changing purple mac address
   // TODO: support resetting hardware address back
   async setHardwareAddress(iface, hwAddr) {
+    if(!hwAddr) {
+      const activeMac = await this.getActiveMac(iface);
+      const eepromMac = await this.getMacByIface(iface);
+      if (activeMac !== eepromMac) {
+        log.info(`Resetting ${iface} back`);
+        await this._setHardwareAddress(iface, eepromMac);
+      }
+    } else {
+      await this._setHardwareAddress(iface, hwAddr);
+    }
+  }
+
+  async _setHardwareAddress(iface, hwAddr) {
     log.info(`Setting ${iface} hwaddr to`, hwAddr);
 
     const ifplug = sensorLoader.getSensor("IfPlugSensor");
