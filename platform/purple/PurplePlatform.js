@@ -23,6 +23,7 @@ const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
+const sensorLoader = require('../../sensors/sensor_loader.js');
 
 class PurplePlatform extends Platform {
   getName() {
@@ -165,6 +166,25 @@ class PurplePlatform extends Platform {
 
   getModelName() {
     return "Firewalla Purple";
+  }
+
+  // must kill ifplugd before changing purple mac address
+  // FIXME: reset hardware address back
+  async setHardwareAddress(iface, hwAddr) {
+    log.info(`Setting ${iface} hwaddr to`, hwAddr);
+
+    const ifplug = sensorLoader.getSensor("IfPlugSensor");
+    if(ifplug) {
+      await ifplug.stopMonitoringInterface(iface);
+    }
+    await exec(`sudo ip link set ${iface} down`);
+    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+      log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
+    });
+    await exec(`sudo ip link set ${iface} up`);
+    if(ifplug) {
+      await ifplug.startMonitoringInterface(iface);
+    }
   }
 }
 

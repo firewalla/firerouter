@@ -93,6 +93,13 @@ class Platform {
   getModelName() {
     return "";
   }
+
+  async setHardwareAddress(iface, hwAddr) {
+    log.info(`Setting ${iface} hwaddr to`, hwAddr);
+    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+      log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
+    });
+  }
 }
 
 module.exports = Platform;

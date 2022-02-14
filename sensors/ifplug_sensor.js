@@ -63,10 +63,10 @@ class IfPlugSensor extends Sensor {
   async run() {
     const ifaces = await ncm.getPhyInterfaceNames();
     const era = require('../event/EventRequestApi');
-    for (let iface of ifaces) {
+    for (const iface of ifaces) {
       await exec(`sudo ip link set ${iface} up`).catch((err) => {});
-      await stopMonitoringInterface(iface);
-      await startMonitoringInterface(iface);
+      await this.stopMonitoringInterface(iface);
+      await this.startMonitoringInterface(iface);
       ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);
     }
     this.log.info("initial ifStates:",ifStates);
