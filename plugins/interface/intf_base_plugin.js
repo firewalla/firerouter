@@ -41,6 +41,7 @@ const pclient = require('../../util/redis_manager.js').getPublishClient();
 Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -156,15 +157,7 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     if (this.networkConfig.hwAddr) {
-      const permAddr = await exec(`sudo ethtool -P ${this.name} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
-        this.log.error(`Failed to get permanent address of ${this.name}`, err.message);
-        return null;
-      });
-      if (permAddr) {
-        await exec(`sudo ip link set ${this.name} address ${permAddr}`).catch((err) => {
-          this.log.error(`Failed to revert hardware address of ${this.name} to ${permAddr}`, err.message);
-        });
-      }
+      await this.resetHardwareAddress();
     }
   }
 
@@ -643,11 +636,15 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async setHardwareAddress() {
-    if (this.networkConfig.hwAddr && this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} address ${this.networkConfig.hwAddr}`).catch((err) => {
-        this.log.error(`Failed to set hardware address of ${this.name} to ${this.networkConfig.hwAddr}`, err.message);
-      });
+    if(!this.networkConfig.enabled) {
+      return;
     }
+
+    await platform.setHardwareAddress(this.name, this.networkConfig.hwAddr);
+  }
+
+  async resetHardwareAddress() {
+    await platform.resetHardwareAddress(this.name);
   }
 
   getDefaultMTU() {

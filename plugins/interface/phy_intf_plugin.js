@@ -55,14 +55,6 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
-  async setHardwareAddress() {
-    if(!this.networkConfig.enabled) {
-      return;
-    }
-
-    await platform.setHardwareAddress(this.name, this.networkConfig.hwAddr);
-  }
-
 }
 
 module.exports = PhyInterfacePlugin;

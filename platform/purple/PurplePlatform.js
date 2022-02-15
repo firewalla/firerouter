@@ -204,21 +204,13 @@ class PurplePlatform extends Platform {
   }
 
   // must kill ifplugd before changing purple mac address
-  // TODO: support resetting hardware address back
   async setHardwareAddress(iface, hwAddr) {
     if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
       log.error("Skip set hardware address if too many errors on setting hardware address.");
       return;
     }
 
-    if(!hwAddr) {
-      const activeMac = await this.getActiveMac(iface);
-      const eepromMac = await this.getMacByIface(iface);
-      if (activeMac !== eepromMac) {
-        log.info(`Resetting ${iface} back`);
-        await this._setHardwareAddress(iface, eepromMac);
-      }
-    } else {
+    if(hwAddr) {
       await this._setHardwareAddress(iface, hwAddr);
     }
   }
@@ -238,6 +230,20 @@ class PurplePlatform extends Platform {
     await exec(`sudo ip link set ${iface} up`);
     if(ifplug) {
       await ifplug.startMonitoringInterface(iface);
+    }
+  }
+
+  async resetHardwareAddress(iface) {
+    const activeMac = await this.getActiveMac(iface);
+    const eepromMac = await this.getMacByIface(iface);
+    if (activeMac !== eepromMac) {
+      if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
+        log.error("Skip set hardware address if too many errors on setting hardware address.");
+        return;
+      }
+
+      log.info(`Resetting ${iface} back`);
+      await this._setHardwareAddress(iface, eepromMac);
     }
   }
 }

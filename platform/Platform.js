@@ -104,6 +104,18 @@ class Platform {
       log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
     });
   }
+
+  async resetHardwareAddress(iface) {
+    const permAddr = await exec(`sudo ethtool -P ${iface} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+      log.error(`Failed to get permanent address of ${iface}`, err.message);
+      return null;
+    });
+    if (permAddr) {
+      await exec(`sudo ip link set ${iface} address ${permAddr}`).catch((err) => {
+        log.error(`Failed to revert hardware address of ${iface} to ${permAddr}`, err.message);
+      });
+    }
+  }
 }
 
 module.exports = Platform;

@@ -211,12 +211,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       });
     }
   }
-
-  async setHardwareAddress() {
-    if (this.networkConfig.hwAddr && this.networkConfig.enabled) {
-      platform.setHardwareAddress(this.name, this.networkConfig.hwAddr);
-    }
-  }
 }
 
 module.exports = WLANInterfacePlugin;
