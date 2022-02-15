@@ -36,6 +36,7 @@ const WLAN_FLAG_EAP_SHA256  = 0b10000000
 const _ = require('lodash')
 let transactionTask = null;
 let inTransaction = false;
+let currentTransID = null;
 
 const T_OP_APPEND = "append";
 const T_OP_COMMIT = "commit";
@@ -237,7 +238,14 @@ router.post('/set',
   async (req, res, next) => {
     let newConfig = req.body;
     const transactionOp = newConfig.transactionOp;
+    const transID = newConfig.transID;
     delete newConfig.transactionOp; // do not leave transactionOp in the saved config
+    delete newConfig.transID;
+    if (transactionOp && !validTransactionOps.includes(transactionOp)) {
+      const errMsg = `Unrecognized transactionOp in config: ${transactionOp}`;
+      log.error(errMsg);
+      res.status(400).json({errors:[errMsg]});
+    }
     if (inTransaction && !validTransactionOps.includes(transactionOp)) {
       const errMsg = "A config change transaction context is in progress, reject non-transaction change request";
       log.error(errMsg);
@@ -250,6 +258,18 @@ router.post('/set',
       res.status(400).json({errors: [errMsg]});
       return;
     }
+    if (validTransactionOps.includes(transactionOp) && _.isEmpty(transID)) {
+      const errMsg = `transID is not defined in transactional network config change request`;
+      log.error(errMsg);
+      res.status(400).json({errors: [errMsg]});
+      return;
+    }
+    if (inTransaction && (_.isEmpty(transID) || transID !== currentTransID)) {
+      const errMsg = `transID ${transID} does not match current transaction ID`;
+      log.error(errMsg);
+      res.status(400).json({errors: [errMsg]});
+      return;
+    }
     if (inTransaction) {
       switch (transactionOp) {
         case T_OP_COMMIT:
@@ -258,6 +278,7 @@ router.post('/set',
           if (transactionTask)
             clearTimeout(transactionTask)
           inTransaction = false;
+          currentTransID = null;
           log.info("Commit config change transaction: " + JSON.stringify(newConfig));
           res.status(200).json({errors: []});
           return;
@@ -268,6 +289,7 @@ router.post('/set',
           if (transactionTask)
             clearTimeout(transactionTask);
           inTransaction = false;
+          currentTransID = null;
           break;
         default:
       }
@@ -286,6 +308,7 @@ router.post('/set',
         if (transactionOp === T_OP_APPEND) {
           log.info("in transaction context now");
           inTransaction = true;
+          currentTransID = transID;
           // create or extend the timeout task
           if (transactionTask)
             clearTimeout(transactionTask);
@@ -297,6 +320,7 @@ router.post('/set',
             });
             transactionTask = null;
             inTransaction = false;
+            currentTransID = null;
           }, T_REVERT_TIMEOUT);
         }
         await ncm.saveConfig(newConfig, inTransaction);
