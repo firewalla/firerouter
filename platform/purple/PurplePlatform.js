@@ -187,8 +187,9 @@ class PurplePlatform extends Platform {
           .then(result => result.stdout.trim())
           .catch((err) => {
             log.error(`Failed to get MAC address for index ${index} from EPROM`, err.message);
+            return "";
           });
-    return mac;
+    return mac.toUpperCase();
   }
 
   getModelName() {
