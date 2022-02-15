@@ -88,7 +88,7 @@ class PurplePlatform extends Platform {
       '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
     if (changed) {
       // restore MAC address of eth1 from eprom
-      const mac = await this.getMac(1); // 1 of 0-3
+      const mac = await this.getMacByIface("eth1");
 
       if (mac) {
         await exec(`sudo ip link set eth1 address ${mac}`).catch((err) => {
