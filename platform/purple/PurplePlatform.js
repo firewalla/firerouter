@@ -27,6 +27,9 @@ const sensorLoader = require('../../sensors/sensor_loader.js');
 
 const macCache = {};
 
+let errCounter = 0;
+const maxErrCounter = 100; // do not try to set mac address again if too many errors.
+
 class PurplePlatform extends Platform {
   getName() {
     return "purple";
@@ -203,6 +206,11 @@ class PurplePlatform extends Platform {
   // must kill ifplugd before changing purple mac address
   // TODO: support resetting hardware address back
   async setHardwareAddress(iface, hwAddr) {
+    if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
+      log.error("Skip set hardware address if too many errors on setting hardware address.");
+      return;
+    }
+
     if(!hwAddr) {
       const activeMac = await this.getActiveMac(iface);
       const eepromMac = await this.getMacByIface(iface);
@@ -225,6 +233,7 @@ class PurplePlatform extends Platform {
     await exec(`sudo ip link set ${iface} down`);
     await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
       log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
+      errCounter++;
     });
     await exec(`sudo ip link set ${iface} up`);
     if(ifplug) {
