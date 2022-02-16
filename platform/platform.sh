@@ -61,6 +61,8 @@ function get_node_modules_dir {
 }
 
 function get_dnsmasq_path {
+  test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
+
   echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
 }
 

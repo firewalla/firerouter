@@ -164,7 +164,7 @@ sudo ip -6 r flush table static
 
 # ------ initialize ip rules
 # do not touch ip rules created by Firewalla
-rules_to_remove=`ip rule list | grep -v -e "^6000:" | cut -d: -f2-`;
+rules_to_remove=`ip rule list | grep -v -e "^\(5000\|6000\|10000\):" | cut -d: -f2-`;
 while IFS= read -r line; do
   sudo ip rule del $line
 done <<< "$rules_to_remove"
@@ -174,7 +174,7 @@ sudo ip rule add pref 32767 from all lookup default
 
 sudo ip rule add pref 4001 from all lookup static
 
-rules_to_remove=`ip -6 rule list | grep -v -e "^6000:" | cut -d: -f2-`;
+rules_to_remove=`ip -6 rule list | grep -v -e "^\(5000\|6000\|10000\):" | cut -d: -f2-`;
 while IFS= read -r line; do
   sudo ip -6 rule del $line
 done <<< "$rules_to_remove"
