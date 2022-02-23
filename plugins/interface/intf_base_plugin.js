@@ -80,6 +80,9 @@ class InterfaceBasePlugin extends Plugin {
 
       // remove delegated prefix file in runtime folder
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
+
+      // remove cached router-advertisement ipv6 address file
+      await fs.unlinkAsync(`/dev/shm/dhcpcd.ip6.${this.name}`).catch((err) => {});
         
       // flush related routing tables
       await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
