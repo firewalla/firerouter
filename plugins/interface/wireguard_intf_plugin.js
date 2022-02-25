@@ -121,6 +121,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
+            await routing.addRouteToTable(allowedIP, null, this.name, "main", 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
               await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
