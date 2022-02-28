@@ -57,6 +57,10 @@ class InterfaceBasePlugin extends Plugin {
     // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
     await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
     await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+    // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+    const lease6Filename = await this._getDHCPCDLease6Filename();
+    if (lease6Filename)
+      await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
     // regenerate ipv6 link local address based on EUI64
     await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.addr_gen_mode=0`).catch((err) => {});
     await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=1`).catch((err) => {});
@@ -179,6 +183,20 @@ class InterfaceBasePlugin extends Plugin {
 
   _getResolvConfFilePath() {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
+  }
+
+  async _getDHCPCDLease6Filename() {
+    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+      this.log.error(`Failed to get dhcpcd version`, err.message);
+      return null;
+    });
+    if (version) {
+      if (version.startsWith("6."))
+        return `/var/lib/dhcpcd5/dhcpcd-${this.name}.lease6`;
+      if (version.startsWith("7."))
+        return `/var/lib/dhcpcd/${this.name}.lease6`;
+    }
+    return null;
   }
 
   isWAN() {
@@ -703,6 +721,11 @@ class InterfaceBasePlugin extends Plugin {
     return dns;
   }
 
+  async getOrigDNSNameservers() {
+    const dns = await fs.readFileAsync(this._getResolvConfFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
+    return dns;
+  }
+
   async getIPv4Addresses() {
     let ip4s = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4s)
@@ -1006,7 +1029,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1021,7 +1044,8 @@ class InterfaceBasePlugin extends Plugin {
       exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
-      this.getDNSNameservers()
+      this.getDNSNameservers(),
+      this.getOrigDNSNameservers()
     ]);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
@@ -1033,7 +1057,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this._getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, rtid, wanConnState, wanTestResult};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult};
   }
 
   onEvent(e) {
