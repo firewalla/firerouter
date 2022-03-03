@@ -36,6 +36,9 @@ const WLAN_AVAILABLE_RETRY = 3
 class HostapdPlugin extends Plugin {
 
   static async preparePlugin() {
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/15-hostapd.conf /etc/rsyslog.d/`);
+    pl.scheduleRestartRsyslog();
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/hostapd /etc/logrotate.d/`);
     await this.createDirectories();
     await this.installHostapdScript();
     await this.installSystemService();
