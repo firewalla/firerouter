@@ -16,7 +16,9 @@
 'use strict';
 
 const fs = require('fs');
+const log = require('../util/logger.js')(__filename);
 const r = require('../util/firerouter')
+const exec = require('child-process-promise').exec;
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
@@ -53,6 +55,66 @@ class Platform {
   }
 
   async ledAnyNetworkUp() {
+  }
+
+  async overrideKernelModule(koName,srcDir,dstDir) {
+    const srcPath = `${srcDir}/${koName}.ko`;
+    const dstPath = `${dstDir}/${koName}.ko`;
+    let changed = false;
+    try {
+      await exec(`cmp -s ${srcPath} ${dstPath}`);
+    } catch (err) {
+      try {
+        await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+        await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
+        changed = true;
+      } catch(err) {
+        log.error(`Failed to override kernel module ${koName}:`,err);
+      }
+    }
+    return changed;
+  }
+
+  async overrideEthernetKernelModule() {
+  }
+
+  async setEthernetOffload(iface,feature,desc,onoff) {
+    await exec(`sudo ethtool -K ${iface} ${feature} ${onoff}`).catch( (err) => {
+      log.error(`Failed to turn ${onoff} ${desc} in ${iface}`);
+    });
+  }
+
+  async configEthernet() {
+  }
+
+  async overrideWLANKernelModule() {
+  }
+
+  getModelName() {
+    return "";
+  }
+
+  async setHardwareAddress(iface, hwAddr) {
+    if(!hwAddr) {
+      return; // by default don't reset back when hwAddr is undefined
+    }
+
+    log.info(`Setting ${iface} hwaddr to`, hwAddr);
+    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+      log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
+    });
+  }
+
+  async resetHardwareAddress(iface) {
+    const permAddr = await exec(`sudo ethtool -P ${iface} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+      log.error(`Failed to get permanent address of ${iface}`, err.message);
+      return null;
+    });
+    if (permAddr) {
+      await exec(`sudo ip link set ${iface} address ${permAddr}`).catch((err) => {
+        log.error(`Failed to revert hardware address of ${iface} to ${permAddr}`, err.message);
+      });
+    }
   }
 }
 
