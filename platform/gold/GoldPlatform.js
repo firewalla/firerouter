@@ -14,10 +14,19 @@
  */
 
 const Platform = require('../Platform.js');
+const { execSync } = require('child_process');
 
 class GoldPlatform extends Platform {
   getName() {
     return "gold";
+  }
+
+  getLSBCodeName() {
+    return execSync("lsb_release -cs", {encoding: 'utf8'}).trim();
+  }
+
+  isUbuntu20() {
+    return this.getLSBCodeName() === 'focal';
   }
 
   getDefaultNetworkJsonFile() {
@@ -25,7 +34,10 @@ class GoldPlatform extends Platform {
   }
 
   getWpaCliBinPath() {
-    return `${__dirname}/bin/wpa_cli`;
+    if (this.isUbuntu20())
+      return `${__dirname}/bin/u20/wpa_cli`
+    else
+      return `${__dirname}/bin/wpa_cli`;
   }
 
   getWpaPassphraseBinPath() {

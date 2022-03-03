@@ -25,6 +25,32 @@ function led_report_network_up {
   return
 }
 
+function get_node_modules_dir {
+  echo "${FW_PLATFORM_CUR_DIR}/node_modules"
+}
+
+function get_dnsmasq_path {
+  test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
+
+  echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
+}
+
+function get_firereset_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
+}
+
+function get_hostapd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
+}
+
+function get_wpa_supplicant_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
+}
+
+function get_wpa_cli_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
+}
+
 case "$UNAME" in
   "x86_64")
     source $FW_PLATFORM_DIR/gold/platform.sh
@@ -55,29 +81,3 @@ case "$UNAME" in
 esac
 
 export DP_SO_PATH="$FW_PLATFORM_CUR_DIR/bin/libdnsproxy.so"
-
-function get_node_modules_dir {
-  echo "${FW_PLATFORM_CUR_DIR}/node_modules"
-}
-
-function get_dnsmasq_path {
-  test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
-
-  echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
-}
-
-function get_firereset_path {
-  echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
-}
-
-function get_hostapd_path {
-  echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
-}
-
-function get_wpa_supplicant_path {
-  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
-}
-
-function get_wpa_cli_path {
-  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
-}
