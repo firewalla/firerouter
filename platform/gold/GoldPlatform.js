@@ -31,6 +31,10 @@ class GoldPlatform extends Platform {
   getWpaPassphraseBinPath() {
     return `${__dirname}/bin/wpa_passphrase`;
   }
+
+  getModelName() {
+    return "Firewalla Gold";
+  }
 }
 
 module.exports = GoldPlatform;
