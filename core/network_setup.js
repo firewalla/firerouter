@@ -40,6 +40,8 @@ class NetworkSetup {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dhclient`);
     // create dhcpv6 client config folder
     await exec(`mkdir -p ${r.getUserConfigFolder()}/dhcpcd6`);
+    // create saved file folder
+    await exec(`mkdir -p ${r.getRuntimeFolder()}/files`);
     // copy dhclient-script
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
     // copy rfc3442-classless-routes script

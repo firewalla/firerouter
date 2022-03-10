@@ -20,6 +20,7 @@ const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const routing = require('../../util/routing.js');
 const event = require('../../core/event.js');
+const Message = require('../../core/Message.js');
 const {Address4, Address6} = require('ip-address');
 const AsyncLock = require('async-lock');
 const LOCK_APPLY_ACTIVE_WAN = "LOCK_APPLY_ACTIVE_WAN";
@@ -29,12 +30,20 @@ const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
+const PlatformLoader = require('../../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
 const FAST_OFF_ON_THRESHOLD = 2;
 
 class RoutingPlugin extends Plugin {
+
+  static async preparePlugin() {
+    // ensure ip forward is enabled
+    await exec(`sudo sysctl -w net.ipv4.ip_forward=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.all.forwarding=1`).catch((err) => {});
+  }
    
   async flush() {
     if (!this.networkConfig) {
@@ -52,11 +61,23 @@ class RoutingPlugin extends Plugin {
             await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
             await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
             await routing.flushRoutingTable(routing.RT_STATIC);
-            // execute twice to ensure dual wan is removed
-            await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
-            await routing.removeRouteFromTable("default", null, null, "main").catch((err) => {});
-            await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => {});
-            await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => {});
+            // remove all default route in main table
+            let routeRemoved = false;
+            do {
+              await routing.removeRouteFromTable("default", null, null, "main").then(() => {
+                routeRemoved = true;
+              }).catch((err) => {
+                routeRemoved = false;
+              });
+            } while (routeRemoved);
+            
+            do {
+              await routing.removeRouteFromTable("default", null, null, "main", 6).then(() => {
+                routeRemoved = true;
+              }).catch((err) => {
+                routeRemoved = false;
+              });
+            } while (routeRemoved);
             // remove DNS specific routes
             if (_.isArray(this._dnsRoutes)) {
               for (const dnsRoute of this._dnsRoutes)
@@ -129,17 +150,44 @@ class RoutingPlugin extends Plugin {
     }
   }
 
+  meterApplyActiveGlobalDefaultRouting() {
+    const now = new Date();
+
+    if(this.lastApplyTimestamp) {
+      const diff = Math.floor(now / 1000 - this.lastApplyTimestamp / 1000);
+      this.log.info(`applying active global default routing, ${diff} seconds since last time apply`);
+    } else {
+      this.log.info(`applying active global default routing, first time since firerouter starting up`);
+    }
+
+    this.lastApplyTimestamp = now;
+  }
+
   async _applyActiveGlobalDefaultRouting(inAsyncContext = false) {
+    this.meterApplyActiveGlobalDefaultRouting();
+    
     return new Promise((resolve, reject) => {
       // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
       lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async (done) => {
         // flush global default routing table, no need to touch global local and global static routing table here
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
-        // execute twice to ensure dual wan is removed
-        await routing.removeRouteFromTable("default", null, null, "main").catch((err) => { });
-        await routing.removeRouteFromTable("default", null, null, "main").catch((err) => { });
-        await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => { });
-        await routing.removeRouteFromTable("default", null, null, "main", 6).catch((err) => { });
+        // remove all default route in main table
+        let routeRemoved = false;
+        do {
+          await routing.removeRouteFromTable("default", null, null, "main").then(() => {
+            routeRemoved = true;
+          }).catch((err) => {
+            routeRemoved = false;
+          });
+        } while (routeRemoved)
+        
+        do {
+          await routing.removeRouteFromTable("default", null, null, "main", 6).then(() => {
+            routeRemoved = true;
+          }).catch((err) => {
+            routeRemoved = false;
+          });
+        } while (routeRemoved)
         // remove DNS specific routes
         if (_.isArray(this._dnsRoutes)) {
           for (const dnsRoute of this._dnsRoutes)
@@ -158,8 +206,8 @@ class RoutingPlugin extends Plugin {
               this._wanStatus[viaIntf].active = ready && !activeIntfFound;
               if (this._wanStatus[viaIntf].active === true)
                 activeIntfFound = true;
-              // set a much lower priority for inactive WAN
-              const metric = this._wanStatus[viaIntf].seq + (ready ? 0 : 100);
+              // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
+              const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100);
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
                   const addr = new Address4(ip4);
@@ -194,6 +242,15 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
+                    let dnsRouteRemoved = false;
+                    // remove all dns routes via the same interface but with different metrics in main table
+                    do {
+                      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, "main").then(() => {
+                        dnsRouteRemoved = true;
+                      }).catch((err) => {
+                        dnsRouteRemoved = false;
+                      })
+                    } while (dnsRouteRemoved)
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
@@ -248,11 +305,11 @@ class RoutingPlugin extends Plugin {
               const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
               if (gw) {
                 // add a default route with higher metric if it is inactive. A default route is needed for WAN connectivity check, e.g., ping -I eth0 1.1.1.1
-                let metric = this._wanStatus[viaIntf].seq;
+                let metric = this._wanStatus[viaIntf].seq + 1;
                 if (ready) {
                   multiPathDesc.push({ nextHop: gw, dev: viaIntf, weight: weight });
                 } else {
-                  metric = this._wanStatus[viaIntf].seq + 100;
+                  metric = this._wanStatus[viaIntf].seq + 1 + 100;
                   await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
                   await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 }
@@ -263,6 +320,15 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
+                    let dnsRouteRemoved = false;
+                    // remove all dns routes via the same interface but with different metrics in main table
+                    do {
+                      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, "main").then(() => {
+                        dnsRouteRemoved = true;
+                      }).catch((err) => {
+                        dnsRouteRemoved = false;
+                      })
+                    } while (dnsRouteRemoved)
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
@@ -301,6 +367,7 @@ class RoutingPlugin extends Plugin {
           default:
         }
         await this._refreshOutputSNATRules();
+        this.processWANConnChange(); // no need to await, call this func again to ensure led is set correctly
         done(null);
       }, function(err, ret) {
         if (err)
@@ -321,6 +388,7 @@ class RoutingPlugin extends Plugin {
       lock.acquire(LOCK_SHARED, async (done) => {
         const lastWanStatus = this._wanStatus || {};
         this._wanStatus = {};
+        this._pendingChangeDescs = this._pendingChangeDescs || [];
         const wanStatus = {};
 
         switch (this.name) {
@@ -341,7 +409,9 @@ class RoutingPlugin extends Plugin {
                         active: false,
                         ready: true,
                         successCount: 0,
-                        failureCount: 0
+                        failureCount: 0,
+                        pendingTestTimestamp: viaIntf2Plugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
+                        pendingTest: viaIntf2Plugin.isPendingTest()
                       };
                       // do not change WAN connectivity status
                       if (lastWanStatus[viaIntf2]) {
@@ -368,7 +438,9 @@ class RoutingPlugin extends Plugin {
                         active: false,
                         ready: true,
                         successCount: 0,
-                        failureCount: 0
+                        failureCount: 0,
+                        pendingTestTimestamp: viaIntfPlugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
+                        pendingTest: viaIntfPlugin.isPendingTest()
                       };
                       if (lastWanStatus[viaIntf]) {
                         wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
@@ -397,7 +469,9 @@ class RoutingPlugin extends Plugin {
                             active: false,
                             ready: true,
                             successCount: 0,
-                            failureCount: 0
+                            failureCount: 0,
+                            pendingTestTimestamp: viaIntfPlugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
+                            pendingTest: viaIntfPlugin.isPendingTest()
                           };
                           if (lastWanStatus[viaIntf]) {
                             wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
@@ -418,11 +492,27 @@ class RoutingPlugin extends Plugin {
                         }
                         seq++;
                       }
+                      const hashPolicy = settings.hashPolicy || "l3";
+                      switch (hashPolicy) {
+                        case "l4": {
+                          await exec(`sudo sysctl -w net.ipv4.fib_multipath_hash_policy=1`).catch((err) => {});
+                          // ipv6 multipath configuration is not supported yet in our image, but it will be supported in later kernel version
+                          await exec(`sudo sysctl -w net.ipv6.fib_multipath_hash_policy=1`).catch((err) => {});
+                          break;
+                        }
+                        case "l3":
+                        default: {
+                          await exec(`sudo sysctl -w net.ipv4.fib_multipath_hash_policy=0`).catch((err) => {});
+                          // ipv6 multipath configuration is not supported yet in our image, but it will be supported in later kernel version
+                          await exec(`sudo sysctl -w net.ipv6.fib_multipath_hash_policy=0`).catch((err) => {});
+                        }
+                      }
                       break;
                     }
                   }
                   // in apply context here
                   this._wanStatus = wanStatus;
+                  this.log.info("wan config change, routing is re/applied, set pendingTest to true for all wan interfaces");
                   await this._applyActiveGlobalDefaultRouting(false);
                   break;
                 }
@@ -538,6 +628,13 @@ class RoutingPlugin extends Plugin {
       return null;
   }
 
+  getAllWANPlugins() {
+    if (this._wanStatus)
+      return Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
+    else
+      return null;
+  }
+
   getPrimaryWANPlugin() {
     if (this._wanStatus) {
       const iface = Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq)[0];
@@ -552,7 +649,8 @@ class RoutingPlugin extends Plugin {
       Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).forEach(i => {
         result[i] = {
           ready: this._wanStatus[i].ready,
-          active: this._wanStatus[i].active
+          active: this._wanStatus[i].active,
+          pendingTest: this._wanStatus[i].pendingTest
         };
       });
       return result;
@@ -564,7 +662,8 @@ class RoutingPlugin extends Plugin {
     if (this._wanStatus && this._wanStatus[name]) {
       return {
         ready: this._wanStatus[name].ready,
-        active: this._wanStatus[name].active
+        active: this._wanStatus[name].active,
+        pendingTest: this._wanStatus[name].pendingTest
       };
     }
     return null;
@@ -590,6 +689,7 @@ class RoutingPlugin extends Plugin {
         const intf = payload.intf;
         const active = payload.active || false;
         const forceState = payload.forceState;
+        const failures = payload.failures;
         if (!this._wanStatus[intf]) {
           this.log.warn(`Interface ${intf} is not defined in global routing plugin, ignore event`, e);
           return;
@@ -602,6 +702,8 @@ class RoutingPlugin extends Plugin {
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
         }
+        const wasPendingTest = currentStatus.pendingTest;
+        currentStatus.pendingTest = false;
         let changeActiveWanNeeded = false;
         let changeDesc = null;
         if (currentStatus.ready && (forceState !== true && currentStatus.failureCount >= ON_OFF_THRESHOLD || forceState === false)) {
@@ -612,7 +714,8 @@ class RoutingPlugin extends Plugin {
           changeDesc = {
             intf: intf,
             ready: false,
-            wanSwitched: changeActiveWanNeeded
+            wanSwitched: changeActiveWanNeeded,
+            failures: failures
           };
         }
         if (!currentStatus.ready && (forceState !== false && (currentStatus.successCount >= OFF_ON_THRESHOLD || (currentStatus.successCount >= FAST_OFF_ON_THRESHOLD && this.getActiveWANPlugins().length === 0)) || forceState === true)) {
@@ -635,25 +738,78 @@ class RoutingPlugin extends Plugin {
           changeDesc = {
             intf: intf,
             ready: true,
-            wanSwitched: changeActiveWanNeeded
+            wanSwitched: changeActiveWanNeeded,
+            failures: failures
+          };
+        }
+
+        if(wasPendingTest) {
+          const stats = _.pick(currentStatus, ["active", "ready", "successCount", "failureCount", "pendingTest"]);
+          const lastTS = currentStatus.pendingTestTimestamp;
+          const duration = lastTS ? Math.floor(new Date() / 1000) - currentStatus.pendingTestTimestamp : 0;
+          this.log.info(`Finished 1st wan status testing (took ${duration} seconds) after config change, ${intf} final status:`, stats);
+        }
+
+        if (!changeDesc && wasPendingTest) {
+          // send a wan conn change event with noNotify bit set to true
+          changeDesc = {
+            intf: intf,
+            ready: currentStatus.ready,
+            wanSwitched: false,
+            failures: failures,
+            noNotify: true
           };
         }
         if (changeDesc) {
+          this.processWANConnChange(); // no need to await
           if (changeActiveWanNeeded) {
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
-            changeDesc.currentStatus = this.getWANConnStates();
-            this.schedulePublishWANConnChanged(changeDesc);
-          }   
+            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+              if (enrichedWanStatus) {
+                changeDesc.currentStatus = enrichedWanStatus;
+                this.publishWANConnChange(changeDesc);
+              }
+            }).catch((err) => {
+              this.log.error("Failed to enrich WAN status", err.message);
+            });
+          }
         }
       }
       default:
     }
   }
 
+  // in seconds
+  getApplyTimeoutInterval(changeDesc = {}) {
+    const failures = changeDesc.failures || [];
+    const carrierFailures = failures.filter((x) => x.type === 'carrier');
+    const hasCarrierError = !_.isEmpty(carrierFailures);
+
+    if(!this.lastApplyTimestamp) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    const secondsSinceLastApply = Math.floor(new Date() / 1000 - this.lastApplyTimestamp / 1000);
+    if(secondsSinceLastApply > 20) {
+      return hasCarrierError ? 0.5 : 3;
+    }
+
+    return hasCarrierError ? 3 : 10;
+  }
+
   scheduleApplyActiveGlobalDefaultRouting(changeDesc) {
-    if (this.applyActiveGlobalDefaultRoutingTask)
+    this._pendingChangeDescs = this._pendingChangeDescs || [];
+    this._pendingChangeDescs.push(changeDesc);
+
+    const timeoutInterval = this.getApplyTimeoutInterval(changeDesc);
+
+    if (this.applyActiveGlobalDefaultRoutingTask) {
+      this.log.info("Cancelled scheduled active global default routing change");
       clearTimeout(this.applyActiveGlobalDefaultRoutingTask);
+    }
+
+    this.log.info(`Going to change global default routing in ${timeoutInterval} seconds...`);
     this.applyActiveGlobalDefaultRoutingTask = setTimeout(() => {
       this.log.info("Apply active global default routing", Object.keys(this._wanStatus).map(i => {
         return {
@@ -662,20 +818,27 @@ class RoutingPlugin extends Plugin {
           seq: this._wanStatus[i].seq,
           successCount: this._wanStatus[i].successCount,
           failureCount:  this._wanStatus[i].failureCount
-        }
+        };
       }));
       // in async context here
       this._applyActiveGlobalDefaultRouting(true).then(() => {
-        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {})
+        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {});
         this.propagateEvent(e);
-        if (changeDesc) {
-          changeDesc.currentStatus = this.getWANConnStates();
-          this.schedulePublishWANConnChanged(changeDesc);
+        if (!_.isEmpty(this._pendingChangeDescs)) {
+          for (const desc of this._pendingChangeDescs) {
+            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+              if (enrichedWanStatus) {
+                desc.currentStatus = enrichedWanStatus;
+                this.publishWANConnChange(desc);
+              }
+            });
+          }
         }
+        this._pendingChangeDescs = [];
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
       });
-    }, 10000);
+    }, timeoutInterval * 1000);
   }
 
   async enrichWanStatus(wanStatus) {
@@ -703,14 +866,58 @@ class RoutingPlugin extends Plugin {
     return null;
   }
 
-  schedulePublishWANConnChanged(changeDesc) {
-    this.log.info("schedule publish WAN :",changeDesc);
+  async publishWANConnChange(changeDesc) {
+    this.log.info("publish WAN :",changeDesc);
+
     // publish to redis db used by Firewalla
-    if (this.publishWANConnChangedTask)
-      clearTimeout(this.publishWANConnChangedTask);
-    this.publishWANConnChangedTask = setTimeout(async () => {
-      pclient.publishAsync("firerouter.wan_conn_changed", JSON.stringify(changeDesc)).catch((err) => {});
-    }, 10000);
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  async processWANConnChange() {
+    const state = this.isAnyWanConnected();
+    const anyUp = state && state.connected;
+    const lastAnyUp = this.lastAnyUp;
+    if (anyUp === lastAnyUp) {
+      return;
+    }
+
+    this.lastAnyUp = anyUp;
+
+    if(anyUp) {
+      await this.notifyAnyWanUp(state);
+    } else {
+      await this.notifyAllWanDown(state);
+    }
+  }
+
+  async notifyAnyWanUp(state) {
+    this.log.info("at least one wan is back online, publishing redis message and set led...");
+    await platform.ledAnyNetworkUp();
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ANY_UP, JSON.stringify(state)).catch((err) => {});
+  }
+
+  async notifyAllWanDown(state) {
+    this.log.info("all wan are down, publishing redis message and set led...");
+    await platform.ledAllNetworkDown();
+    await pclient.publishAsync(Message.MSG_FR_WAN_CONN_ALL_DOWN, JSON.stringify(state)).catch((err) => {});
+    await pclient.publishAsync(Message.MSG_FIRERESET_BLUETOOTH_CONTROL, "1").catch((err) => {});
+  }
+
+  isAnyWanConnected() {
+    const states = this.getWANConnStates();
+    let connected = false;
+    const subStates = {};
+    for(const intf in states) {
+      const state = states[intf];
+      if(state.ready) {
+        connected = true;
+      }
+      subStates[intf] = {active: state.ready};
+    }
+    return {
+      connected,
+      wans: subStates
+    };
   }
 }
 

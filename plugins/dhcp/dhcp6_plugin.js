@@ -81,6 +81,10 @@ class DHCP6Plugin extends DHCPPlugin {
     }
     // in case prefix delegation is used, address may be changed dynamically
     this.subscribeChangeFrom(ifacePlugin);
+    if (await ifacePlugin.isInterfacePresent() === false) {
+      this.log.warn(`Interface ${this.name} is not present yet`);
+      return;
+    }
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, 
       this.networkConfig.prefixLen, this.networkConfig.lease);
     this._restartService();

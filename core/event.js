@@ -42,9 +42,15 @@ module.exports = {
   isLoggingSuppressed: isLoggingSuppressed,
   EVENT_IF_UP: "ifup",
   EVENT_IF_DOWN: "ifdown",
+  EVENT_WLAN_UP: "wlan_up",
+  EVENT_WLAN_DOWN: "wlan_down",
   EVENT_IP_CHANGE: "ipchange",
   EVENT_PD_CHANGE: "pdchange",
   EVENT_PPPOE_IPV6_UP: "pppoe_ipv6_up",
   EVENT_WAN_CONN_CHECK: "wan_conn_check",
-  EVENT_WAN_SWITCHED: "wan_switched"
+  EVENT_WAN_SWITCHED: "wan_switched",
+  EVENT_IF_PRESENT: "if_present",
+  EVENT_IF_DISAPPEAR: "if_disappear",
+  EVENT_WPA_CONNECTED: "wpa_connected",
+  EVENT_WPA_DISCONNECTED: "wpa_disconnected"
 };

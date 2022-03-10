@@ -159,7 +159,11 @@ function getInterfaceDelegatedPrefixPath(iface) {
 }
 
 function getInterfacePDCacheDirectory(iface) {
-  return `${getRuntimeFolder()}/dhcpcd/${iface}`;
+  return `${getRuntimeFolder()}/dhcpcd/${iface}/pd_cache`;
+}
+
+function getInterfaceSysFSDirectory(iface) {
+  return `/sys/class/net/${iface}`
 }
 
 function getVersion() {
@@ -241,5 +245,6 @@ module.exports = {
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
   getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
   getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
+  getInterfaceSysFSDirectory: getInterfaceSysFSDirectory,
   switchBranch: switchBranch
 };

@@ -17,6 +17,7 @@
 
 const log = require('../util/logger.js')(__filename);
 const config = require('../util/config.js').getConfig();
+const Message = require('../core/Message.js');
 
 let pluginConfs = [];
 
@@ -32,6 +33,8 @@ const exec = require('child-process-promise').exec;
 const fwpclient = require('../util/redis_manager.js').getPublishClient();
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
+let applyInProgress = false;
+let lastAppliedTimestamp = null;
 
 async function initPlugins() {
   if(_.isEmpty(config.plugins)) {
@@ -109,17 +112,28 @@ function _isConfigEqual(c1, c2) {
 
 async function _publishChangeApplied() {
   // publish to redis db used by Firewalla
-  await fwpclient.publishAsync("firerouter.change_applied", "");
+  await fwpclient.publishAsync(Message.MSG_FR_CHANGE_APPLIED, "");
 }
 
 async function _publishIfaceChangeApplied() {
   // publish to redis db used by Firewalla
-  await fwpclient.publishAsync("firerouter.iface_change_applied", "");
+  await fwpclient.publishAsync(Message.MSG_FR_IFACE_CHANGE_APPLIED, "");
+}
+
+function isApplyInProgress() {
+  return applyInProgress;
+}
+
+function getLastAppliedTimestamp() {
+  return lastAppliedTimestamp;
 }
 
 async function reapply(config, dryRun = false) {
+  let t1, t2;
   return new Promise((resolve, reject) => {
     lock.acquire(LOCK_REAPPLY, async function(done) {
+      t1 = Date.now() / 1000;
+      applyInProgress = true;
       const errors = [];
       let newPluginCategoryMap = {};
       let changeApplied = false;
@@ -180,6 +194,7 @@ async function reapply(config, dryRun = false) {
               }
               instance.propagateConfigChanged(true);
               instance.unsubscribeAllChanges();
+              pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
             }
           }
           // merge with new pluginCategoryMap
@@ -218,6 +233,8 @@ async function reapply(config, dryRun = false) {
       pluginConfs = reversedPluginConfs.reverse();
       // do not apply config in dry run
       if (dryRun) {
+        applyInProgress = false;
+        lastAppliedTimestamp = Date.now() / 1000;
         done(null, errors);
         return;
       }
@@ -246,9 +263,15 @@ async function reapply(config, dryRun = false) {
         await _publishChangeApplied();
       if (ifaceChangeApplied)
         await _publishIfaceChangeApplied();
+      applyInProgress = false;
+      lastAppliedTimestamp = Date.now() / 1000;
       done(null, errors);
       return;
     }, function(err, ret) {
+      applyInProgress = false;
+      lastAppliedTimestamp = Date.now() / 1000;
+      t2 = Date.now() / 1000;
+      log.info(`reapply is complete ${err ? "with" : "without"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
       if (err)
         reject(err);
       else
@@ -261,7 +284,7 @@ function scheduleReapply() {
   if (!scheduledReapplyTask) {
     scheduledReapplyTask = setTimeout(() => {
       reapply(null, false);
-    }, 10000);
+    }, 4000);
   } else {
     scheduledReapplyTask.refresh();
   }
@@ -283,5 +306,7 @@ module.exports = {
   getPluginInstances: getPluginInstances,
   reapply: reapply,
   scheduleReapply: scheduleReapply,
-  scheduleRestartRsyslog: scheduleRestartRsyslog
+  scheduleRestartRsyslog: scheduleRestartRsyslog,
+  isApplyInProgress: isApplyInProgress,
+  getLastAppliedTimestamp: getLastAppliedTimestamp
 };

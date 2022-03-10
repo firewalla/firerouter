@@ -31,14 +31,14 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
 
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-      await exec(`sudo vconfig rem ${this.name}`).catch((err) => {});
+      await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
     }
   }
 
   async createInterface() {
     const intf = this.networkConfig.intf;
     const vid = this.networkConfig.vid;
-    await exec(`sudo vconfig add ${intf} ${vid}`).catch((err) => {
+    await exec(`sudo ip link add link ${intf} name ${this.name} type vlan id ${vid} protocol 802.1Q`).catch((err) => {
       this.log.error(`Failed to create vlan interface ${this.name}`, err.message);
     });
     const intfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);
@@ -47,6 +47,7 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     } else {
       this.fatal(`Lower interface plugin not found ${this.networkConfig.intf}`);
     }
+    return true;
   }
 }
 
