@@ -80,6 +80,9 @@ class InterfaceBasePlugin extends Plugin {
 
       // remove delegated prefix file in runtime folder
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
+
+      // remove cached router-advertisement ipv6 address file
+      await fs.unlinkAsync(`/dev/shm/dhcpcd.ip6.${this.name}`).catch((err) => {});
         
       // flush related routing tables
       await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
@@ -1047,7 +1050,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1063,7 +1066,8 @@ class InterfaceBasePlugin extends Plugin {
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDNSNameservers(),
-      this.getOrigDNSNameservers()
+      this.getOrigDNSNameservers(),
+      this.isInterfacePresent()
     ]);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
@@ -1075,7 +1079,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this._getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
