@@ -12,7 +12,7 @@ module.exports = {
   },
   resolve: {
     modules: [
-      path.resolve(__dirname, '../node_modules'),
+      path.resolve(__dirname, '../platform/gold/node_modules'),
       path.resolve(__dirname, '../webpack/node_modules')
     ]
   },
