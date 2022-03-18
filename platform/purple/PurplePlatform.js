@@ -227,7 +227,7 @@ class PurplePlatform extends Platform {
     if(hwAddr) {
       const activeMac = await this.getActiveMac(iface);
       if(activeMac === hwAddr) {
-        log.info("Skip setting hwaddr, as it's already been configured.");
+        log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
         return;
       }
       await this._setHardwareAddress(iface, hwAddr);
@@ -263,7 +263,7 @@ class PurplePlatform extends Platform {
     const eepromMac = await this.getMacByIface(iface);
     if (activeMac !== eepromMac) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
-        log.error("Skip set hardware address if too many errors on setting hardware address.");
+        log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
       }
 
