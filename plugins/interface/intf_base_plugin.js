@@ -651,7 +651,7 @@ class InterfaceBasePlugin extends Plugin {
       return;
     }
 
-    log.info(`Setting hwaddr of iface ${this.name} to`, this.networkConfig.hwAddr);
+    this.log.info(`Setting hwaddr of iface ${this.name} to`, this.networkConfig.hwAddr);
     await platform.setHardwareAddress(this.name, this.networkConfig.hwAddr);
   }
 
