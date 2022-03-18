@@ -160,7 +160,15 @@ class PurplePlatform extends Platform {
     }
   }
 
+  _isValidPhyiscalInterface(iface) {
+    return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
+  }
+
   async getMacByIface(iface) {
+    if(!this._isValidPhyiscalInterface(iface)) {
+      return null;
+    }
+
     if(macCache[iface]) {
       return macCache[iface];
     }
@@ -205,6 +213,11 @@ class PurplePlatform extends Platform {
 
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
+    if(!this._isValidPhyiscalInterface(iface)) {
+      log.info(`skip setting hwaddr, because ${iface} doesn't support setting hwaddr`);
+      return;
+    }
+
     if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
       log.error("Skip set hardware address if too many errors on setting hardware address.");
       return;
@@ -239,6 +252,11 @@ class PurplePlatform extends Platform {
   }
 
   async resetHardwareAddress(iface) {
+    if(!this._isValidPhyiscalInterface(iface)) {
+      log.info(`skip resetting hwaddr, because ${iface} doesn't support setting hwaddr`);
+      return;
+    }
+
     const activeMac = await this.getActiveMac(iface);
     const eepromMac = await this.getMacByIface(iface);
     if (activeMac !== eepromMac) {
