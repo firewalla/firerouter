@@ -211,6 +211,11 @@ class PurplePlatform extends Platform {
     }
 
     if(hwAddr) {
+      const activeMac = await this.getActiveMac(iface);
+      if(activeMac === hwAddr) {
+        log.info("Skip setting hwaddr, as it's already been configured.");
+        return;
+      }
       await this._setHardwareAddress(iface, hwAddr);
     }
   }
@@ -242,8 +247,10 @@ class PurplePlatform extends Platform {
         return;
       }
 
-      log.info(`Resetting ${iface} back`);
+      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, eepromMac);
       await this._setHardwareAddress(iface, eepromMac);
+    } else {
+      log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
   }
 }
