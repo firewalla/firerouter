@@ -160,12 +160,12 @@ class PurplePlatform extends Platform {
     }
   }
 
-  _isValidPhyiscalInterface(iface) {
+  _isPhysicalInterface(iface) {
     return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
   }
 
   async getMacByIface(iface) {
-    if(!this._isValidPhyiscalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface)) {
       return null;
     }
 
@@ -213,8 +213,9 @@ class PurplePlatform extends Platform {
 
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
-    if(!this._isValidPhyiscalInterface(iface)) {
-      log.info(`skip setting hwaddr, because ${iface} doesn't support setting hwaddr`);
+    if(!this._isPhysicalInterface(iface)) {
+      // for non-phy ifaces, use function from base class
+      await super.setHardwareAddress(iface, hwAddr);
       return;
     }
 
@@ -252,8 +253,9 @@ class PurplePlatform extends Platform {
   }
 
   async resetHardwareAddress(iface) {
-    if(!this._isValidPhyiscalInterface(iface)) {
-      log.info(`skip resetting hwaddr, because ${iface} doesn't support setting hwaddr`);
+    if(!this._isPhysicalInterface(iface)) {
+      // for non-phy ifaces, use function from base class
+      await super.resetHardwareAddress(iface, hwAddr);
       return;
     }
 
