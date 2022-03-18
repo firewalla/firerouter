@@ -261,6 +261,11 @@ class PurplePlatform extends Platform {
 
     const activeMac = await this.getActiveMac(iface);
     const eepromMac = await this.getMacByIface(iface);
+    if(!eepromMac) {
+      log.error("Unable to get eeprom mac for iface", iface);
+      return;
+    }
+
     if (activeMac !== eepromMac) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
