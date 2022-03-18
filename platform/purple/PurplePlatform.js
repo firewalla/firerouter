@@ -255,7 +255,7 @@ class PurplePlatform extends Platform {
   async resetHardwareAddress(iface) {
     if(!this._isPhysicalInterface(iface)) {
       // for non-phy ifaces, use function from base class
-      await super.resetHardwareAddress(iface, hwAddr);
+      await super.resetHardwareAddress(iface);
       return;
     }
 
