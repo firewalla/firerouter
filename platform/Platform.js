@@ -110,7 +110,9 @@ class Platform {
       log.error(`Failed to get permanent address of ${iface}`, err.message);
       return null;
     });
-    if (permAddr) {
+
+    // 00:00:00:00:00:00 is invalid as a device mac addr
+    if (permAddr && permAddr !== "00:00:00:00:00:00") {
       await exec(`sudo ip link set ${iface} address ${permAddr}`).catch((err) => {
         log.error(`Failed to revert hardware address of ${iface} to ${permAddr}`, err.message);
       });
