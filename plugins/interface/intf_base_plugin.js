@@ -159,9 +159,11 @@ class InterfaceBasePlugin extends Plugin {
       await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
     }
 
-    if (this.networkConfig.hwAddr) {
-      await this.resetHardwareAddress();
-    }
+    // This is a special logic that hwAddr will NOT be reset to factory during FLUSH
+    // because it may cause endless loop
+    // if (this.networkConfig.hwAddr) {
+    //   await this.resetHardwareAddress();
+    // }
   }
 
   async configure(networkConfig) {
@@ -640,9 +642,16 @@ class InterfaceBasePlugin extends Plugin {
 
   async setHardwareAddress() {
     if(!this.networkConfig.enabled) {
+      await this.resetHardwareAddress();
       return;
     }
 
+    if(!this.networkConfig.hwAddr) {
+      await this.resetHardwareAddress();
+      return;
+    }
+
+    this.log.info(`Setting hwaddr of iface ${this.name} to`, this.networkConfig.hwAddr);
     await platform.setHardwareAddress(this.name, this.networkConfig.hwAddr);
   }
 
