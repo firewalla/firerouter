@@ -413,12 +413,18 @@ class RoutingPlugin extends Plugin {
                         pendingTestTimestamp: viaIntf2Plugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
                         pendingTest: viaIntf2Plugin.isPendingTest()
                       };
-                      // do not change WAN connectivity status
+                      // inherit success/failure count based on interface name
                       if (lastWanStatus[viaIntf2]) {
-                        wanStatus[viaIntf2].active = lastWanStatus[viaIntf2].active;
-                        wanStatus[viaIntf2].ready = lastWanStatus[viaIntf2].ready;
                         wanStatus[viaIntf2].successCount = lastWanStatus[viaIntf2].successCount;
                         wanStatus[viaIntf2].failureCount = lastWanStatus[viaIntf2].failureCount;
+                      }
+                      // inherit active/ready based on seq
+                      for (const intf of Object.keys(lastWanStatus)) {
+                        if (lastWanStatus[intf].seq === 1) {
+                          wanStatus[viaIntf2].active = lastWanStatus[intf].active;
+                          wanStatus[viaIntf2].ready = lastWanStatus[intf].ready;
+                          break;
+                        }
                       }
                       if (wanStatus[viaIntf2].ready === false) {
                         // make it only one success count away from back to ready
@@ -443,10 +449,15 @@ class RoutingPlugin extends Plugin {
                         pendingTest: viaIntfPlugin.isPendingTest()
                       };
                       if (lastWanStatus[viaIntf]) {
-                        wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
-                        wanStatus[viaIntf].ready = lastWanStatus[viaIntf].ready;
                         wanStatus[viaIntf].successCount = lastWanStatus[viaIntf].successCount;
                         wanStatus[viaIntf].failureCount = lastWanStatus[viaIntf].failureCount;
+                      }
+                      for (const intf of Object.keys(lastWanStatus)) {
+                        if (lastWanStatus[intf].seq === 0) {
+                          wanStatus[viaIntf].active = lastWanStatus[intf].active;
+                          wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
+                          break;
+                        }
                       }
                       if (wanStatus[viaIntf].ready === false) {
                         // make it only one success count away from back to ready
@@ -474,10 +485,15 @@ class RoutingPlugin extends Plugin {
                             pendingTest: viaIntfPlugin.isPendingTest()
                           };
                           if (lastWanStatus[viaIntf]) {
-                            wanStatus[viaIntf].active = lastWanStatus[viaIntf].active;
-                            wanStatus[viaIntf].ready = lastWanStatus[viaIntf].ready;
                             wanStatus[viaIntf].successCount = lastWanStatus[viaIntf].successCount;
                             wanStatus[viaIntf].failureCount = lastWanStatus[viaIntf].failureCount;
+                          }
+                          for (const intf of Object.keys(lastWanStatus)) {
+                            if (lastWanStatus[intf].seq === seq) {
+                              wanStatus[viaIntf].active = lastWanStatus[intf].active;
+                              wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
+                              break;
+                            }
                           }
                           if (wanStatus[viaIntf].ready === false) {
                             // make it only one success count away from becoming ready
