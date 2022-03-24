@@ -12,6 +12,14 @@ function run_horse_light {
   done
 }
 
+function get_wpa_cli_path {
+  if [[ $(lsb_release -cs) == "focal" ]]; then
+    echo "${FW_PLATFORM_CUR_DIR}/bin/u20/wpa_cli"
+  else
+    echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
+  fi
+}
+
 function map_target_branch {
   case "$1" in
   "release_6_0")
