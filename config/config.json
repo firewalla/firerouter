@@ -175,6 +175,11 @@
         "reject_threshold_count": 3,
         "reject_threshold_time_seconds": 300
       }
+    },
+    {
+      "file_path": "./wlan_conf_update_sensor.js",
+      "config": {
+      }
     }
   ]
 }
