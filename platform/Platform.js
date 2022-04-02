@@ -37,6 +37,10 @@ class Platform {
     return '';
   }
 
+  getWifiClientInterface() {
+    return null;
+  }
+
   getWpaCliBinPath() {
     return null;
   }
