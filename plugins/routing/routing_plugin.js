@@ -695,6 +695,19 @@ class RoutingPlugin extends Plugin {
         pl.scheduleReapply();
         break;
       }
+      case event.EVENT_IF_UP: {
+        if (this.name !== "global")
+          return;
+        const payload = event.getEventPayload(e);
+        const intf = payload && payload.intf;
+        const intfPlugin = pl.getPluginInstance("interface", intf);
+        if (intfPlugin && intfPlugin.isStaticIP() && this._wanStatus.hasOwnProperty(intf)) {
+          this._reapplyNeeded = true;
+          this.propagateConfigChanged(true);
+          pl.scheduleReapply();
+        }
+        break;
+      }
       case event.EVENT_WAN_CONN_CHECK: {
         const payload = event.getEventPayload(e);
         if (!payload)
