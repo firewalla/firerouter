@@ -43,12 +43,6 @@
       "init_seq": 4
     },
     {
-      "file_path": "./interface/wireguard_intf_plugin.js",
-      "config_path": "interface.wireguard",
-      "category": "interface",
-      "init_seq": 4
-    },
-    {
       "file_path": "./interface/tun_intf_plugin.js",
       "config_path": "interface.tun",
       "category": "interface",
@@ -67,16 +61,22 @@
       "init_seq": 5
     },
     {
+      "file_path": "./interface/wireguard_intf_plugin.js",
+      "config_path": "interface.wireguard",
+      "category": "interface",
+      "init_seq": 6
+    },
+    {
       "file_path": "./nat/nat_plugin.js",
       "config_path": "nat",
       "category": "nat",
-      "init_seq": 6
+      "init_seq": 7
     },
     {
       "file_path": "./dns/dns_plugin.js",
       "config_path": "dns",
       "category": "dns",
-      "init_seq":7
+      "init_seq":8
     },
     {
       "file_path": "./dhcp/dhcp_plugin.js",
