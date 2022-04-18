@@ -387,7 +387,8 @@ class RoutingPlugin extends Plugin {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SHARED, async (done) => {
         const lastWanStatus = this._wanStatus || {};
-        this._wanStatus = {};
+        if (!this._wanStatus)
+          this._wanStatus = {};
         this._pendingChangeDescs = this._pendingChangeDescs || [];
         const wanStatus = {};
 
