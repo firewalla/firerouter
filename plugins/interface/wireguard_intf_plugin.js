@@ -50,17 +50,21 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
 
-      let bindIntf = this._bindIntf;
-      const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-      if(bindIntf) {
-        await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
-      } else {
-        await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
-      }
-      this._bindIntf = null;
+      await this._resetBindIntfRule().catch((err) => {});
     }
+  }
+
+  async _resetBindIntfRule() {
+    const bindIntf = this._bindIntf;
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    if(bindIntf) {
+      await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
+      await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
+    } else {
+      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
+      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
+    }
+    this._bindIntf = null;
   }
 
   _getInterfaceConfPath() {
@@ -145,6 +149,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
 
+    await this._resetBindIntfRule().catch((err) => {});
     // add specific routing for wireguard outgoing packets
     let bindIntf = this.networkConfig.bindIntf;
     if (!bindIntf) {
