@@ -423,6 +423,12 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  isDHCP() {
+    if (this.networkConfig.dhcp || this.networkConfig.dhcp6)
+      return true;
+    return false;
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
       const dhcpOptions = [];
@@ -1089,15 +1095,13 @@ class InterfaceBasePlugin extends Plugin {
     switch (eventType) {
       case event.EVENT_IF_UP: {
         if (this.isWAN()) {
-          // WAN interface plugged, need to reapply WAN interface config
-          this._reapplyNeeded = true;
           // although pending test flag will be set after apply() is scheduled later, still need to set it here to prevent inconsistency in intermediate state
           this.setPendingTest(true);
-          // reapply all plugins on the dependency chain if either IPv4 or IPv6 is static IP. 
-          // otherwise, only reapply the WAN interface plugin itself. Downstream plugins, e.g., routing, will be triggered by events, e.g., IP_CHANGE from dhclient
-          if (this.isStaticIP())
-            this.propagateConfigChanged(true);
-          pl.scheduleReapply();
+          // WAN interface plugged, need to reapply WAN interface config
+          if (this.isDHCP()) {
+            this._reapplyNeeded = true;
+            pl.scheduleReapply();
+          }
         }
         break;
       }
