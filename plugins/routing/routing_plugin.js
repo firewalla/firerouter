@@ -387,7 +387,8 @@ class RoutingPlugin extends Plugin {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SHARED, async (done) => {
         const lastWanStatus = this._wanStatus || {};
-        this._wanStatus = {};
+        if (!this._wanStatus)
+          this._wanStatus = {};
         this._pendingChangeDescs = this._pendingChangeDescs || [];
         const wanStatus = {};
 
@@ -693,6 +694,19 @@ class RoutingPlugin extends Plugin {
       case event.EVENT_IP_CHANGE: {
         this._reapplyNeeded = true;
         pl.scheduleReapply();
+        break;
+      }
+      case event.EVENT_IF_UP: {
+        if (this.name !== "global")
+          return;
+        const payload = event.getEventPayload(e);
+        const intf = payload && payload.intf;
+        const intfPlugin = pl.getPluginInstance("interface", intf);
+        if (intfPlugin && intfPlugin.isStaticIP() && this._wanStatus.hasOwnProperty(intf)) {
+          this._reapplyNeeded = true;
+          this.propagateConfigChanged(true);
+          pl.scheduleReapply();
+        }
         break;
       }
       case event.EVENT_WAN_CONN_CHECK: {
