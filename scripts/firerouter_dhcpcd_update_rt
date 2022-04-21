@@ -34,12 +34,12 @@ case $reason in
 
     if [ -n "$nd1_from" ]; then
       for default_rt_table in $default_rt_tables; do
-        sudo ip -6 r add default via $nd1_from dev $interface metric $metric mtu $mtu table $default_rt_table
+        sudo ip -6 r replace default via $nd1_from dev $interface mtu $mtu table $default_rt_table
       done
     fi
-    old_addrs=`cat /tmp/dhcpcd.ip6.$interface || echo ""`
+    old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
     if [ "$new_addrs" != "$old_addrs" ]; then
-      echo $new_addrs > /tmp/dhcpcd.ip6.$interface
+      echo $new_addrs > /dev/shm/dhcpcd.ip6.$interface
       ip_changed="1"
     fi
     ;;

@@ -566,10 +566,10 @@ class NetworkConfigManager {
     return errors;
   }
 
-  async saveConfig(networkConfig) {
+  async saveConfig(networkConfig, transaction = false) {
     const configString = JSON.stringify(networkConfig);
     if (configString) {
-      await rclient.setAsync("sysdb:networkConfig", configString);
+      await rclient.setAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig", configString);
       this._scheduleRedisBackgroundSave();
     }
   }
