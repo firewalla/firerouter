@@ -172,9 +172,7 @@ class HostapdPlugin extends Plugin {
     const scores = {}
 
     for (const network of availableWLANs) {
-      if (network.freq == 2484) network.channel = 14
-      else if (network.freq < 5000) network.channel = Math.round((network.freq - 2407) / 5)
-      else network.channel = Math.round((network.freq - 5000) / 5)
+      network.channel = util.freqToChannel(network.freq)
 
       const channelConfig = pluginConfig.channel[network.channel]
       if (!channelConfig) continue
