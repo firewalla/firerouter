@@ -18,6 +18,7 @@ const { execSync } = require('child_process');
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
+const sensorLoader = require('../../sensors/sensor_loader.js');
 const WIFI_DRV_NAME='8821cu';
 
 class GoldPlatform extends Platform {
@@ -80,6 +81,12 @@ class GoldPlatform extends Platform {
     log.info(`${clientIface} is ${clientMac}`);
     if (clientMac) {
 
+      const ifplug = sensorLoader.getSensor("IfPlugSensor");
+      if(ifplug) {
+        await ifplug.stopMonitoringInterface(apIface);
+        await ifplug.stopMonitoringInterface(clientIface);
+      }
+
       const apMac =  Number(parseInt(clientMac.replace(/:/g,''),16)+1).toString(16).replace(/(..)(?=.)/g,'$1:');
       log.info(`${apIface} is ${apMac}`);
 
@@ -103,6 +110,11 @@ class GoldPlatform extends Platform {
       await exec(`sudo ip link set ${apIface} address ${apMac}`).catch((err) => {
         log.error(`Failed to set MAC address of ${apIface}`, err.message);
       });
+
+      if(ifplug) {
+        await ifplug.startMonitoringInterface(clientIface);
+        await ifplug.startMonitoringInterface(apIface);
+      }
     }
   }
 
@@ -130,11 +142,10 @@ class GoldPlatform extends Platform {
           log.error(`failed to load ${WIFI_DRV_NAME}`,err.message);
         });
       }
-      await this.resetWLANMac();
     }
+    // ALWAYS reset WLAN Mac
+    await this.resetWLANMac();
   }
-
-
 }
 
 module.exports = GoldPlatform;

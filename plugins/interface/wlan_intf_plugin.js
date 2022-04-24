@@ -42,7 +42,7 @@ const WLAN_BSS_EXPIRATION = 630
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await platform.overrideWLANKernelModule()
+    if (platform.getName() === "purple") await platform.overrideWLANKernelModule();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
@@ -158,6 +158,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     } else {
       this.log.warn(`Interface ${this.name} already exists`);
     }
+
+    if (platform.getName() === "gold") await platform.overrideWLANKernelModule();
 
     // refresh interface state in case something is not relinquished in driver
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
