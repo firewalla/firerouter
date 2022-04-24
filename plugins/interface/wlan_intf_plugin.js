@@ -202,6 +202,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
     state.freq = await this.getFrequency()
+    state.channel = util.freqToChannel(state.freq)
     state.essid = essid;
     state.vendor = vendor;
     return state;
