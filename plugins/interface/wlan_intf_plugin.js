@@ -191,10 +191,18 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return essid;
   }
 
+  async getFrequency() {
+    const result = await exec(`iwconfig ${this.name} | grep Frequency | tr -s ' ' | cut -d' ' -f3`).catch(() => {})
+    if (!result) return null
+    return Number(result.stdout.substring(10)) * 1000
+  }
+
   async state() {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
+    state.freq = await this.getFrequency()
+    state.channel = util.freqToChannel(state.freq)
     state.essid = essid;
     state.vendor = vendor;
     return state;
