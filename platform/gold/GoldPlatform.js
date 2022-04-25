@@ -80,8 +80,6 @@ class GoldPlatform extends Platform {
       return;
     }
 
-    /* ONLY set hardware address for wlan1 in Gold */
-
     if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
       log.error("Skip set hardware address if too many errors on setting hardware address.");
       return;
