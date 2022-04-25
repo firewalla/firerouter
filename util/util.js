@@ -17,6 +17,7 @@
 
 const Promise = require('bluebird');
 const { exec } = require('child-process-promise');
+const log = require('../util/logger.js')('util');
 
 const _ = require('lodash')
 
