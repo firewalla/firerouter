@@ -108,10 +108,10 @@ class HostapdPlugin extends Plugin {
           break; // stop on first successful call
         else
           this.log.warn('No wlan found, trying again...')
-        await util.delay(2)
+        await util.delay(2000)
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(2)
+        await util.delay(2000)
       }
 
       if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
