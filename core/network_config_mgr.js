@@ -470,7 +470,9 @@ class NetworkConfigManager {
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
-    return results.filter(r => !selfWlanMacs.includes(r.mac))
+    const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+    log.info(`Found ${final.length} SSIDs`)
+    return final
   }
 
   async getAvailableChannelsHostapd() {

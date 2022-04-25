@@ -124,7 +124,8 @@ class HostapdPlugin extends Plugin {
 
         let bestChannel = undefined
         for (const ch of availableChannels) {
-          if (!bestChannel || scores[bestChannel] > scores[ch])
+          // available channels should be listed in ascending order, so empty 5G channel is always preferred
+          if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
             bestChannel = ch
         }
         this.log.info('Best channel is', bestChannel)
