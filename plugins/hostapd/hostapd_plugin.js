@@ -108,10 +108,10 @@ class HostapdPlugin extends Plugin {
           break; // stop on first successful call
         else
           this.log.warn('No wlan found, trying again...')
-        await util.delay(2)
+        await util.delay(2000)
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(2)
+        await util.delay(2000)
       }
 
       if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
@@ -124,7 +124,8 @@ class HostapdPlugin extends Plugin {
 
         let bestChannel = undefined
         for (const ch of availableChannels) {
-          if (!bestChannel || scores[bestChannel] > scores[ch])
+          // available channels should be listed in ascending order, so empty 5G channel is always preferred
+          if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
             bestChannel = ch
         }
         this.log.info('Best channel is', bestChannel)
