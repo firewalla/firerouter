@@ -51,20 +51,18 @@ class IfPresenceSensor extends Sensor {
     for (const intf of Object.keys(interfaces)) {
       const config = interfaces[intf].config;
       if (config.allowHotplug === true) {
-        const listener = function (curr, prev) {
+        const listener = (curr, prev) => {
           if (curr.isDirectory() !== prev.isDirectory() || curr.ctimeMs > prev.ctimeMs) {
-            if (pl.isApplyInProgress())
-              return;
             const intfPlugin = pl.getPluginInstance("interface", intf);
             if (!intfPlugin)
               return;
             if (curr.ctimeMs > prev.ctimeMs) {
               const e = event.buildEvent(event.EVENT_IF_PRESENT, {intf: intf});
-              intfPlugin.propagateEvent(e);
+              this._sendEvent(e, intfPlugin);
             } else {
               if (!curr.isDirectory() && prev.isDirectory()) {
                 const e = event.buildEvent(event.EVENT_IF_DISAPPEAR, {intf: intf});
-                intfPlugin.propagateEvent(e);
+                this._sendEvent(e, intfPlugin);
               }
             }
           }
@@ -72,6 +70,17 @@ class IfPresenceSensor extends Sensor {
         this._watchedFiles.push({file: r.getInterfaceSysFSDirectory(intf), listener: listener});
         fs.watchFile(r.getInterfaceSysFSDirectory(intf), {interval: 2000}, listener);
       }
+    }
+  }
+
+  _sendEvent(e, plugin) {
+    if (pl.isApplyInProgress()) {
+      // defer sending event if plugin_loader is applying another config
+      setTimeout(() => {
+        this._sendEvent(e, plugin);
+      }, 3000);
+    } else {
+      plugin.propagateEvent(e);
     }
   }
 }
