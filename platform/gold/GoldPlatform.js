@@ -95,6 +95,14 @@ class GoldPlatform extends Platform {
     }
   }
 
+  getWifiClientInterface() {
+    return IF_WLAN0;
+  }
+
+  getWifiAPInterface() {
+    return IF_WLAN1;
+  }
+
   async getMacByIface(iface) {
     if(macCache[iface]) {
       return macCache[iface];
