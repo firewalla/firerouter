@@ -110,7 +110,7 @@ class NatPlugin extends Plugin {
         this._ip6s = ip6s;
       }
     } else {
-      this.fatal("Cannot find interface plugin " + iif);
+      this.log.error("Cannot find interface plugin " + iif);
     }
 
     if (srcSubnets) {
