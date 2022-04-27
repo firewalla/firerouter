@@ -18,13 +18,13 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
-const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 const routing = require('../../util/routing.js');
 const ip = require('ip');
+const _ = require('lodash');
 Promise.promisifyAll(fs);
 
 class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
@@ -100,24 +100,34 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  async getIPv4Addresses() {
+    const ip4s = []
+    const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, { encoding: "utf8" })
+      .then(content => content.trim())
+      .catch((err) => {
+        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+        return null;
+      });
+    if (localIp) {
+      const addr = localIp.split('/')[0];
+      const mask = localIp.split('/')[1] || "255.255.255.255";
+      const subnet = ip.subnet(addr, mask);
+      const ip4 = `${addr}/${subnet.subnetMaskLength}`;
+      ip4s.push(ip4);
+    }
+    return ip4s;
+  }
+
   async state() {
     // stub implementation
     const state = await super.state();
     const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
     if (up) {
       if (this.networkConfig.type === "server") {
-        const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, {encoding: "utf8"})
-          .then(content => content.trim())
-          .catch((err) => {
-            this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
-            return null;
-          });
-        if (localIp) {
-          const addr = localIp.split('/')[0];
-          const mask = localIp.split('/')[1] || "255.255.255.255";
-          const subnet = ip.subnet(addr, mask);
-          state.ip4 = `${addr}/${subnet.subnetMaskLength}`;
-          state.ip4s = [state.ip4];
+        const ip4s = await this.getIPv4Addresses();
+        if (!_.isEmpty(ip4s)) {
+          state.ip4s = ip4s;
+          state.ip4 = ip4s[0];
         }
       }
     }
