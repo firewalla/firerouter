@@ -473,8 +473,8 @@ class NetworkConfigManager {
     return results.filter(r => !selfWlanMacs.includes(r.mac))
   }
 
-  async getActiveConfig() {
-    const configString = await rclient.getAsync("sysdb:networkConfig");
+  async getActiveConfig(transaction = false) {
+    const configString = await rclient.getAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig");
     if(configString) {
       try {
         const config = JSON.parse(configString);
@@ -542,10 +542,10 @@ class NetworkConfigManager {
     return errors;
   }
 
-  async saveConfig(networkConfig) {
+  async saveConfig(networkConfig, transaction = false) {
     const configString = JSON.stringify(networkConfig);
     if (configString) {
-      await rclient.setAsync("sysdb:networkConfig", configString);
+      await rclient.setAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig", configString);
       this._scheduleRedisBackgroundSave();
     }
   }

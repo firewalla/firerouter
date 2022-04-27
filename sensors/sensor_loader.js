@@ -20,6 +20,8 @@ const config = require('../util/config.js').getConfig();
 
 const _ = require('lodash');
 
+const sensors = {};
+
 async function initSensors() {
   if (_.isEmpty(config.sensors)) {
     return;
@@ -32,6 +34,7 @@ async function initSensors() {
       const sensorClass = require(filePath);
       await sensorClass.prepare();
       const sensorInstance = new sensorClass(sensorConfig);
+      sensors[sensorInstance.constructor.name] = sensorInstance;
       await sensorInstance.run();
     } catch (err) {
       log.error("Failed to initialize sensor ", sensor, err);
@@ -39,6 +42,11 @@ async function initSensors() {
   }
 }
 
+function getSensor(name) {
+  return sensors[name];
+}
+
 module.exports = {
-  initSensors: initSensors
+  initSensors: initSensors,
+  getSensor: getSensor
 }

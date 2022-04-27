@@ -1,0 +1,14 @@
+/var/log/dhclient.log
+{
+  rotate 3
+  daily
+  maxsize 3M
+  missingok
+  notifempty
+  compress
+  delaycompress
+  nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}

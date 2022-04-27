@@ -41,6 +41,7 @@ const pclient = require('../../util/redis_manager.js').getPublishClient();
 Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -62,9 +63,9 @@ class InterfaceBasePlugin extends Plugin {
     if (lease6Filename)
       await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
     // regenerate ipv6 link local address based on EUI64
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.addr_gen_mode=0`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=1`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.name.replace(/\./gi, "/")}.disable_ipv6=0`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
   }
 
   async flush() {
@@ -79,6 +80,9 @@ class InterfaceBasePlugin extends Plugin {
 
       // remove delegated prefix file in runtime folder
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
+
+      // remove cached router-advertisement ipv6 address file
+      await exec(`sudo rm /dev/shm/dhcpcd.ip6.${this.name}`).catch((err) => {});
         
       // flush related routing tables
       await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
@@ -94,7 +98,7 @@ class InterfaceBasePlugin extends Plugin {
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
         await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
         // restore reverse path filtering settings
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=1`).catch((err) => {});
+        await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {});
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
@@ -156,15 +160,7 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     if (this.networkConfig.hwAddr) {
-      const permAddr = await exec(`sudo ethtool -P ${this.name} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
-        this.log.error(`Failed to get permanent address of ${this.name}`, err.message);
-        return null;
-      });
-      if (permAddr) {
-        await exec(`sudo ip link set ${this.name} address ${permAddr}`).catch((err) => {
-          this.log.error(`Failed to revert hardware address of ${this.name} to ${permAddr}`, err.message);
-        });
-      }
+      await this.resetHardwareAddress();
     }
   }
 
@@ -291,7 +287,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
@@ -299,7 +295,7 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
-      await exec(`sudo sysctl -w net.ipv4.conf.${this.name.replace(/\./gi, "/")}.rp_filter=2`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
@@ -317,7 +313,27 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhcpcd6/${this.name}.conf`;
   }
 
+  isIPv6Enabled() {
+    return this.networkConfig.dhcp6 || // DHCP
+      this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6)) || // Static
+      this.networkConfig.ipv6DelegateFrom; // Delegate
+  }
+
+  getEscapedNameForSysctl() {
+    return this.name.replace(/\./gi, "/");
+  }
+
   async applyIpv6Settings() {
+    const disabled = this.isIPv6Enabled() ? 0 : 1;
+    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=${disabled}`)
+      .catch((err) => {
+        this.log.error("Failed to set accept_ra, err", err)
+      });
+
+    if(disabled) {
+      return;
+    }
+
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
@@ -346,7 +362,7 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
-            this.fatal(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
+            this.log.error(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
       }
@@ -407,6 +423,12 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  isDHCP() {
+    if (this.networkConfig.dhcp || this.networkConfig.dhcp6)
+      return true;
+    return false;
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
       const dhcpOptions = [];
@@ -431,7 +453,7 @@ class InterfaceBasePlugin extends Plugin {
         ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
-            this.fatal(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
+            this.log.error(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
       }
@@ -623,10 +645,15 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async setHardwareAddress() {
-    if (this.networkConfig.hwAddr)
-      await exec(`sudo ip link set ${this.name} address ${this.networkConfig.hwAddr}`).catch((err) => {
-        this.log.error(`Failed to set hardware address of ${this.name} to ${this.networkConfig.hwAddr}`, err.message);
-      });
+    if(!this.networkConfig.enabled) {
+      return;
+    }
+
+    await platform.setHardwareAddress(this.name, this.networkConfig.hwAddr);
+  }
+
+  async resetHardwareAddress() {
+    await platform.resetHardwareAddress(this.name);
   }
 
   getDefaultMTU() {
@@ -973,7 +1000,7 @@ class InterfaceBasePlugin extends Plugin {
   // use throw error for Promise.any
   async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
     const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
-    const result = await exec(cmd);
+    const result = await exec(cmd).catch((err) => null);
 
     let dnsResult = null;
 
@@ -1029,7 +1056,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1045,7 +1072,8 @@ class InterfaceBasePlugin extends Plugin {
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDNSNameservers(),
-      this.getOrigDNSNameservers()
+      this.getOrigDNSNameservers(),
+      this.isInterfacePresent()
     ]);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
@@ -1057,7 +1085,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this._getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
@@ -1067,13 +1095,13 @@ class InterfaceBasePlugin extends Plugin {
     switch (eventType) {
       case event.EVENT_IF_UP: {
         if (this.isWAN()) {
+          // although pending test flag will be set after apply() is scheduled later, still need to set it here to prevent inconsistency in intermediate state
+          this.setPendingTest(true);
           // WAN interface plugged, need to reapply WAN interface config
-          this._reapplyNeeded = true;
-          // reapply all plugins on the dependency chain if either IPv4 or IPv6 is static IP. 
-          // otherwise, only reapply the WAN interface plugin itself. Downstream plugins, e.g., routing, will be triggered by events, e.g., IP_CHANGE from dhclient
-          if (this.isStaticIP())
-            this.propagateConfigChanged(true);
-          pl.scheduleReapply();
+          if (this.isDHCP()) {
+            this._reapplyNeeded = true;
+            pl.scheduleReapply();
+          }
         }
         break;
       }
