@@ -122,6 +122,20 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  async carrierState() {
+    // carrier of pppoe interface in /sys/class/net is not up-to-date, need to get carrier of base interface
+    const state = await super.carrierState();
+    let baseIntfState = state;
+    if (state === "1") {
+      if (this.networkConfig.intf) {
+        const baseIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);
+        if (baseIntfPlugin)
+          baseIntfState = await baseIntfPlugin.carrierState();
+      }
+    }
+    return baseIntfState;
+  }
+
   onEvent(e) {
     super.onEvent(e);
     const eventType = event.getEventType(e);

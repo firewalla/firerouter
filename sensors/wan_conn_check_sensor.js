@@ -78,6 +78,7 @@ class WanConnCheckSensor extends Sensor {
     const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
+      const wasPendingTest = wanIntfPlugin.isPendingTest();
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain, null, true);
       this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
         this.log.error("Got error when checking http, err:", err.message);
@@ -92,6 +93,12 @@ class WanConnCheckSensor extends Sensor {
       const lastAppliedTimestamp = pl.getLastAppliedTimestamp();
       if (lastAppliedTimestamp > t1) {
         this.log.info("A network config was just applied during the current WAN connectivity test, discard WAN connectivity test result");
+        return;
+      }
+      const pendingTest = wanIntfPlugin.isPendingTest();
+      if (!wasPendingTest && pendingTest) {
+        // this usually means WAN config/state is changed during the connectivity test
+        this.log.info(`"pendingTest" flag of ${wanIntfPlugin.name} is changed to true during the current WAN connectivity test, discard WAN connectivity test result`);
         return;
       }
       const active = result.active;

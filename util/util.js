@@ -17,6 +17,7 @@
 
 const Promise = require('bluebird');
 const { exec } = require('child-process-promise');
+const log = require('../util/logger.js')('util');
 
 const _ = require('lodash')
 
@@ -213,6 +214,27 @@ function parseHexString(str) {
   return Buffer.from(chArray.join(''), 'latin1').toString()
 }
 
+function freqToChannel(freq) {
+  if (freq >= 2412 && freq <= 2472) return Math.round((freq - 2407) / 5)
+  else if (freq == 2484) return 14
+  else if (freq > 5000 && freq < 6000) return Math.round((freq - 5000) / 5)
+  else {
+    log.error('Unknown frequency', JSON.stringify(freq))
+    return null
+  }
+}
+
+function channelToFreq(channel) {
+  if (channel >= 1 && channel < 14) return channel * 5 + 2407
+  else if (channel == 14) return 2484
+  // assume these are 5G channels, channels under 30 are ignored
+  else if (channel >= 30 && channel < 200) return channel * 5 + 5000
+  else {
+    log.error('Unknown channel', JSON.stringify(channel))
+    return null
+  }
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -224,4 +246,6 @@ module.exports = {
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
   parseEscapedString,
   parseHexString,
+  freqToChannel,
+  channelToFreq,
 };
