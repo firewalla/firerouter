@@ -235,6 +235,25 @@ function channelToFreq(channel) {
   }
 }
 
+function parseNumList(str) {
+  const result = []
+  for (const item of str.split(',')) {
+    const bounds = item.split('-')
+    if (bounds.length == 1)
+      result.push(Number(bounds[0]))
+    else {
+      const lower = Number(bounds[0])
+      const upper = Number(bounds[1])
+      if (upper < lower) continue
+
+      for (let num = lower; num <= upper; num++)
+        result.push(num)
+    }
+  }
+
+  return result.filter(n => !isNaN(n))
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -248,4 +267,5 @@ module.exports = {
   parseHexString,
   freqToChannel,
   channelToFreq,
+  parseNumList,
 };
