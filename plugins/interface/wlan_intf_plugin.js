@@ -214,9 +214,20 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     if (eventType === event.EVENT_WPA_CONNECTED) {
       // need to re-check connectivity status after wifi is switched
       this.setPendingTest(true);
-      this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
-        this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
-      });
+      if (this.isDHCP()) {
+        this.flushIP().then(async () => {
+          await this.applyIpSettings();
+          await this.applyDnsSettings();
+          await this.changeRoutingTables();
+          if (this.isWAN()) {
+            this._wanStatus = {};
+            await this.updateRouteForDNS();
+            await this.markOutputConnection();
+          }
+        }).catch((err) => {
+          this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
+        });
+      }
     }
   }
 }
