@@ -483,10 +483,9 @@ class NetworkConfigManager {
       return {}
     }
     const hostapdPlugin = Object.values(plugins)[0]
-    log.info(hostapdPlugin)
 
     const channels = await hostapdPlugin.getAvailableChannels()
-    const scores = hostapdPlugin.calculateChannelScores(await this.getWlansViaWpaSupplicant())
+    const scores = hostapdPlugin.calculateChannelScores(await this.getWlansViaWpaSupplicant(), false)
 
     const result = {}
     for (const channel of channels) {
