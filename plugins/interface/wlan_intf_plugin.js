@@ -186,7 +186,13 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // iwgetid will still return the essid during authentication process, when operstate is dormant
     // need to make sure the authentication is passed and operstate is up
     if (carrier === "1" && operstate === "up") {
-      essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
+      if (iwgetidAvailable) {
+        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      } else {
+        if (this.name === platform.getWifiClientInterface())
+          essid = await exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} status | grep "^ssid=" | awk -F= '{print $2}'`).then(result => result.stdout.trim()).catch((err) => null);
+      }
     }
     return essid;
   }
