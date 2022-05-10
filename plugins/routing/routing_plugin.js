@@ -169,8 +169,9 @@ class RoutingPlugin extends Plugin {
     return new Promise((resolve, reject) => {
       // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
       lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async (done) => {
-        // flush global default routing table, no need to touch global local and global static routing table here
+        // flush global default routing table, no need to touch global static routing table here
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
+        await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
         // remove all default route in main table
         let routeRemoved = false;
         do {
@@ -213,8 +214,8 @@ class RoutingPlugin extends Plugin {
                   const addr = new Address4(ip4);
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric).catch((err) => { });
                 }
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
@@ -224,8 +225,8 @@ class RoutingPlugin extends Plugin {
                   const addr = new Address6(ip6Addr);
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, null, 6).catch((err) => { });
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 6).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 }
               } else {
                 this.log.info("No ip6 found on global default interface " + viaIntf);
@@ -279,13 +280,14 @@ class RoutingPlugin extends Plugin {
               const weight = this._wanStatus[viaIntf].weight || 50;
               const state = await viaIntfPlugin.state();
               this._wanStatus[viaIntf].active = ready;
+              const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100);
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
                   const addr = new Address4(ip4);
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL).catch((err) => { });
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric).catch((err) => { });
                 }
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
@@ -295,8 +297,8 @@ class RoutingPlugin extends Plugin {
                   const addr = new Address6(ip6Addr);
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, null, 6).catch((err) => { });
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, null, 6).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => { });
+                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 }
               } else {
                 this.log.info("No ip6 found on global default interface " + viaIntf);
@@ -305,11 +307,9 @@ class RoutingPlugin extends Plugin {
               const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
               if (gw) {
                 // add a default route with higher metric if it is inactive. A default route is needed for WAN connectivity check, e.g., ping -I eth0 1.1.1.1
-                let metric = this._wanStatus[viaIntf].seq + 1;
                 if (ready) {
                   multiPathDesc.push({ nextHop: gw, dev: viaIntf, weight: weight });
                 } else {
-                  metric = this._wanStatus[viaIntf].seq + 1 + 100;
                   await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
                   await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 }

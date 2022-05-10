@@ -523,10 +523,14 @@ class NetworkConfigManager {
     if (!config.interface)
       return ["interface is not defined"];
     const ifaceIp4PrefixMap = {};
+    const wanIntfs = [];
     for (const ifaceType in config.interface) {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
         const iface = ifaces[name];
+        const wanType = iface.meta && iface.meta.type;
+        if (wanType === "wan")
+          wanIntfs.push(name);
         if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
           let ipv4s = [];
           if (iface.ipv4 && _.isString(iface.ipv4))
@@ -542,7 +546,7 @@ class NetworkConfigManager {
             for (const prefix in ifaceIp4PrefixMap) {
               const i = ifaceIp4PrefixMap[prefix];
               const addr2 = new Address4(prefix);
-              if ((addr.isInSubnet(addr2) || addr2.isInSubnet(addr)) && name !== i)
+              if ((addr.isInSubnet(addr2) || addr2.isInSubnet(addr)) && name !== i && !(wanType === "wan" && wanIntfs.includes(i)))
                 return [`ipv4 of ${name} conflicts with ipv4 of ${i}`];
             }
             ifaceIp4PrefixMap[ipv4] = name;
