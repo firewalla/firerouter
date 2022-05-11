@@ -192,6 +192,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       } else {
         if (this.name === platform.getWifiClientInterface())
           essid = await exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} status | grep "^ssid=" | awk -F= '{print $2}'`).then(result => result.stdout.trim()).catch((err) => null);
+          if (essid)
+            essid = util.parseEscapedString(essid);
       }
     }
     return essid;
