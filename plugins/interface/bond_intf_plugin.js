@@ -18,6 +18,7 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const _ = require('lodash');
 
 class BondInterfacePlugin extends InterfaceBasePlugin {
 
@@ -29,6 +30,10 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
+      if (!_.isEmpty(this.networkConfig.intf)) {
+        // in rare cases, detachment will be deffered after bond is deleted, so explicitly detach slave interfaces here
+        await exec(`sudo ifenslave -d ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {});
+      }
       await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
       // some newer linux kernel will bring down slave interfaces of a bond if the bond is deleted
       for (const intf of this.networkConfig.intf) {

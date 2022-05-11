@@ -44,31 +44,43 @@ class IfPresenceSensor extends Sensor {
   async _updateInterfaceWatchers() {
     if (this._watchedFiles) {
       for (const f of this._watchedFiles)
-        fs.unwatchFile(f);
+        fs.unwatchFile(f.file, f.listener);
     }
     this._watchedFiles = [];
     const interfaces = await ncm.getInterfaces();
     for (const intf of Object.keys(interfaces)) {
       const config = interfaces[intf].config;
       if (config.allowHotplug === true) {
-        this._watchedFiles.push(r.getInterfaceSysFSDirectory(intf));
-        fs.watchFile(r.getInterfaceSysFSDirectory(intf), {interval: 2000}, (curr, prev) => {
-          if (curr.isDirectory() !== prev.isDirectory()) {
-            if (pl.isApplyInProgress())
-              return;
+        const listener = (curr, prev) => {
+          if (curr.isDirectory() !== prev.isDirectory() || curr.ctimeMs > prev.ctimeMs) {
             const intfPlugin = pl.getPluginInstance("interface", intf);
             if (!intfPlugin)
               return;
-            if (curr.isDirectory()) {
+            if (curr.ctimeMs > prev.ctimeMs) {
               const e = event.buildEvent(event.EVENT_IF_PRESENT, {intf: intf});
-              intfPlugin.propagateEvent(e);
+              this._sendEvent(e, intfPlugin);
             } else {
-              const e = event.buildEvent(event.EVENT_IF_DISAPPEAR, {intf: intf});
-              intfPlugin.propagateEvent(e);
+              if (!curr.isDirectory() && prev.isDirectory()) {
+                const e = event.buildEvent(event.EVENT_IF_DISAPPEAR, {intf: intf});
+                this._sendEvent(e, intfPlugin);
+              }
             }
           }
-        });
+        }
+        this._watchedFiles.push({file: r.getInterfaceSysFSDirectory(intf), listener: listener});
+        fs.watchFile(r.getInterfaceSysFSDirectory(intf), {interval: 2000}, listener);
       }
+    }
+  }
+
+  _sendEvent(e, plugin) {
+    if (pl.isApplyInProgress()) {
+      // defer sending event if plugin_loader is applying another config
+      setTimeout(() => {
+        this._sendEvent(e, plugin);
+      }, 3000);
+    } else {
+      plugin.propagateEvent(e);
     }
   }
 }

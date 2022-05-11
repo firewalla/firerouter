@@ -186,15 +186,31 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // iwgetid will still return the essid during authentication process, when operstate is dormant
     // need to make sure the authentication is passed and operstate is up
     if (carrier === "1" && operstate === "up") {
-      essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
+      if (iwgetidAvailable) {
+        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      } else {
+        if (this.name === platform.getWifiClientInterface())
+          essid = await exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} status | grep "^ssid=" | awk -F= '{print $2}'`).then(result => result.stdout.trim()).catch((err) => null);
+          if (essid)
+            essid = util.parseEscapedString(essid);
+      }
     }
     return essid;
+  }
+
+  async getFrequency() {
+    const result = await exec(`iwconfig ${this.name} | grep Frequency | tr -s ' ' | cut -d' ' -f3`).catch(() => {})
+    if (!result) return null
+    return Number(result.stdout.substring(10)) * 1000
   }
 
   async state() {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
+    state.freq = await this.getFrequency()
+    state.channel = util.freqToChannel(state.freq)
     state.essid = essid;
     state.vendor = vendor;
     return state;
@@ -206,9 +222,20 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     if (eventType === event.EVENT_WPA_CONNECTED) {
       // need to re-check connectivity status after wifi is switched
       this.setPendingTest(true);
-      this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
-        this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
-      });
+      if (this.isDHCP()) {
+        this.flushIP().then(async () => {
+          await this.applyIpSettings();
+          await this.applyDnsSettings();
+          await this.changeRoutingTables();
+          if (this.isWAN()) {
+            this._wanStatus = {};
+            await this.updateRouteForDNS();
+            await this.markOutputConnection();
+          }
+        }).catch((err) => {
+          this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
+        });
+      }
     }
   }
 }

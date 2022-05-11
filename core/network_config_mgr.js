@@ -470,7 +470,32 @@ class NetworkConfigManager {
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
-    return results.filter(r => !selfWlanMacs.includes(r.mac))
+    const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+    log.info(`Found ${final.length} SSIDs`)
+    return final
+  }
+
+  async getAvailableChannelsHostapd() {
+    const pluginLoader = require('../plugins/plugin_loader.js')
+    const plugins = pluginLoader.getPluginInstances('hostapd')
+    if (!plugins || !Object.values(plugins).length) {
+      log.warn('No hostapd plugin found, probably still initializing')
+      return {}
+    }
+    const hostapdPlugin = Object.values(plugins)[0]
+
+    const channels = await hostapdPlugin.getAvailableChannels()
+    const scores = hostapdPlugin.calculateChannelScores(await this.getWlansViaWpaSupplicant(), false)
+
+    const result = {}
+    for (const channel of channels) {
+      if (!scores[channel])
+        result[channel] = { score: 0 }
+      else
+        result[channel] = { score: _.round(scores[channel], 10) }
+    }
+
+    return result
   }
 
   async getActiveConfig(transaction = false) {
