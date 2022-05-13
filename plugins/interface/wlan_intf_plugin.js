@@ -191,10 +191,13 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       if (iwgetidAvailable) {
         essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       } else {
-        if (this.name === platform.getWifiClientInterface())
-          essid = await exec(`sudo ${platform.getWpaCliBinPath()} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} status | grep "^ssid=" | awk -F= '{print $2}'`).then(result => result.stdout.trim()).catch((err) => null);
-          if (essid)
+        if (this.name === platform.getWifiClientInterface()) {
+          const wpaCliBinPath = await platform.getWpaCliBinPath();
+          essid = await exec(`sudo ${wpaCliBinPath} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} status | grep "^ssid=" | awk -F= '{print $2}'`).then(result => result.stdout.trim()).catch((err) => null);
+          if (essid) {
             essid = util.parseEscapedString(essid);
+          }
+        }
       }
     }
     return essid;

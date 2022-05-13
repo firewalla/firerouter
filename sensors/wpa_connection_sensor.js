@@ -88,7 +88,7 @@ class WPAConnectionSensor extends Sensor {
         }
         this.log.debug('message received:', channel, message)
         const [iface, wpaId] = message.split(',', 2);
-        const wpaCliPath = platform.getWpaCliBinPath();
+        const wpaCliPath = await platform.getWpaCliBinPath();
         const intfPlugin = pl.getPluginInstance("interface", iface);
         if (intfPlugin) {
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;

@@ -41,7 +41,7 @@ class Platform {
     return null;
   }
 
-  getWpaCliBinPath() {
+  async getWpaCliBinPath() {
     return null;
   }
 

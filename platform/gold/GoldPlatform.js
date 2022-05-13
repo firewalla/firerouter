@@ -38,8 +38,8 @@ class GoldPlatform extends Platform {
     });
   }
 
-  isUbuntu20() {
-    return this.getLSBCodeName() === 'focal';
+  async isUbuntu20() {
+    return await this.getLSBCodeName() === 'focal';
   }
 
   getDefaultNetworkJsonFile() {
@@ -50,8 +50,8 @@ class GoldPlatform extends Platform {
     return WIFI_DRV_NAME;
   }
 
-  getWpaCliBinPath() {
-    if (this.isUbuntu20())
+  async getWpaCliBinPath() {
+    if (await this.isUbuntu20())
       return `${__dirname}/bin/u20/wpa_cli`
     else
       return `${__dirname}/bin/wpa_cli`;
