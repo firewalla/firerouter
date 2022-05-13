@@ -191,13 +191,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       if (iwgetidAvailable) {
         essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       } else {
-        if (this.name === platform.getWifiClientInterface()) {
-          const wpaCliBinPath = await platform.getWpaCliBinPath();
-          essid = await exec(`sudo ${wpaCliBinPath} -p ${r.getRuntimeFolder()}/wpa_supplicant/${this.name} -i ${this.name} status | grep "^ssid=" | awk -F= '{print $2}'`).then(result => result.stdout.trim()).catch((err) => null);
-          if (essid) {
-            essid = util.parseEscapedString(essid);
-          }
-        }
+        essid = await exec(`iw dev ${this.name} info | grep "ssid " | awk -F' ' '{print $2}'`)
+          .then(result => result.stdout.trim()).catch(() => null);
+        if (essid && essid.length)
+          essid = util.parseEscapedString(essid);
       }
     }
     return essid;
@@ -213,9 +210,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
-    state.freq = await this.getFrequency()
-    state.channel = util.freqToChannel(state.freq)
     state.essid = essid;
+    state.carrier = (this.isWAN()
+      ? await this.readyToConnect().catch(() => false)
+      : state.essid && state.carrier
+    ) ? 1 : 0
+    if (state.carrier && state.essid) {
+      state.freq = await this.getFrequency()
+      state.channel = util.freqToChannel(state.freq)
+    }
     state.vendor = vendor;
     return state;
   }
