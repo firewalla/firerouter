@@ -14,7 +14,6 @@
  */
 
 const Platform = require('../Platform.js');
-const { execSync } = require('child_process');
 const exec = require('child-process-promise').exec;
 const fs = require('fs'); 
 const log = require('../../util/logger.js')(__filename);
@@ -33,8 +32,10 @@ class GoldPlatform extends Platform {
     return "gold";
   }
 
-  getLSBCodeName() {
-    return execSync("lsb_release -cs", {encoding: 'utf8'}).trim();
+  async getLSBCodeName() {
+    return await exec("lsb_release -cs", {encoding: 'utf8'}).then(result=> result.stdout.trim()).catch((err)=>{
+      log.error("failed to get codename from lsb_release:",err.message);
+    });
   }
 
   isUbuntu20() {
@@ -215,6 +216,26 @@ class GoldPlatform extends Platform {
         });
       }
     }
+  }
+
+  async installWLANTools() {
+    log.info("Installing WLAN tools for Gold");
+    const codeName = await this.getLSBCodeName();
+    let codeDir = '';
+    switch (codeName) {
+      case 'bionic' : codeDir = '';     break;
+      case 'focal'  : codeDir = 'u20/'; break;
+      default: log.error(`Un-supported Ubuntu release:`, codeName); return;
+    }
+    const iwtPathPrefix = this.getBinaryPath()+'/'+codeDir;
+    log.info("  Installing iwconfig ...");
+    await exec(`sudo install -v -m 755 ${iwtPathPrefix}/iwconfig /sbin/`).catch((err)=>{
+      log.error(`failed to copy iwconfig:`,err.message)
+    });
+    log.info("  Installing libiw.so.30 ...");
+    await exec(`sudo install -v -m 644 ${iwtPathPrefix}/libiw.so.30 /lib/x86_64-linux-gnu/`).catch((err)=>{
+      log.error(`failed to copy libiw.so.30:`,err.message)
+    });
   }
 }
 
