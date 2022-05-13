@@ -104,6 +104,9 @@ class Platform {
   async overrideWLANKernelModule() {
   }
 
+  async installWLANTools() {
+  }
+
   getModelName() {
     return "";
   }

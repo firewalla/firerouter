@@ -42,7 +42,8 @@ const WLAN_BSS_EXPIRATION = 630
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await platform.overrideWLANKernelModule()
+    await platform.overrideWLANKernelModule();
+    await platform.installWLANTools();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
