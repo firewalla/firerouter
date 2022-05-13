@@ -111,7 +111,7 @@ class NetworkConfigManager {
             done(null, [`wpa_supplicant is not configured on ${intf}`]);
             return;
           }
-          const wpaCliPath = platform.getWpaCliBinPath();
+          const wpaCliPath = await platform.getWpaCliBinPath();
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
           const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
             // TODO: taking care of SSID with '\t'?
@@ -413,7 +413,7 @@ class NetworkConfigManager {
       return []
     }
 
-    const wpaCliPath = platform.getWpaCliBinPath();
+    const wpaCliPath = await platform.getWpaCliBinPath();
     const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
 
     // this function is usually called multiple times by the same caller
