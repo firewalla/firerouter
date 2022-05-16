@@ -52,7 +52,7 @@ class PurplePlatform extends Platform {
     return this.vendor;
   }
 
-  getWpaCliBinPath() {
+  async getWpaCliBinPath() {
     return `${__dirname}/bin/wpa_cli`;
   }
 
