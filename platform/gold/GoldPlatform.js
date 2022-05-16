@@ -88,7 +88,7 @@ class GoldPlatform extends Platform {
 
     if(hwAddr) {
       const activeMac = await this.getActiveMac(iface);
-      if(activeMac === hwAddr) {
+      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
         log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
         return;
       }
@@ -148,7 +148,7 @@ class GoldPlatform extends Platform {
     const activeMac = await this.getActiveMac(iface);
     const expectMac = await this.getMacByIface(iface);
 
-    if ( activeMac !== expectMac ) {
+    if ( (activeMac && activeMac.toUpperCase()) !== (expectMac && expectMac.toUpperCase()) ) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
