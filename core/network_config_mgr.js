@@ -22,7 +22,6 @@ const ns = require('./network_setup.js');
 const { exec } = require('child-process-promise');
 const { spawn } = require('child_process')
 const readline = require('readline');
-const { once } = require('events')
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
 const pl = require('../platform/PlatformLoader.js');
