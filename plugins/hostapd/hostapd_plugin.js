@@ -99,7 +99,7 @@ class HostapdPlugin extends Plugin {
     parameters.ht_capab = new Set(parameters.ht_capab)
 
     if (!parameters.channel) {
-      let availableChannels = await this.getAvailableChannels()
+      let availableChannels = await HostapdPlugin.getAvailableChannels()
 
       if (parameters.chanlist) {
         // chanlist doesn't work in hostapd config, as it doesn't support acs
@@ -134,7 +134,7 @@ class HostapdPlugin extends Plugin {
         this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
       }
       else {
-        const scores = this.calculateChannelScores(availableWLANs)
+        const scores = HostapdPlugin.calculateChannelScores(availableWLANs)
 
         let bestChannel = undefined
         for (const ch of availableChannels) {
@@ -179,11 +179,11 @@ class HostapdPlugin extends Plugin {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
   }
 
-  async getAvailableChannels() {
+  static async getAvailableChannels() {
     return pluginConfig.vendor[await platform.getWlanVendor()].channels
   }
 
-  calculateChannelScores(availableWLANs, withWeight = true) {
+  static calculateChannelScores(availableWLANs, withWeight = true) {
     const scores = {}
 
     for (const network of availableWLANs) {
