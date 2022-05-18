@@ -52,7 +52,7 @@ class PurplePlatform extends Platform {
     return this.vendor;
   }
 
-  getWpaCliBinPath() {
+  async getWpaCliBinPath() {
     return `${__dirname}/bin/wpa_cli`;
   }
 
@@ -160,7 +160,15 @@ class PurplePlatform extends Platform {
     }
   }
 
+  _isPhysicalInterface(iface) {
+    return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
+  }
+
   async getMacByIface(iface) {
+    if(!this._isPhysicalInterface(iface)) {
+      return null;
+    }
+
     if(macCache[iface]) {
       return macCache[iface];
     }
@@ -205,12 +213,23 @@ class PurplePlatform extends Platform {
 
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
+    if(!this._isPhysicalInterface(iface)) {
+      // for non-phy ifaces, use function from base class
+      await super.setHardwareAddress(iface, hwAddr);
+      return;
+    }
+
     if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
       log.error("Skip set hardware address if too many errors on setting hardware address.");
       return;
     }
 
     if(hwAddr) {
+      const activeMac = await this.getActiveMac(iface);
+      if(activeMac === hwAddr) {
+        log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
+        return;
+      }
       await this._setHardwareAddress(iface, hwAddr);
     }
   }
@@ -234,16 +253,29 @@ class PurplePlatform extends Platform {
   }
 
   async resetHardwareAddress(iface) {
+    if(!this._isPhysicalInterface(iface)) {
+      // for non-phy ifaces, use function from base class
+      await super.resetHardwareAddress(iface);
+      return;
+    }
+
     const activeMac = await this.getActiveMac(iface);
     const eepromMac = await this.getMacByIface(iface);
+    if(!eepromMac) {
+      log.error("Unable to get eeprom mac for iface", iface);
+      return;
+    }
+
     if (activeMac !== eepromMac) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
-        log.error("Skip set hardware address if too many errors on setting hardware address.");
+        log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
       }
 
-      log.info(`Resetting ${iface} back`);
+      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, eepromMac);
       await this._setHardwareAddress(iface, eepromMac);
+    } else {
+      log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
   }
 }
