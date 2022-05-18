@@ -99,20 +99,33 @@ class HostapdPlugin extends Plugin {
     parameters.ht_capab = new Set(parameters.ht_capab)
 
     if (!parameters.channel) {
-      const availableChannels = pluginConfig.vendor[await platform.getWlanVendor()].channels
-      const scores = {}
+      let availableChannels = await this.getAvailableChannels()
+
+      if (parameters.chanlist) {
+        // chanlist doesn't work in hostapd config, as it doesn't support acs
+        // use it just to filter preset available channels here
+        const chanlist = util.parseNumList(parameters.chanlist)
+        const filtered = availableChannels.filter(c => chanlist.includes(c))
+        if (filtered.length) {
+          availableChannels = filtered
+          this.log.info('chanlist set, available channels now', availableChannels)
+        } else {
+          this.log.error('No channels available after filtering, using default channels')
+        }
+        delete parameters.chanlist
+      }
 
       let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--; i) try {
+      for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {
         availableWLANs = await ncm.getWlansViaWpaSupplicant()
         if (availableWLANs && availableWLANs.length)
           break; // stop on first successful call
         else
           this.log.warn('No wlan found, trying again...')
-        await util.delay(2)
+        await util.delay(2000)
       } catch(err) {
         this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(2)
+        await util.delay(2000)
       }
 
       if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
@@ -121,28 +134,12 @@ class HostapdPlugin extends Plugin {
         this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
       }
       else {
-        for (const network of availableWLANs) {
-          if (network.freq == 2484) network.channel = 14
-          else if (network.freq < 5000) network.channel = Math.round((network.freq - 2407) / 5)
-          else network.channel = Math.round((network.freq - 5000) / 5)
-
-          const channelConfig = pluginConfig.channel[network.channel]
-          if (!channelConfig) continue
-
-          // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
-          for (const ch of channelConfig.ACI) {
-            if (!scores[ch]) scores[ch] = 0
-            scores[ch] += Math.pow(10, (network.signal/10)) * channelConfig.weight
-          }
-        }
-
-        // print debug log
-        // this.log.info('channel score chart')
-        // Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
+        const scores = this.calculateChannelScores(availableWLANs)
 
         let bestChannel = undefined
         for (const ch of availableChannels) {
-          if (!bestChannel || scores[bestChannel] > scores[ch])
+          // available channels should be listed in ascending order, so empty 5G channel is always preferred
+          if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
             bestChannel = ch
         }
         this.log.info('Best channel is', bestChannel)
@@ -180,6 +177,33 @@ class HostapdPlugin extends Plugin {
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
     if (this.networkConfig.enabled !== false)
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
+  }
+
+  async getAvailableChannels() {
+    return pluginConfig.vendor[await platform.getWlanVendor()].channels
+  }
+
+  calculateChannelScores(availableWLANs, withWeight = true) {
+    const scores = {}
+
+    for (const network of availableWLANs) {
+      network.channel = util.freqToChannel(network.freq)
+
+      const channelConfig = pluginConfig.channel[network.channel]
+      if (!channelConfig) continue
+
+      // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
+      for (const ch of channelConfig.ACI) {
+        if (!scores[ch]) scores[ch] = 0
+        scores[ch] += Math.pow(10, (network.signal/10)) * (withWeight ? channelConfig.weight : 1)
+      }
+    }
+
+    // print debug log
+    // this.log.info('channel score chart')
+    // Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
+
+    return scores
   }
 }
 
