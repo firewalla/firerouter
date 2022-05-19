@@ -39,3 +39,13 @@ function map_target_branch {
     ;;
   esac
 }
+
+function get_dnsmasq_path {
+  test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
+
+  if [[ $(lsb_release -cs) == "jammy" ]]; then
+    echo "${FW_PLATFORM_CUR_DIR}/bin/u22/dnsmasq"
+  else
+    echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
+  fi
+}
