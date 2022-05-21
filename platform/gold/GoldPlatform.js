@@ -205,6 +205,14 @@ class GoldPlatform extends Platform {
   }
 
   async overrideWLANKernelModule() {
+    if (await this.isUbuntu22()) { // u22 has built-in wifi kernel modules
+      return;
+    }
+
+    await this._overrideWLANKernelModule();
+  }
+
+  async _overrideWLANKernelModule() {
     const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get kernel version`, err.message);
       return null
