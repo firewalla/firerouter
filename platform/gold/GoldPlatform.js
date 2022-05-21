@@ -63,7 +63,7 @@ class GoldPlatform extends Platform {
       return `${__dirname}/bin/wpa_cli`;
   }
 
-  getWpaPassphraseBinPath() {
+  async getWpaPassphraseBinPath() {
     if (await this.isUbuntu22())
       return `wpa_passphrase` // use system native
     else
