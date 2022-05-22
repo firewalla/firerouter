@@ -56,7 +56,7 @@ class PurplePlatform extends Platform {
     return `${__dirname}/bin/wpa_cli`;
   }
 
-  getWpaPassphraseBinPath() {
+  async getWpaPassphraseBinPath() {
     return `${__dirname}/bin/wpa_passphrase`;
   }
 

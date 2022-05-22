@@ -42,6 +42,10 @@ class GoldPlatform extends Platform {
     return await this.getLSBCodeName() === 'focal';
   }
 
+  async isUbuntu22() {
+    return await this.getLSBCodeName() === 'jammy';
+  }
+
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
   }
@@ -53,12 +57,17 @@ class GoldPlatform extends Platform {
   async getWpaCliBinPath() {
     if (await this.isUbuntu20())
       return `${__dirname}/bin/u20/wpa_cli`
+    else if (await this.isUbuntu22())
+      return `wpa_cli` // use system native
     else
       return `${__dirname}/bin/wpa_cli`;
   }
 
-  getWpaPassphraseBinPath() {
-    return `${__dirname}/bin/wpa_passphrase`;
+  async getWpaPassphraseBinPath() {
+    if (await this.isUbuntu22())
+      return `wpa_passphrase` // use system native
+    else
+      return `${__dirname}/bin/wpa_passphrase`;
   }
 
   getModelName() {
@@ -196,6 +205,14 @@ class GoldPlatform extends Platform {
   }
 
   async overrideWLANKernelModule() {
+    if (await this.isUbuntu22()) { // u22 has built-in wifi kernel modules
+      return;
+    }
+
+    await this._overrideWLANKernelModule();
+  }
+
+  async _overrideWLANKernelModule() {
     const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get kernel version`, err.message);
       return null
@@ -219,6 +236,14 @@ class GoldPlatform extends Platform {
   }
 
   async installWLANTools() {
+    if (await this.isUbuntu22()) { // u22 has built-in wlan tools
+      return;
+    }
+
+    await this._installWLANTools();
+  }
+
+  async _installWLANTools() {
     log.info("Installing WLAN tools for Gold");
     const codeName = await this.getLSBCodeName();
     let codeDir = '';
