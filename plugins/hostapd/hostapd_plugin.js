@@ -27,6 +27,7 @@ const exec = require('child-process-promise').exec;
 
 const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
+const fs = require('fs');
 
 const pluginConfig = require('./config.json');
 const util = require('../../util/util');
@@ -175,8 +176,30 @@ class HostapdPlugin extends Plugin {
     const confPath = this._getConfFilePath();
     await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
-    if (this.networkConfig.enabled !== false)
+    if (this.networkConfig.enabled !== false) {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
+      if (this.networkConfig.bridge) {
+        // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
+        let addedToBridge = false;
+        let retryCount = 0
+        while (true) {
+          if (retryCount >= 10) {
+            this.log.error(`Failed to add ${this.name} to bridge ${this.networkConfig.bridge}`);
+            break;
+          }
+          await util.delay(1000);
+          addedToBridge = await fsp.access(`/sys/class/net/${this.networkConfig.bridge}/lower_${this.name}`, fs.constants.F_OK).then(() => true).catch((err) => false);
+          if (addedToBridge) {
+            this.log.info(`${this.name} is added to bridge ${this.networkConfig.bridge} by hostapd`);
+            break;
+          } else {
+            this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
+            await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
+            retryCount++;
+          }
+        }
+      }
+    }
   }
 
   static async getAvailableChannels() {
