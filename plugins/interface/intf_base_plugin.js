@@ -475,8 +475,8 @@ class InterfaceBasePlugin extends Plugin {
         return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
       }).catch((err) => {});
       // specified DNS nameservers supersedes those assigned by DHCP
-      if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0) {
-        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+      if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0 && this.networkConfig.nameservers.some(s => new Address4(s).isValid())) {
+        const nameservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid()).map((nameserver) => `nameserver ${nameserver}`).join("\n");
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       } else {
         await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
@@ -575,7 +575,7 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           const addr = new Address6(addr6);
-          if (!addr.isVafid())
+          if (!addr.isValid())
             this.fatal(`Invalid ipv6 address ${addr6} for ${this.name}`);
           const networkAddr = addr.startAddress();
           const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
