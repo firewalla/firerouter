@@ -201,7 +201,7 @@ class GoldPlatform extends Platform {
   }
 
   async existsUsbWifi() {
-    return await exec('lsusb -v -d 0bda: | fgrep -q Wireless').then(result => { return true;}).catch((err)=>{ return false; });
+    return await exec('lsusb -v -d 0bda: | fgrep -q 802.11ac').then(result => { return true;}).catch((err)=>{ return false; });
   }
 
   async overrideWLANKernelModule() {
