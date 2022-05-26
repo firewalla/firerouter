@@ -225,10 +225,13 @@ class GoldPlatform extends Platform {
 
     log.info(`kernel module updated is ${koUpdated}`);
     if (koUpdated) {
-      log.info('USB WiFi detected, loading kernel module');
-      await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err) => {
-        log.error(`failed to load ${WIFI_DRV_NAME}`, err.message);
-      });
+      // load driver if exists Realtek USB WiFi dongle
+      if (await this.existsUsbWifi()) {
+        log.info('USB WiFi detected, loading kernel module');
+        await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err) => {
+          log.error(`failed to load ${WIFI_DRV_NAME}`, err.message);
+        });
+      }
     }
   }
 
