@@ -99,7 +99,21 @@ class HostapdPlugin extends Plugin {
     parameters.ht_capab = new Set(parameters.ht_capab)
 
     if (!parameters.channel) {
-      const availableChannels = await this.getAvailableChannels()
+      let availableChannels = await this.getAvailableChannels()
+
+      if (parameters.chanlist) {
+        // chanlist doesn't work in hostapd config, as it doesn't support acs
+        // use it just to filter preset available channels here
+        const chanlist = util.parseNumList(parameters.chanlist)
+        const filtered = availableChannels.filter(c => chanlist.includes(c))
+        if (filtered.length) {
+          availableChannels = filtered
+          this.log.info('chanlist set, available channels now', availableChannels)
+        } else {
+          this.log.error('No channels available after filtering, using default channels')
+        }
+        delete parameters.chanlist
+      }
 
       let availableWLANs
       for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {

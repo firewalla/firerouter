@@ -42,7 +42,8 @@ const WLAN_BSS_EXPIRATION = 630
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await platform.overrideWLANKernelModule()
+    await platform.overrideWLANKernelModule();
+    await platform.installWLANTools();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
@@ -186,7 +187,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // iwgetid will still return the essid during authentication process, when operstate is dormant
     // need to make sure the authentication is passed and operstate is up
     if (carrier === "1" && operstate === "up") {
-      essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
+      if (iwgetidAvailable) {
+        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      } else {
+        essid = await exec(`iw dev ${this.name} info | grep "ssid " | awk -F' ' '{print $2}'`)
+          .then(result => result.stdout.trim()).catch(() => null);
+        if (essid && essid.length)
+          essid = util.parseEscapedString(essid);
+      }
     }
     return essid;
   }
@@ -201,9 +210,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
-    state.freq = await this.getFrequency()
-    state.channel = util.freqToChannel(state.freq)
     state.essid = essid;
+    state.carrier = (this.isWAN()
+      ? await this.readyToConnect().catch(() => false)
+      : state.essid && state.carrier
+    ) ? 1 : 0
+    if (state.carrier && state.essid) {
+      state.freq = await this.getFrequency()
+      state.channel = util.freqToChannel(state.freq)
+    }
     state.vendor = vendor;
     return state;
   }
@@ -214,9 +229,20 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     if (eventType === event.EVENT_WPA_CONNECTED) {
       // need to re-check connectivity status after wifi is switched
       this.setPendingTest(true);
-      this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
-        this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
-      });
+      if (this.isDHCP()) {
+        this.flushIP().then(async () => {
+          await this.applyIpSettings();
+          await this.applyDnsSettings();
+          await this.changeRoutingTables();
+          if (this.isWAN()) {
+            this._wanStatus = {};
+            await this.updateRouteForDNS();
+            await this.markOutputConnection();
+          }
+        }).catch((err) => {
+          this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
+        });
+      }
     }
   }
 }

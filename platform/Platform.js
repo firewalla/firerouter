@@ -41,7 +41,7 @@ class Platform {
     return null;
   }
 
-  getWpaCliBinPath() {
+  async getWpaCliBinPath() {
     return null;
   }
 
@@ -102,6 +102,9 @@ class Platform {
   }
 
   async overrideWLANKernelModule() {
+  }
+
+  async installWLANTools() {
   }
 
   getModelName() {
