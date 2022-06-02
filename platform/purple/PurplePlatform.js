@@ -160,6 +160,11 @@ class PurplePlatform extends Platform {
     }
   }
 
+  clearMacCache(iface) {
+    if (macCache[iface])
+      delete macCache[iface];
+  }
+
   _isPhysicalInterface(iface) {
     return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
   }

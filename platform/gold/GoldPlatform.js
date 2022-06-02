@@ -113,6 +113,11 @@ class GoldPlatform extends Platform {
     return IF_WLAN1;
   }
 
+  clearMacCache(iface) {
+    if (macCache[iface])
+      delete macCache[iface];
+  }
+
   async getMacByIface(iface) {
     if(macCache[iface]) {
       return macCache[iface];

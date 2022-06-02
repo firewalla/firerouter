@@ -1121,6 +1121,7 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
         if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+          platform.clearMacCache(this.name);
           this._reapplyNeeded = true;
           // trigger downstream plugins to reapply config
           this.propagateConfigChanged(true);
