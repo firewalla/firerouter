@@ -92,6 +92,10 @@ class Platform {
   async overrideEthernetKernelModule() {
   }
 
+  clearMacCache(iface) {
+
+  }
+
   async setEthernetOffload(iface,feature,desc,onoff) {
     await exec(`sudo ethtool -K ${iface} ${feature} ${onoff}`).catch( (err) => {
       log.error(`Failed to turn ${onoff} ${desc} in ${iface}`);
