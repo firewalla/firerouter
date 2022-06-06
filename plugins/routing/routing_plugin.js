@@ -32,6 +32,7 @@ const wrapIptables = require('../../util/util.js').wrapIptables;
 const exec = require('child-process-promise').exec;
 const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
+const WireguardInterfacePlugin = require('../interface/wireguard_intf_plugin.js');
 
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
@@ -525,7 +526,13 @@ class RoutingPlugin extends Plugin {
                   if (!ifacePlugin) {
                     this.log.error(`Static route dest interface plugin ${dev} not found`);
                   } else {
-                    this.subscribeChangeFrom(ifacePlugin);
+                    // use allow IPs in wireguard to implement static route on wireguard interface
+                    if (ifacePlugin instanceof WireguardInterfacePlugin) {
+                      this.log.error(`Cannot use wireguard interface ${dev} as dev in static route`);
+                      continue;
+                    } else {
+                      this.subscribeChangeFrom(ifacePlugin);
+                    }
                   }
                   let iface = dev;
                   if (iface.includes(":")) {
@@ -589,7 +596,12 @@ class RoutingPlugin extends Plugin {
                   if (!ifacePlugin) {
                     this.log.error(`Static route dest interface plugin ${dev} not found`);
                   } else {
-                    this.subscribeChangeFrom(ifacePlugin);
+                    if (ifacePlugin instanceof WireguardInterfacePlugin) {
+                      this.log.error(`Cannot use wireguard interface ${dev} as dev in static route`);
+                      continue;
+                    } else {
+                      this.subscribeChangeFrom(ifacePlugin);
+                    }
                   }
                   let iface = dev;
                   if (iface.includes(":")) {
