@@ -638,6 +638,8 @@ class InterfaceBasePlugin extends Plugin {
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
+      if (!_.isEmpty(this._srcIPs))
+        await this.unmarkOutputConnection(rtid);
       const srcIPs = [];
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
