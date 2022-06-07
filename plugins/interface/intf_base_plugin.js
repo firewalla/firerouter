@@ -626,7 +626,7 @@ class InterfaceBasePlugin extends Plugin {
   async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
-        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
       }
@@ -643,7 +643,7 @@ class InterfaceBasePlugin extends Plugin {
       const srcIPs = [];
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
-        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
         srcIPs.push(ip4Addr);
