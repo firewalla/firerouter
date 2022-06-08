@@ -408,6 +408,11 @@ class RoutingPlugin extends Plugin {
                         break;
                       }
                     }
+                    if (await viaIntf2Plugin.isInterfacePresent() === false) {
+                      // directly mark ready to false if interface does not exist at the moment
+                      wanStatus[viaIntf2].ready = false;
+                      wanStatus[viaIntf2].active = false;
+                    }
                     if (wanStatus[viaIntf2].ready === false) {
                       // make it only one success count away from back to ready
                       wanStatus[viaIntf2].successCount = Math.max(wanStatus[viaIntf2].successCount, OFF_ON_THRESHOLD - 1);
@@ -440,6 +445,11 @@ class RoutingPlugin extends Plugin {
                         wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
                         break;
                       }
+                    }
+                    if (await viaIntfPlugin.isInterfacePresent() === false) {
+                      // directly mark ready to false if interface does not exist at the moment
+                      wanStatus[viaIntf].ready = false;
+                      wanStatus[viaIntf].active = false;
                     }
                     if (wanStatus[viaIntf].ready === false) {
                       // make it only one success count away from back to ready
@@ -476,6 +486,11 @@ class RoutingPlugin extends Plugin {
                             wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
                             break;
                           }
+                        }
+                        if (await viaIntfPlugin.isInterfacePresent() === false) {
+                          // directly mark ready to false if interface does not exist at the moment
+                          wanStatus[viaIntf].ready = false;
+                          wanStatus[viaIntf].active = false;
                         }
                         if (wanStatus[viaIntf].ready === false) {
                           // make it only one success count away from becoming ready
