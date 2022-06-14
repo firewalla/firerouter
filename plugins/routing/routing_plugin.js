@@ -380,6 +380,7 @@ class RoutingPlugin extends Plugin {
             switch (type) {
               case "default": {
                 const defaultRoutingType = settings.type || "single";
+                let changeDescs = [];
                 switch (defaultRoutingType) {
                   case "primary_standby": {
                     const viaIntf2 = settings.viaIntf2;
@@ -409,6 +410,15 @@ class RoutingPlugin extends Plugin {
                       }
                     }
                     if (await viaIntf2Plugin.isInterfacePresent() === false) {
+                      // need to publish wan conn change events if it was ready previously
+                      if (wanStatus[viaIntf2].ready === true) {
+                        changeDescs.push({
+                          intf: viaIntf2,
+                          ready: false,
+                          wanSwitched: wanStatus[viaIntf2].active === true ? true : false,
+                          failures: [{type: "carrier"}]
+                        });
+                      }
                       // directly mark ready to false if interface does not exist at the moment
                       wanStatus[viaIntf2].ready = false;
                       wanStatus[viaIntf2].active = false;
@@ -447,6 +457,15 @@ class RoutingPlugin extends Plugin {
                       }
                     }
                     if (await viaIntfPlugin.isInterfacePresent() === false) {
+                      // need to publish wan conn change events if it was ready previously
+                      if (wanStatus[viaIntf].ready === true) {
+                        changeDescs.push({
+                          intf: viaIntf,
+                          ready: false,
+                          wanSwitched: wanStatus[viaIntf].active === true && type !== "single" ? true : false,
+                          failures: [{type: "carrier"}]
+                        });
+                      }
                       // directly mark ready to false if interface does not exist at the moment
                       wanStatus[viaIntf].ready = false;
                       wanStatus[viaIntf].active = false;
@@ -488,6 +507,15 @@ class RoutingPlugin extends Plugin {
                           }
                         }
                         if (await viaIntfPlugin.isInterfacePresent() === false) {
+                          // need to publish wan conn change events if it was ready previously
+                          if (wanStatus[viaIntf].ready === true) {
+                            changeDescs.push({
+                              intf: viaIntf,
+                              ready: false,
+                              wanSwitched: true,
+                              failures: [{ type: "carrier" }]
+                            });
+                          }
                           // directly mark ready to false if interface does not exist at the moment
                           wanStatus[viaIntf].ready = false;
                           wanStatus[viaIntf].active = false;
@@ -527,6 +555,16 @@ class RoutingPlugin extends Plugin {
                 this._wanStatus = wanStatus;
                 this.log.info("wan config change, routing is re/applied, set pendingTest to true for all wan interfaces");
                 await this._applyActiveGlobalDefaultRouting(false);
+                if (!_.isEmpty(changeDescs)) {
+                  for (const desc of changeDescs) {
+                    this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+                      if (enrichedWanStatus) {
+                        desc.currentStatus = enrichedWanStatus;
+                        this.publishWANConnChange(desc);
+                      }
+                    });
+                  }
+                }
                 break;
               }
               case "static": {
