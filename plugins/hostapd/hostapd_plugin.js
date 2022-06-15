@@ -228,6 +228,33 @@ class HostapdPlugin extends Plugin {
 
     return scores
   }
+
+  async getAvailableChannels() {
+    return pluginConfig.vendor[await platform.getWlanVendor()].channels
+  }
+
+  calculateChannelScores(availableWLANs, withWeight = true) {
+    const scores = {}
+
+    for (const network of availableWLANs) {
+      network.channel = util.freqToChannel(network.freq)
+
+      const channelConfig = pluginConfig.channel[network.channel]
+      if (!channelConfig) continue
+
+      // ACI = Adjacent Channel Interference, this config is set to all channels being interfered
+      for (const ch of channelConfig.ACI) {
+        if (!scores[ch]) scores[ch] = 0
+        scores[ch] += Math.pow(10, (network.signal/10)) * (withWeight ? channelConfig.weight : 1)
+      }
+    }
+
+    // print debug log
+    // this.log.info('channel score chart')
+    // Object.keys(scores).sort((a, b) => scores[a] - scores[b]).forEach(ch => this.log.info(ch, '\t', scores[ch].toFixed(15)))
+
+    return scores
+  }
 }
 
 module.exports = HostapdPlugin;
