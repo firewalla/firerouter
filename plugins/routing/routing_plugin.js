@@ -562,6 +562,8 @@ class RoutingPlugin extends Plugin {
                         desc.currentStatus = enrichedWanStatus;
                         this.publishWANConnChange(desc);
                       }
+                    }).catch((err) => {
+                      this.log.error("Failed to enrich WAN status", err.message);
                     });
                   }
                 }
