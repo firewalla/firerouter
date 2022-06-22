@@ -27,32 +27,29 @@ const event = require('../../core/event.js');
 const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
-const PurplePlatform = require('../../platform/purple/PurplePlatform')
 const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
+
+const APSafeFreqs = [
+  2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
+  5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
+]
 
 const WLAN_BSS_EXPIRATION = 630
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await this.overrideKernelModule()
+    await platform.overrideWLANKernelModule();
+    await platform.installWLANTools();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
-  }
-
-  static async overrideKernelModule() {
-    if (platform instanceof PurplePlatform && await platform.getWlanVendor() == '88x2cs') {
-      await exec(`sudo cp ${platform.getBinaryPath()}/88x2cs.ko /lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs/`)
-      await exec('sudo rmmod 88x2cs')
-      await exec('sudo modprobe 88x2cs')
-    }
   }
 
   static async createDirectories() {
@@ -118,33 +115,20 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return `${r.getUserConfigFolder()}/wpa_supplicant/${this.name}.conf`;
   }
 
-  async writeConfigFile(availableWLANs) {
+  async writeConfigFile() {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
     entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
+    // sets freq_list globally limits the frequencies being scaned
+    // sets freq_list again on each network limits the frequencies being used for connection
+    entries.push(`freq_list=${APSafeFreqs.join(' ')}`)
 
     const networks = this.networkConfig.wpaSupplicant.networks || [];
     for (const network of networks) {
-      const prioritizedNetworks = (availableWLANs || [])
-        .filter(n => n.ssid == network.ssid && n.freq > 5000 && n.signal > -80)
-      if (prioritizedNetworks.length) {
-        entries.push("network={");
-        for (const key of Object.keys(network)) {
-          if (key == 'priority')
-            entries.push(`\tpriority=${network[key]+1}`);
-          else {
-            const value = await util.generateWpaSupplicantConfig(key, network);
-            entries.push(`\t${key}=${value}`);
-          }
-        }
-        if (!'priority' in network) {
-          entries.push(`\tpriority=1`);
-        }
-        entries.push(`\tfreq_list=${prioritizedNetworks.map(p => p.freq).join(' ')}`);
-        entries.push("}\n");
-      }
 
       entries.push("network={");
+      // freq_list set by client overrides the default AP safe setting
+      !network.freq_list && entries.push(`\tfreq_list=${APSafeFreqs.join(' ')}`)
       for (const key of Object.keys(network)) {
         const value = await util.generateWpaSupplicantConfig(key, network);
         entries.push(`\t${key}=${value}`);
@@ -203,9 +187,23 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // iwgetid will still return the essid during authentication process, when operstate is dormant
     // need to make sure the authentication is passed and operstate is up
     if (carrier === "1" && operstate === "up") {
-      essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
+      if (iwgetidAvailable) {
+        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      } else {
+        essid = await exec(`iw dev ${this.name} info | grep "ssid " | awk -F' ' '{print $2}'`)
+          .then(result => result.stdout.trim()).catch(() => null);
+        if (essid && essid.length)
+          essid = util.parseEscapedString(essid);
+      }
     }
     return essid;
+  }
+
+  async getFrequency() {
+    const result = await exec(`iwconfig ${this.name} | grep Frequency | tr -s ' ' | cut -d' ' -f3`).catch(() => {})
+    if (!result) return null
+    return Number(result.stdout.substring(10)) * 1000
   }
 
   async state() {
@@ -213,6 +211,14 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
     state.essid = essid;
+    state.carrier = (this.isWAN()
+      ? await this.readyToConnect().catch(() => false)
+      : state.essid && state.carrier
+    ) ? 1 : 0
+    if (state.carrier && state.essid) {
+      state.freq = await this.getFrequency()
+      state.channel = util.freqToChannel(state.freq)
+    }
     state.vendor = vendor;
     return state;
   }
@@ -221,9 +227,22 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     super.onEvent(e);
     const eventType = event.getEventType(e);
     if (eventType === event.EVENT_WPA_CONNECTED) {
-      this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
-        this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
-      });
+      // need to re-check connectivity status after wifi is switched
+      this.setPendingTest(true);
+      if (this.isDHCP()) {
+        this.flushIP().then(async () => {
+          await this.applyIpSettings();
+          await this.applyDnsSettings();
+          await this.changeRoutingTables();
+          if (this.isWAN()) {
+            this._wanStatus = {};
+            await this.updateRouteForDNS();
+            await this.markOutputConnection();
+          }
+        }).catch((err) => {
+          this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
+        });
+      }
     }
   }
 }

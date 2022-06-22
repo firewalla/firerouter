@@ -27,6 +27,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const pl = require('../plugin_loader.js');
+const _ = require('lodash');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
@@ -98,7 +99,12 @@ class DHCPPlugin extends Plugin {
 
     if (Object.keys(extraOptions).length > 0) {
       for (const key of Object.keys(extraOptions)) {
-        dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}${key},${extraOptions[key]}`);
+        const option = extraOptions[key];
+        // value can be either a literal string or an object.
+        if (!_.isObject(option))
+          dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}${key},${option}`);
+        else // if it is an object, dhcp-option-force can be used if force is set to true
+          dhcpOptions.push(`dhcp-option${option.force === true ? "-force" : ""}=tag:${iface},${extraTags}${key},${option.value}`);
       }
     }
     
