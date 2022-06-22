@@ -24,8 +24,10 @@ const _ = require('lodash');
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
 const {Address4, Address6} = require('ip-address');
+const pl = require('../plugin_loader.js');
+const event = require('../../core/event.js');
 
-const bindIntfRulePriority = 5001;
+const bindIntfRulePriority = 6001;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -48,11 +50,21 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
 
-      if(this.networkConfig.bindIntf) {
-        const cmd = `sudo ip rule del pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
-        await exec(cmd).catch((err) => {});
-      }
+      await this._resetBindIntfRule().catch((err) => {});
     }
+  }
+
+  async _resetBindIntfRule() {
+    const bindIntf = this._bindIntf;
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    if(bindIntf) {
+      await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
+      await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
+    } else {
+      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
+      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
+    }
+    this._bindIntf = null;
   }
 
   _getInterfaceConfPath() {
@@ -87,6 +99,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       }
     }
+    // add FwMark option in [Interface] config for WAN selection
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    entries.push(`FwMark = ${rtid}`)
     entries.push('\n');
 
     if (_.isArray(this.networkConfig.peers)) {
@@ -118,24 +133,48 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
+            // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
+            await routing.addRouteToTable(allowedIP, null, this.name, "main", 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, null, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
           }
         }
       }
     }
 
-    // add specific routing for wireguard port
-    if(this.networkConfig.bindIntf && this.networkConfig.listenPort) {
-      const cmd = `sudo ip rule add pref ${bindIntfRulePriority} iif lo sport ${this.networkConfig.listenPort} lookup ${this.networkConfig.bindIntf}_default`;
-      await exec(cmd).catch((err) => {});
+    await this._resetBindIntfRule().catch((err) => {});
+    // add specific routing for wireguard outgoing packets
+    let bindIntf = this.networkConfig.bindIntf;
+    if (!bindIntf) {
+      const routingPlugin = pl.getPluginInstance("routing", "global");
+      if (routingPlugin) {
+        this.subscribeChangeFrom(routingPlugin);
+        const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
+        if (_.isArray(wanIntfPlugins) && !_.isEmpty(wanIntfPlugins)) {
+          bindIntf = wanIntfPlugins[0].name;
+        } else {
+          const wanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
+          bindIntf = wanIntfPlugin && wanIntfPlugin.name;
+        }
+      }
+    }
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    if (bindIntf) {
+      this.log.info(`Wireguard ${this.name} will bind to WAN ${bindIntf}`);
+      await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
+      await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
+      this._bindIntf = bindIntf;
+    } else {
+      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
+      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
+      this._bindIntf = null;
     }
   }
 
@@ -144,6 +183,15 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     if (!state.mac)
       state.mac = "02:01:22:22:22:22";
     return state;
+  }
+
+  onEvent(e) {
+    super.onEvent(e);
+    const eventType = event.getEventType(e);
+    if (eventType === event.EVENT_WAN_SWITCHED) {
+      this._reapplyNeeded = true;
+      pl.scheduleReapply();
+    }
   }
 }
 
