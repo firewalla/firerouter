@@ -191,8 +191,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       if (iwgetidAvailable) {
         essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       } else {
-        essid = await exec(`iw dev ${this.name} info | grep "ssid " | awk -F' ' '{print $2}'`)
-          .then(result => result.stdout.trim()).catch(() => null);
+        essid = await exec(`iw dev ${this.name} info | grep "ssid "`)
+          .then(result => {
+            const line = result.stdout.trim();
+            return line.substring(line.indexOf("ssid ") + 5);
+          }).catch(() => null);
         if (essid && essid.length)
           essid = util.parseEscapedString(essid);
       }
