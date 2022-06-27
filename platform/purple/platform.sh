@@ -1,5 +1,6 @@
 NETWORK_SETUP=yes
 NEED_FIRESTATUS=true
+BLUETOOTH_TIMEOUT=3600
 
 function get_pppoe_rps_cpus {
   echo "30"

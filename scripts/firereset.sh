@@ -12,14 +12,16 @@ run_host_light_until_paired() {
   done
 }
 
-run_host_light_until_paired &
+# run_host_light_until_paired &>/dev/null &
+
+: ${BLUETOOTH_TIMEOUT:=0}
 
 # use this user firereset binary if configured, for debugging purpose only
 USER_FIRERESET=/home/pi/.firewalla/run/firereset
 if [[ -e $USER_FIRERESET ]]; then
-  sudo BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout 3600
+  sudo BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout $BLUETOOTH_TIMEOUT
   exit 0
 fi
 
 FIRERESET_BINARY=$(get_firereset_path)
-sudo BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout 3600
+sudo BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout $BLUETOOTH_TIMEOUT
