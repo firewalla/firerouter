@@ -47,6 +47,7 @@ class IfPresenceSensor extends Sensor {
       for (const f of this._watchedFiles)
         fs.unwatchFile(f.file, f.listener);
     }
+    this.activeIntfs = {};
     const era = require('../event/EventRequestApi');
     this._watchedFiles = [];
     const interfaces = await ncm.getInterfaces();
@@ -58,12 +59,14 @@ class IfPresenceSensor extends Sensor {
             const intfPlugin = pl.getPluginInstance("interface", intf);
             if (!intfPlugin)
               return;
-            if (curr.ctimeMs > prev.ctimeMs) {
+            if (curr.ctimeMs > prev.ctimeMs && !this.activeIntfs.hasOwnProperty(intf)) {
+              this.activeIntfs[intf] = true;
               const e = event.buildEvent(event.EVENT_IF_PRESENT, {intf: intf});
               era.addStateEvent(EventConstants.EVENT_IF_HOTPLUG_STATE, intf, 0);
               this._sendEvent(e, intfPlugin);
             } else {
               if (!curr.isDirectory() && prev.isDirectory()) {
+                delete this.activeIntfs[intf];
                 const e = event.buildEvent(event.EVENT_IF_DISAPPEAR, {intf: intf});
                 era.addStateEvent(EventConstants.EVENT_IF_HOTPLUG_STATE, intf, 1);
                 this._sendEvent(e, intfPlugin);
@@ -75,6 +78,10 @@ class IfPresenceSensor extends Sensor {
         fs.watchFile(r.getInterfaceSysFSDirectory(intf), {interval: 2000}, listener);
         // initial state event
         const ifExists = await fs.promises.access(r.getInterfaceSysFSDirectory(intf), fs.constants.F_OK).then(() => true).catch((err) => false);
+        if (ifExists)
+          this.activeIntfs[intf] = true;
+        else
+          delete this.activeIntfs[intf];
         era.addStateEvent(EventConstants.EVENT_IF_HOTPLUG_STATE, intf, ifExists ? 0 : 1)
       }
     }
