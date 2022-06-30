@@ -103,6 +103,8 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
+        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
         await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
@@ -302,6 +304,8 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
+      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`);
+      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6);
       await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
         this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
@@ -471,8 +475,8 @@ class InterfaceBasePlugin extends Plugin {
         return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
       }).catch((err) => {});
       // specified DNS nameservers supersedes those assigned by DHCP
-      if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0) {
-        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+      if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0 && this.networkConfig.nameservers.some(s => new Address4(s).isValid())) {
+        const nameservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid()).map((nameserver) => `nameserver ${nameserver}`).join("\n");
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       } else {
         await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
@@ -622,7 +626,7 @@ class InterfaceBasePlugin extends Plugin {
   async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
-        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
       }
@@ -634,10 +638,12 @@ class InterfaceBasePlugin extends Plugin {
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
+      if (!_.isEmpty(this._srcIPs))
+        await this.unmarkOutputConnection(rtid);
       const srcIPs = [];
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
-        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
         srcIPs.push(ip4Addr);
@@ -916,8 +922,9 @@ class InterfaceBasePlugin extends Plugin {
     if (active && pingTestEnabled) {
       // no need to use Promise.any as ping test time for each target is the same
       // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
+      const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(pingTestIP.map(async (ip) => {
-        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+        let cmd = `sudo ping -n -q -m ${rtid} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
@@ -1117,6 +1124,7 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
         if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+          platform.clearMacCache(this.name);
           this._reapplyNeeded = true;
           // trigger downstream plugins to reapply config
           this.propagateConfigChanged(true);
