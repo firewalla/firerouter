@@ -49,23 +49,27 @@ class InterfaceBasePlugin extends Plugin {
     return fs.accessAsync(r.getInterfaceSysFSDirectory(this.name), fs.constants.F_OK).then(() => true).catch((err) => false);
   }
 
-  async flushIP() {
-    await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
-      this.log.error(`Failed to flush ip address of ${this.name}`, err);
-    });
-    // make sure to stop dhclient no matter if dhcp is enabled
-    await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
-    // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
-    await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
-    await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
-    // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
-    const lease6Filename = await this._getDHCPCDLease6Filename();
-    if (lease6Filename)
-      await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
-    // regenerate ipv6 link local address based on EUI64
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
+  async flushIP(af = null) {
+    if (!af || af == 4) {
+      await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
+        this.log.error(`Failed to flush ip address of ${this.name}`, err);
+      });
+      // make sure to stop dhclient no matter if dhcp is enabled
+      await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+    }
+    if (!af || af == 6) {
+      // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
+      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+      const lease6Filename = await this._getDHCPCDLease6Filename();
+      if (lease6Filename)
+        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+      // regenerate ipv6 link local address based on EUI64
+      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
+    }
   }
 
   async flush() {
@@ -408,8 +412,6 @@ class InterfaceBasePlugin extends Plugin {
             if (ipChanged) {
               // write newly assigned prefixes to the cache file
               await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
-              // trigger reapply of downstream plugins that are dependent on this interface
-              this.propagateConfigChanged(true);
             }
           }
         }
@@ -1136,9 +1138,10 @@ class InterfaceBasePlugin extends Plugin {
         const payload = event.getEventPayload(e);
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
-          // the interface from which prefix is delegated is changed, need to reapply config
-          this._reapplyNeeded = true;
-          pl.scheduleReapply();
+          // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
+          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).catch((err) => {
+            this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+          });
         }
         break;
       }

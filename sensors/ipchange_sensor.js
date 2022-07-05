@@ -28,9 +28,12 @@ class IPChangeSensor extends Sensor {
       let eventType = event.EVENT_IP_CHANGE;
       switch (channel) {
         case "pppoe.ip_change":
-        case "dhclient.ip_change":
-        case "dhcpcd6.ip_change": {
+        case "dhclient.ip_change": {
           eventType = event.EVENT_IP_CHANGE;
+          break;
+        }
+        case "dhcpcd6.ip_change": {
+          eventType = event.EVENT_IP6_CHANGE;
           break;
         }
         case "dhcpcd6.pd_change":
