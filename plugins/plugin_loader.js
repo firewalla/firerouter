@@ -267,7 +267,7 @@ async function reapply(config, dryRun = false) {
     applyInProgress = false;
     lastAppliedTimestamp = Date.now() / 1000;
     t2 = Date.now() / 1000;
-    log.info(`reapply is complete ${_.isEmpty(errors) == 0 ? "without" : "with"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
+    log.info(`reapply is complete ${_.isEmpty(errors) ? "without" : "with"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
     return errors;
   }).catch((err) => {
     applyInProgress = false;
