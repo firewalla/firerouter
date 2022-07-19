@@ -15,6 +15,8 @@ function run_horse_light {
 function get_wpa_cli_path {
   if [[ $(lsb_release -cs) == "focal" ]]; then
     echo "${FW_PLATFORM_CUR_DIR}/bin/u20/wpa_cli"
+  elif [[ $(lsb_release -cs) == "jammy" ]]; then
+    echo "wpa_cli" # system native
   else
     echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
   fi
@@ -38,4 +40,30 @@ function map_target_branch {
     echo $1
     ;;
   esac
+}
+
+function get_dnsmasq_path {
+  test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
+
+  if [[ $(lsb_release -cs) == "jammy" ]]; then
+    echo "${FW_PLATFORM_CUR_DIR}/bin/u22/dnsmasq"
+  else
+    echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
+  fi
+}
+
+function get_hostapd_path {
+  if [[ $(lsb_release -cs) == "jammy" ]]; then
+    echo "hostapd" # system native
+  else
+    echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
+  fi
+}
+
+function get_wpa_supplicant_path {
+  if [[ $(lsb_release -cs) == "jammy" ]]; then
+    echo "wpa_supplicant" # system native
+  else
+    echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
+  fi
 }

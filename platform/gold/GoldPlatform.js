@@ -42,6 +42,10 @@ class GoldPlatform extends Platform {
     return await this.getLSBCodeName() === 'focal';
   }
 
+  async isUbuntu22() {
+    return await this.getLSBCodeName() === 'jammy';
+  }
+
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
   }
@@ -53,12 +57,17 @@ class GoldPlatform extends Platform {
   async getWpaCliBinPath() {
     if (await this.isUbuntu20())
       return `${__dirname}/bin/u20/wpa_cli`
+    else if (await this.isUbuntu22())
+      return `wpa_cli` // use system native
     else
       return `${__dirname}/bin/wpa_cli`;
   }
 
-  getWpaPassphraseBinPath() {
-    return `${__dirname}/bin/wpa_passphrase`;
+  async getWpaPassphraseBinPath() {
+    if (await this.isUbuntu22())
+      return `wpa_passphrase` // use system native
+    else
+      return `${__dirname}/bin/wpa_passphrase`;
   }
 
   getModelName() {
@@ -88,7 +97,7 @@ class GoldPlatform extends Platform {
 
     if(hwAddr) {
       const activeMac = await this.getActiveMac(iface);
-      if(activeMac === hwAddr) {
+      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
         log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
         return;
       }
@@ -102,6 +111,11 @@ class GoldPlatform extends Platform {
 
   getWifiAPInterface() {
     return IF_WLAN1;
+  }
+
+  clearMacCache(iface) {
+    if (macCache[iface])
+      delete macCache[iface];
   }
 
   async getMacByIface(iface) {
@@ -148,7 +162,7 @@ class GoldPlatform extends Platform {
     const activeMac = await this.getActiveMac(iface);
     const expectMac = await this.getMacByIface(iface);
 
-    if ( activeMac !== expectMac ) {
+    if ( (activeMac && activeMac.toUpperCase()) !== (expectMac && expectMac.toUpperCase()) ) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
@@ -192,10 +206,18 @@ class GoldPlatform extends Platform {
   }
 
   async existsUsbWifi() {
-    return await exec('lsusb -v -d 0bda: | fgrep -q Wireless').then(result => { return true;}).catch((err)=>{ return false; });
+    return await exec('lsusb -v -d 0bda: | fgrep -q 802.11ac').then(result => { return true;}).catch((err)=>{ return false; });
   }
 
   async overrideWLANKernelModule() {
+    if (await this.isUbuntu22()) { // u22 has built-in wifi kernel modules
+      return;
+    }
+
+    await this._overrideWLANKernelModule();
+  }
+
+  async _overrideWLANKernelModule() {
     const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get kernel version`, err.message);
       return null
@@ -209,16 +231,24 @@ class GoldPlatform extends Platform {
     log.info(`kernel module updated is ${koUpdated}`);
     if (koUpdated) {
       // load driver if exists Realtek USB WiFi dongle
-      if (this.existsUsbWifi()) {
+      if (await this.existsUsbWifi()) {
         log.info('USB WiFi detected, loading kernel module');
-        await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err)=>{
-          log.error(`failed to load ${WIFI_DRV_NAME}`,err.message);
+        await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err) => {
+          log.error(`failed to load ${WIFI_DRV_NAME}`, err.message);
         });
       }
     }
   }
 
   async installWLANTools() {
+    if (await this.isUbuntu22()) { // u22 has built-in wlan tools
+      return;
+    }
+
+    await this._installWLANTools();
+  }
+
+  async _installWLANTools() {
     log.info("Installing WLAN tools for Gold");
     const codeName = await this.getLSBCodeName();
     let codeDir = '';
