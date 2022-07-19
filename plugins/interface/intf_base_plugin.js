@@ -29,6 +29,9 @@ const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
 const ip = require('ip');
+const AsyncLock = require('async-lock');
+const LOCK_PD_CALC = "LOCK_PD_CALC";
+const lock = new AsyncLock();
 
 const Message = require('../../core/Message.js');
 const wrapIptables = require('../../util/util.js').wrapIptables;
@@ -386,34 +389,36 @@ class InterfaceBasePlugin extends Plugin {
           this.log.warn(`Interface ${fromIface} is not present yet`);
         } else {
           // assign sub prefix id for this interface
-          const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
-          const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
-            this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
-            return null;
+          await lock.acquire(LOCK_PD_CALC, async () => {
+            const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
+            const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
+              this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
+              return null;
+            });
+            const subPrefix = await this._findSubPrefix(fromIface, prefixes);
+            let ipChanged = false;
+            if (subPrefix) {
+              // clear previously assigned prefixes in the cache file
+              await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+              // add link local route to interface local and default routing table
+              await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => { });
+              await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => { });
+              const addr = new Address6(subPrefix);
+              if (!addr.isValid()) {
+                this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
+              } else {
+                // the suffix of the delegated interface is always 1
+                await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
+                  this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+                });
+                ipChanged = true;
+              }
+              if (ipChanged) {
+                // write newly assigned prefixes to the cache file
+                await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
+              }
+            }
           });
-          const subPrefix = await this._findSubPrefix(fromIface, prefixes);
-          let ipChanged = false;
-          if (subPrefix) {
-            // clear previously assigned prefixes in the cache file
-            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
-            // add link local route to interface local and default routing table
-            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => { });
-            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => { });
-            const addr = new Address6(subPrefix);
-            if (!addr.isValid()) {
-              this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
-            } else {
-              // the suffix of the delegated interface is always 1
-              await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
-              });
-              ipChanged = true;
-            }
-            if (ipChanged) {
-              // write newly assigned prefixes to the cache file
-              await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
-            }
-          }
         }
       }
       // TODO: do not support static dns nameservers for IPv6 currently
