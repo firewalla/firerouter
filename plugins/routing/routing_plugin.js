@@ -174,8 +174,8 @@ class RoutingPlugin extends Plugin {
     // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
     await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
       // flush global default routing table, no need to touch global static routing table here
-      await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT);
-      await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL);
+      await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
+      await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL, af);
       // remove all default route in main table
       let routeRemoved = false;
       if (!af || af == 4) {
