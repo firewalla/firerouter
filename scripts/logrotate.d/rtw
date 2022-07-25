@@ -1,0 +1,14 @@
+/var/log/rtw
+{
+  rotate 7
+  hourly
+  maxsize 1M
+  missingok
+  notifempty
+  compress
+  delaycompress
+  nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}

@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2021-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -45,8 +45,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await platform.overrideWLANKernelModule();
     await platform.installWLANTools();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/rtw /etc/logrotate.d/`);
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();

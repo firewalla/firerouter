@@ -1,7 +1,7 @@
 /var/log/wpa_supplicant.log
 {
   rotate 7
-  daily
+  hourly
   maxsize 1M
   missingok
   notifempty
