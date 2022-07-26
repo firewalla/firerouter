@@ -20,7 +20,6 @@ const pclient = require('../util/redis_manager.js').getPublishClient()
 const exec = require('child-process-promise').exec;
 const platformLoader = require('../platform/PlatformLoader.js');
 const platform = platformLoader.getPlatform();
-const GoldPlatform = require('../platform/gold/GoldPlatform')
 const LogReader = require('../util/LogReader')
 
 class RTWSensor extends Sensor {
@@ -33,12 +32,10 @@ class RTWSensor extends Sensor {
         pclient.publish('firerouter.wlan.xmitbuf_fail', '1')
         // sleep to allow IfPresenceSensor to catch the event
         this.reloading = true
-        await exec(`sudo systemctl stop firerouter_hostapd@wlan1; sudo rmmod ${this.driver}; sleep 3; sudo modprobe ${this.driver}`)
-        if (platform instanceof GoldPlatform && this.driver == '8821cu') {
-          await exec('echo 4 > /proc/net/rtl8821cu/log_level')
-        }
+        const driverName = await platform.getWlanVendor()
+        await exec(`sudo systemctl stop firerouter_hostapd@wlan1; sudo rmmod ${driverName}; sleep 3; sudo modprobe ${driverName}`)
         this.reloading = false
-        this.fialCount = 0
+        this.failCount = 0
         await rclientDB0.incrAsync('sys:wlan:kernelReload:xmitbuf')
       }
     }
@@ -50,12 +47,6 @@ class RTWSensor extends Sensor {
     this.logWatcher = new LogReader(this.config.log_file, true)
     this.logWatcher.on('line', this.watchLog.bind(this))
     this.logWatcher.watch()
-
-    this.deriver = await platform.getWlanVendor()
-
-    if (platform instanceof GoldPlatform && this.driver == '8821cu') {
-      await exec('echo 4 > /proc/net/rtl8821cu/log_level')
-    }
   }
 
 }

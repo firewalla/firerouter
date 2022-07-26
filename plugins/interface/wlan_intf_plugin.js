@@ -27,6 +27,7 @@ const event = require('../../core/event.js');
 const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const GoldPlatform = require('../../platform/gold/GoldPlatform')
 const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
@@ -49,11 +50,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/rtw /etc/logrotate.d/`);
-    await exec('(crontab -l; echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw") | crontab -')
-    // make crontab persistent, this actually depends on Firewalla code
-    // but since it won't be possible user to leverage wireless on old Firewalla, so this is fine
+    // make crontab persistent, this actually depends on Firewalla code, but that's fine cuz
+    // update_crontab.sh exists in both Gold and Purple's base image, and covers ~/.firewalla/config/crontab/
     await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/crontab`)
     await exec(`echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw" > ${r.getFirewallaUserConfigFolder()}/crontab/rtw-logrotate`)
+    await exec(`${r.getFirewallaHome()}/scripts/update_crontab.sh`)
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
@@ -172,6 +173,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // refresh interface state in case something is not relinquished in driver
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
     await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
+
+    if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
+      await exec('echo 4 > /proc/net/rtl8821cu/log_level')
+    }
 
     if (this.networkConfig.wpaSupplicant) {
 
