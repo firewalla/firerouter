@@ -54,7 +54,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // update_crontab.sh exists in both Gold and Purple's base image, and covers ~/.firewalla/config/crontab/
     await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/crontab`)
     await exec(`echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw" > ${r.getFirewallaUserConfigFolder()}/crontab/rtw-logrotate`)
-    await exec(`${r.getFirewallaHome()}/scripts/update_crontab.sh`)
+    await exec(`${r.getFirewallaHome()}/scripts/update_crontab.sh`).catch(()=>{})
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
@@ -175,7 +175,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
 
     if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
-      await exec('echo 4 > /proc/net/rtl8821cu/log_level')
+      await exec('echo 4 > /proc/net/rtl8821cu/log_level').catch(()=>{})
     }
 
     if (this.networkConfig.wpaSupplicant) {
