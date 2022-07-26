@@ -1,7 +1,8 @@
-/var/log/rtw
+/var/log/rtw.log
 {
+  su root adm
   rotate 7
-  hourly
+  daily
   maxsize 1M
   missingok
   notifempty

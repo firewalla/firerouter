@@ -1,7 +1,7 @@
 /var/log/hostapd.log
 {
   rotate 7
-  hourly
+  daily
   maxsize 1M
   missingok
   notifempty

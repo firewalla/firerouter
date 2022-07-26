@@ -49,6 +49,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/rtw /etc/logrotate.d/`);
+    await exec('(crontab -l; echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw") | crontab -')
+    // make crontab persistent, this actually depends on Firewalla code
+    // but since it won't be possible user to leverage wireless on old Firewalla, so this is fine
+    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/crontab`)
+    await exec(`echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw" > ${r.getFirewallaUserConfigFolder()}/crontab/rtw-logrotate`)
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();

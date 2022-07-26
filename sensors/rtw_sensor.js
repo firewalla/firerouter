@@ -20,22 +20,23 @@ const pclient = require('../util/redis_manager.js').getPublishClient()
 const exec = require('child-process-promise').exec;
 const platformLoader = require('../platform/PlatformLoader.js');
 const platform = platformLoader.getPlatform();
-const PurplePlatform = require('../platform/purple/PurplePlatform')
+const GoldPlatform = require('../platform/gold/GoldPlatform')
 const LogReader = require('../util/LogReader')
 
 class RTWSensor extends Sensor {
 
   async watchLog(line) {
     // #define WLAN_REASON_UNSPECIFIED 1
-    if (line.includes('alloc xmitbuf fail')) {
+    if (line.includes('alloc xmitbuf fail') || line.includes('xmit_status_check tx hang')) {
       if (++this.failCount >= this.config.fail_threshold_count && !this.reloading) {
         this.log.info('Threshold hit, reloading kernel module ...')
         pclient.publish('firerouter.wlan.xmitbuf_fail', '1')
         // sleep to allow IfPresenceSensor to catch the event
         this.reloading = true
-        await exec('sudo systemctl stop firerouter_hostapd@wlan1')
-        await exec('sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
-        await exec('sudo systemctl start firerouter_hostapd@wlan1')
+        await exec('sudo systemctl stop firerouter_hostapd@wlan1; sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
+        if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '88x2cs') {
+          await exec('echo 4 > /proc/net/rtl8821cu/log_level')
+        }
         this.reloading = false
         this.fialCount = 0
         await rclientDB0.incrAsync('sys:wlan:kernelReload:xmitbuf')
@@ -44,13 +45,11 @@ class RTWSensor extends Sensor {
   }
 
   async run() {
-    if (platform instanceof PurplePlatform && await platform.getWlanVendor() == '88x2cs') {
-      this.failCount = 0
-      this.reloading = false
-      this.logWatcher = new LogReader(this.config.log_file, true)
-      this.logWatcher.on('line', this.watchLog.bind(this))
-      this.logWatcher.watch()
-    }
+    this.failCount = 0
+    this.reloading = false
+    this.logWatcher = new LogReader(this.config.log_file, true)
+    this.logWatcher.on('line', this.watchLog.bind(this))
+    this.logWatcher.watch()
   }
 
 }
