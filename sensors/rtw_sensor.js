@@ -33,8 +33,8 @@ class RTWSensor extends Sensor {
         pclient.publish('firerouter.wlan.xmitbuf_fail', '1')
         // sleep to allow IfPresenceSensor to catch the event
         this.reloading = true
-        await exec('sudo systemctl stop firerouter_hostapd@wlan1; sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
-        if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '88x2cs') {
+        await exec(`sudo systemctl stop firerouter_hostapd@wlan1; sudo rmmod ${this.driver}; sleep 3; sudo modprobe ${this.driver}`)
+        if (platform instanceof GoldPlatform && this.driver == '8821cu') {
           await exec('echo 4 > /proc/net/rtl8821cu/log_level')
         }
         this.reloading = false
@@ -50,6 +50,12 @@ class RTWSensor extends Sensor {
     this.logWatcher = new LogReader(this.config.log_file, true)
     this.logWatcher.on('line', this.watchLog.bind(this))
     this.logWatcher.watch()
+
+    this.deriver = await platform.getWlanVendor()
+
+    if (platform instanceof GoldPlatform && this.driver == '8821cu') {
+      await exec('echo 4 > /proc/net/rtl8821cu/log_level')
+    }
   }
 
 }
