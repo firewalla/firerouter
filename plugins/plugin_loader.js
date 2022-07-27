@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -76,7 +76,7 @@ function createPluginInstance(category, name, constructor) {
   instance = new constructor(name);
   instance.name = name;
   pluginCategoryMap[category][name] = instance;
-  log.info("Instance created", instance);
+  log.info("Instance created", instance.name);
   return instance;
 }
 
