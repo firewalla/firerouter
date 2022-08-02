@@ -173,7 +173,15 @@
       "config": {
         "log_file": "/var/log/wpa_supplicant.log",
         "reject_threshold_count": 3,
+        "reject_threshold_min_interval": 20,
         "reject_threshold_time_seconds": 300
+      }
+    },
+    {
+      "file_path": "./rtw_sensor.js",
+      "config": {
+        "log_file": "/var/log/rtw.log",
+        "fail_threshold_count": 3
       }
     },
     {
