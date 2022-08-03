@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc
+!/*    Copyright 2021-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -37,7 +37,7 @@ class WPAConnectionSensor extends Sensor {
     if (line.includes('CTRL-EVENT-ASSOC-REJECT status_code=1')) {
       // ignore reject events within a minute as it could coming from multiple SSIDs
       const now = Date.now() / 1000
-      if (!this.rejects.length || now - 60 > this.rejects[this.rejects.length-1]) {
+      if (!this.rejects.length || now - this.config.reject_threshold_min_interval > this.rejects[this.rejects.length-1]) {
         this.rejects.push(now)
         this.log.debug('added reject event', this.rejects)
         while (this.rejects[0] < now - this.config.reject_threshold_time_seconds) {

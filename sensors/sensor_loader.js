@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -34,6 +34,7 @@ async function initSensors() {
       const sensorClass = require(filePath);
       await sensorClass.prepare();
       const sensorInstance = new sensorClass(sensorConfig);
+      log.info('loaded', sensorInstance.constructor.name)
       sensors[sensorInstance.constructor.name] = sensorInstance;
       await sensorInstance.run();
     } catch (err) {
