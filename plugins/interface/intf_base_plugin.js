@@ -29,6 +29,9 @@ const Promise = require('bluebird');
 const {Address4, Address6} = require('ip-address');
 const uuid = require('uuid');
 const ip = require('ip');
+const AsyncLock = require('async-lock');
+const LOCK_PD_CALC = "LOCK_PD_CALC";
+const lock = new AsyncLock();
 
 const Message = require('../../core/Message.js');
 const wrapIptables = require('../../util/util.js').wrapIptables;
@@ -49,23 +52,27 @@ class InterfaceBasePlugin extends Plugin {
     return fs.accessAsync(r.getInterfaceSysFSDirectory(this.name), fs.constants.F_OK).then(() => true).catch((err) => false);
   }
 
-  async flushIP() {
-    await exec(`sudo ip addr flush dev ${this.name}`).catch((err) => {
-      this.log.error(`Failed to flush ip address of ${this.name}`, err);
-    });
-    // make sure to stop dhclient no matter if dhcp is enabled
-    await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
-    // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
-    await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
-    await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
-    // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
-    const lease6Filename = await this._getDHCPCDLease6Filename();
-    if (lease6Filename)
-      await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
-    // regenerate ipv6 link local address based on EUI64
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
+  async flushIP(af = null) {
+    if (!af || af == 4) {
+      await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
+        this.log.error(`Failed to flush ip address of ${this.name}`, err);
+      });
+      // make sure to stop dhclient no matter if dhcp is enabled
+      await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+    }
+    if (!af || af == 6) {
+      // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
+      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+      const lease6Filename = await this._getDHCPCDLease6Filename();
+      if (lease6Filename)
+        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+      // regenerate ipv6 link local address based on EUI64
+      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
+      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
+    }
   }
 
   async flush() {
@@ -103,6 +110,8 @@ class InterfaceBasePlugin extends Plugin {
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
         await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
+        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
+        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
         await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
         });
@@ -302,6 +311,8 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
       await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
+      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`);
+      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6);
       await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
         this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
       });
@@ -378,36 +389,36 @@ class InterfaceBasePlugin extends Plugin {
           this.log.warn(`Interface ${fromIface} is not present yet`);
         } else {
           // assign sub prefix id for this interface
-          const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
-          const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
-            this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
-            return null;
+          await lock.acquire(LOCK_PD_CALC, async () => {
+            const pdFile = r.getInterfaceDelegatedPrefixPath(fromIface);
+            const prefixes = await fs.readFileAsync(pdFile, {encoding: 'utf8'}).then(content => content.trim().split("\n").filter(l => l.length > 0)).catch((err) => {
+              this.log.error(`Delegated prefix from ${fromIface} for ${this.name} is not found`);
+              return null;
+            });
+            const subPrefix = await this._findSubPrefix(fromIface, prefixes);
+            let ipChanged = false;
+            if (subPrefix) {
+              // clear previously assigned prefixes in the cache file
+              await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+              // add link local route to interface local and default routing table
+              await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => { });
+              await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => { });
+              const addr = new Address6(subPrefix);
+              if (!addr.isValid()) {
+                this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
+              } else {
+                // the suffix of the delegated interface is always 1
+                await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
+                  this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+                });
+                ipChanged = true;
+              }
+              if (ipChanged) {
+                // write newly assigned prefixes to the cache file
+                await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
+              }
+            }
           });
-          const subPrefix = await this._findSubPrefix(fromIface, prefixes);
-          let ipChanged = false;
-          if (subPrefix) {
-            // clear previously assigned prefixes in the cache file
-            await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
-            // add link local route to interface local and default routing table
-            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => { });
-            await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => { });
-            const addr = new Address6(subPrefix);
-            if (!addr.isValid()) {
-              this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
-            } else {
-              // the suffix of the delegated interface is always 1
-              await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
-              });
-              ipChanged = true;
-            }
-            if (ipChanged) {
-              // write newly assigned prefixes to the cache file
-              await fs.writeFileAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`, subPrefix, { encoding: 'utf8' }).catch((err) => { });
-              // trigger reapply of downstream plugins that are dependent on this interface
-              this.propagateConfigChanged(true);
-            }
-          }
         }
       }
       // TODO: do not support static dns nameservers for IPv6 currently
@@ -471,8 +482,8 @@ class InterfaceBasePlugin extends Plugin {
         return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
       }).catch((err) => {});
       // specified DNS nameservers supersedes those assigned by DHCP
-      if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0) {
-        const nameservers = this.networkConfig.nameservers.map((nameserver) => `nameserver ${nameserver}`).join("\n");
+      if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0 && this.networkConfig.nameservers.some(s => new Address4(s).isValid())) {
+        const nameservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid()).map((nameserver) => `nameserver ${nameserver}`).join("\n");
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       } else {
         await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
@@ -622,7 +633,7 @@ class InterfaceBasePlugin extends Plugin {
   async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
-        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
       }
@@ -634,10 +645,12 @@ class InterfaceBasePlugin extends Plugin {
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
+      if (!_.isEmpty(this._srcIPs))
+        await this.unmarkOutputConnection(rtid);
       const srcIPs = [];
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
-        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+        await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
           this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
         });
         srcIPs.push(ip4Addr);
@@ -916,8 +929,9 @@ class InterfaceBasePlugin extends Plugin {
     if (active && pingTestEnabled) {
       // no need to use Promise.any as ping test time for each target is the same
       // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
+      const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(pingTestIP.map(async (ip) => {
-        let cmd = `ping -n -q -I ${this.name} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
+        let cmd = `sudo ping -n -q -m ${rtid} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
           if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
             this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
@@ -1117,6 +1131,7 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
         if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+          platform.clearMacCache(this.name);
           this._reapplyNeeded = true;
           // trigger downstream plugins to reapply config
           this.propagateConfigChanged(true);
@@ -1128,9 +1143,10 @@ class InterfaceBasePlugin extends Plugin {
         const payload = event.getEventPayload(e);
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
-          // the interface from which prefix is delegated is changed, need to reapply config
-          this._reapplyNeeded = true;
-          pl.scheduleReapply();
+          // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
+          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).catch((err) => {
+            this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+          });
         }
         break;
       }

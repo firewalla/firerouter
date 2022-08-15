@@ -111,7 +111,7 @@ async function generatePSK(ssid, passphrase) {
   const platform = require('../platform/PlatformLoader.js').getPlatform()
   const ssidHex = _getCLangHexString(ssid);
   const passphraseHex = _getCLangHexString(passphrase);
-  const lines = await exec(`bash -c "${platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}"`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
+  const lines = await exec(`bash -c "${await platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}"`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
   for (const line of lines) {
     if (line.startsWith("psk="))
       return line.substring(4);
