@@ -85,7 +85,7 @@ function getFileTransport() {
 }
 
 function getConsoleTransport() {
-  let loglevel = 'debug';
+  let loglevel = 'silly';
   // if (production) {
   //   loglevel = 'warn';
   // }
@@ -109,7 +109,7 @@ function getConsoleTransport() {
 
 function getTestTransport() {
   return new(winston.transports.File) ({
-    level: 'debug',
+    level: 'silly',
     name: 'log-file-test',
     filename: "test.log",
     dirname: "/home/pi/.forever",
@@ -197,6 +197,13 @@ module.exports = function (component) {
       return // do nothing
     }
     logger.log.apply(logger, ["debug", component + ": " + argumentsToString(arguments)]);
+  };
+
+  wrap.silly = function () {
+    if (logger.levels[getLogLevel()] < logger.levels['silly']) {
+      return // do nothing
+    }
+    logger.log.apply(logger, ["silly", component + ": " + argumentsToString(arguments)]);
   };
 
   wrap.setGlobalLogLevel = (level) => {

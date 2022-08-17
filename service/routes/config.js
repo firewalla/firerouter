@@ -73,7 +73,7 @@ router.get('/lans', async (req, res, next) => {
 
 router.get('/wlan/:intf/available', async (req, res, _next) => {
   try {
-    const detailed = await ncm.getWlansViaWpaSupplicant()
+    const detailed = await ncm.getWlansViaWpaSupplicant(Number(req.query.waitForScan))
     log.debug(`Got ${detailed.length} SSIDs from wpa_supplicant`)
     const result = detailed
       .filter(w => w.ssid != '')

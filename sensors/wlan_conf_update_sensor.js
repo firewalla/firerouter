@@ -18,6 +18,7 @@ const Sensor = require('./sensor.js');
 const fs = require('fs');
 const ncm = require('../core/network_config_mgr.js');
 const platform = require('../platform/PlatformLoader.js').getPlatform();
+const r = require('../util/firerouter.js');
 
 class WlanConfUpdateSensor extends Sensor {
   async run() {
@@ -32,7 +33,17 @@ class WlanConfUpdateSensor extends Sensor {
           this.log.error(`Failed to check and update network config for ${iface}`, err.message);
         });
       }
-    });    
+    });
+    // check initial state in 45 seconds
+    setTimeout(async () => {
+      const ifExists = await fs.promises.access(r.getInterfaceSysFSDirectory(iface), fs.constants.F_OK).then(() => true).catch((err) => false);
+      if (ifExists) {
+        this.log.info(`${iface} appears, check and update network config if necessary ...`);
+        await this.checkAndUpdateNetworkConfig(iface).catch((err) => {
+          this.log.error(`Failed to check and update network config for ${iface}`, err.message);
+        });
+      }
+    }, 45000);
   }
 
   async checkAndUpdateNetworkConfig(iface) {
