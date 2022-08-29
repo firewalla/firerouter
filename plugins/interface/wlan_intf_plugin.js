@@ -38,7 +38,8 @@ const APSafeFreqs = [
   5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
 ]
 
-const WLAN_BSS_EXPIRATION = 630
+const WLAN_BSS_EXPIRATION_AGE = 630
+const WLAN_BSS_EXPIRATION_SCAN_COUNT = 5
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -126,16 +127,26 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async writeConfigFile() {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
-    entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
-    entries.push(`autoscan=exponential:2:300`)
+
+    const wpaSupplicant = this.networkConfig.wpaSupplicant || {}
+
+    !wpaSupplicant.bss_expiration_age && entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION_AGE}`);
+    !wpaSupplicant.bss_expiration_scan_count && entries.push(`bss_expiration_scan_count=${WLAN_BSS_EXPIRATION_SCAN_COUNT}`);
+    !wpaSupplicant.auto_scan && entries.push(`autoscan=exponential:2:300`)
 
     // sets freq_list globally limits the frequencies being scaned
     // sets freq_list again on each network limits the frequencies being used for connection
-    entries.push(`freq_list=${APSafeFreqs.join(' ')}`)
+    !wpaSupplicant.freq_list && entries.push(`freq_list=${APSafeFreqs.join(' ')}`)
 
-    const networks = this.networkConfig.wpaSupplicant.networks || [];
+    for (const key in wpaSupplicant) {
+      if (key == 'networks') continue
+
+      const value = await util.generateWpaSupplicantConfig(key, wpaSupplicant);
+      entries.push(`${key}=${value}`);
+    }
+
+    const networks = wpaSupplicant.networks || [];
     for (const network of networks) {
-
       entries.push("network={");
       // freq_list set by client overrides the default AP safe setting
       !network.freq_list && entries.push(`\tfreq_list=${APSafeFreqs.join(' ')}`)
@@ -145,6 +156,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       }
       entries.push("}\n");
     }
+
     await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
   }
 
