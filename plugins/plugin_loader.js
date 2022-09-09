@@ -109,12 +109,12 @@ function _isConfigEqual(c1, c2) {
   return _.isEqual(c1Copy, c2Copy);
 }
 
-async function _publishChangeApplied() {
+async function publishChangeApplied() {
   // publish to redis db used by Firewalla
   await fwpclient.publishAsync(Message.MSG_FR_CHANGE_APPLIED, "");
 }
 
-async function _publishIfaceChangeApplied() {
+async function publishIfaceChangeApplied() {
   // publish to redis db used by Firewalla
   await fwpclient.publishAsync(Message.MSG_FR_IFACE_CHANGE_APPLIED, "");
 }
@@ -257,9 +257,9 @@ async function reapply(config, dryRun = false) {
     }
     pluginCategoryMap = newPluginCategoryMap;
     if (changeApplied)
-      await _publishChangeApplied();
+      await publishChangeApplied();
     if (ifaceChangeApplied)
-      await _publishIfaceChangeApplied();
+      await publishIfaceChangeApplied();
     applyInProgress = false;
     lastAppliedTimestamp = Date.now() / 1000;
     return errors;
@@ -304,5 +304,7 @@ module.exports = {
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,
   isApplyInProgress: isApplyInProgress,
-  getLastAppliedTimestamp: getLastAppliedTimestamp
+  getLastAppliedTimestamp: getLastAppliedTimestamp,
+  publishChangeApplied: publishChangeApplied,
+  publishIfaceChangeApplied: publishIfaceChangeApplied
 };
