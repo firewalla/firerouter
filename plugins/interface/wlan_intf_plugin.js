@@ -270,6 +270,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
             await this.updateRouteForDNS();
             await this.markOutputConnection();
           }
+          await pl.publishIfaceChangeApplied();
         }).catch((err) => {
           this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
         });
