@@ -1144,7 +1144,7 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).catch((err) => {
+          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => pl.publishIfaceChangeApplied()).catch((err) => {
             this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
           });
         }
