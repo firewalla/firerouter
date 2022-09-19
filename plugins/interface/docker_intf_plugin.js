@@ -24,8 +24,8 @@ const {Address4, Address6} = require('ip-address');
 class DockerInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    const running = await exec(`sudo docker ps -q`).then((result) => !_.isEmpty(result.stdout)).catch((err) => false);
-    if (running)
+    const hasContainer = await exec(`sudo ls /var/lib/docker/containers -1 | wc -l`).then((result) => result.stdout.trim() !== "0").catch((err) => false);
+    if (hasContainer)
       await exec(`sudo systemctl start docker`).catch((err) => {});
     else
       await exec(`sudo systemctl stop docker`).catch((err) => {});
