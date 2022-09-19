@@ -51,7 +51,15 @@ class DockerPlugin extends Plugin {
     // a unified way to fetch compose.yaml as well as files/directories that will be mapped as volumes in containers
     // we will use self-managed docker images so it is reasonable to provide a general way to prepare all these config files
   }
+
+  async _testAndStartDocker() {
+    const active = await exec(`sudo systemctl -q is-active docker`).then(() => true).catch((err) => false);
+    if (!active)
+      await exec(`sudo systemctl start docker`).catch((err) => {});
+  }
+
   async apply() {
+    await this._testAndStartDocker();
     await this._fetchConfigAndFiles();
     const composeConfig = await fsp.readFile(this._getOriginalComposeFilePath(), {encoding: 'utf8'}).then(content => YAML.parse(content)).catch((err) => {
       this.log.error(`Failed to prase original docker compose file for ${this.name}, ${this._getOriginalComposeFilePath()}`, err.message);

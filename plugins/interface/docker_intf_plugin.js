@@ -24,15 +24,27 @@ const {Address4, Address6} = require('ip-address');
 class DockerInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await exec(`sudo systemctl start docker`).catch((err) => {});
+    const running = await exec(`sudo docker ps -q`).then((result) => !_.isEmpty(result.stdout)).catch((err) => false);
+    if (running)
+      await exec(`sudo systemctl start docker`).catch((err) => {});
+    else
+      await exec(`sudo systemctl stop docker`).catch((err) => {});
   }
 
   async flush() {
     await super.flush();
+    await this._testAndStartDocker();
     await exec(`sudo docker network rm ${this.name}`).catch((err) => {});
   }
 
+  async _testAndStartDocker() {
+    const active = await exec(`sudo systemctl -q is-active docker`).then(() => true).catch((err) => false);
+    if (!active)
+      await exec(`sudo systemctl start docker`).catch((err) => {});
+  }
+
   async createInterface() {
+    await this._testAndStartDocker();
     const driver = this.networkConfig.driver || "bridge";
     const intfName = this.name;
     const subnets = [];
