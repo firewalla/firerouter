@@ -1,0 +1,15 @@
+/var/log/rtw.log
+{
+  su root adm
+  rotate 7
+  daily
+  maxsize 1M
+  missingok
+  notifempty
+  compress
+  delaycompress
+  nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}
