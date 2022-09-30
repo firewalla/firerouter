@@ -32,11 +32,15 @@ const maxErrCounter = 100; // do not try to set mac address again if too many er
 
 class PSEPlatform extends Platform {
   getName() {
-    return "purple";
+    return "pse";
   }
 
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
+  }
+
+  async getWlanVendor() {
+    return "8821cu";
   }
 
   async ledNormalVisibleStart() {
@@ -97,6 +101,7 @@ class PSEPlatform extends Platform {
     return;
   }
 
+  // need to adapt to PSE board
   async getMac(index) {
     const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
           .then(result => result.stdout.trim())
