@@ -22,7 +22,6 @@ const Platform = require('../Platform.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
-const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 
 const macCache = {};
@@ -73,11 +72,15 @@ class PSEPlatform extends Platform {
   }
 
   _isPhysicalInterface(iface) {
-    return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
+    return ["eth0", "eth1"].includes(iface);
+  }
+
+  _isWLANInterface(iface) {
+    return ["wlan0", "wlan1"].includes(iface);
   }
 
   async getMacByIface(iface) {
-    if(!this._isPhysicalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
       return null;
     }
 
@@ -90,12 +93,29 @@ class PSEPlatform extends Platform {
     return mac;
   }
 
+  async _getPermanentMac(iface) {
+    return await exec(`sudo ethtool -P ${iface} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+      log.error(`Failed to get permanent address of ${iface}`, err.message);
+      return null;
+    });
+  }
+
+  async _calculatedMacWlan1() {
+    const activeMacWlan0 = await this.getActiveMac("wlan0");
+    const calculatedMacWlan1 =  Number(parseInt(activeMacWlan0.replace(/:/g,''),16)+1).toString(16).replace(/(..)(?=.)/g,'$1:');
+    return calculatedMacWlan1;
+  }
+
   async _getMacByIface(iface) {
     switch(iface) {
       case "eth0":
         return await this.getMac(0);
       case "eth1":
         return await this.getMac(1);
+      case "wlan0":
+        return await this._getPermanentMac(iface);
+      case "wlan1":
+        return await this._calculatedMacWlan1();
     }
 
     return;
@@ -103,7 +123,7 @@ class PSEPlatform extends Platform {
 
   // need to adapt to PSE board
   async getMac(index) {
-    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
+    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 0 0x51 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
           .then(result => result.stdout.trim())
           .catch((err) => {
             log.error(`Failed to get MAC address for index ${index} from EPROM`, err.message);
@@ -122,7 +142,7 @@ class PSEPlatform extends Platform {
 
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
-    if(!this._isPhysicalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
       // for non-phy ifaces, use function from base class
       await super.setHardwareAddress(iface, hwAddr);
       return;
@@ -162,27 +182,27 @@ class PSEPlatform extends Platform {
   }
 
   async resetHardwareAddress(iface) {
-    if(!this._isPhysicalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
       // for non-phy ifaces, use function from base class
       await super.resetHardwareAddress(iface);
       return;
     }
 
     const activeMac = await this.getActiveMac(iface);
-    const eepromMac = await this.getMacByIface(iface);
-    if(!eepromMac) {
-      log.error("Unable to get eeprom mac for iface", iface);
+    const origMac = await this.getMacByIface(iface);
+    if(!origMac) {
+      log.error("Unable to get original mac for iface", iface);
       return;
     }
 
-    if ((activeMac && activeMac.toUpperCase()) !== (eepromMac && eepromMac.toUpperCase())) {
+    if ((activeMac && activeMac.toUpperCase()) !== (origMac && origMac.toUpperCase())) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
       }
 
-      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, eepromMac);
-      await this._setHardwareAddress(iface, eepromMac);
+      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, origMac);
+      await this._setHardwareAddress(iface, origMac);
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
