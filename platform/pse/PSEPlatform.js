@@ -46,6 +46,14 @@ class PSEPlatform extends Platform {
     return "8821cu";
   }
 
+  async getWpaCliBinPath() {
+    return `${__dirname}/bin/wpa_cli`;
+  }
+
+  async getWpaPassphraseBinPath() {
+    return `${__dirname}/bin/wpa_passphrase`;
+  }
+
   async ledNormalVisibleStart() {
     await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
       log.error("Failed to set LED as WAN normal visible");
