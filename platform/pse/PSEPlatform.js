@@ -38,6 +38,10 @@ class PSEPlatform extends Platform {
     return `${__dirname}/files/default_setup.json`;
   }
 
+  getWifiClientInterface() {
+    return "wlan0";
+  }
+
   async getWlanVendor() {
     return "8821cu";
   }
