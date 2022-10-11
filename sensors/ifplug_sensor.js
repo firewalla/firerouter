@@ -55,7 +55,8 @@ class IfPlugSensor extends Sensor {
   async startMonitoringInterface(iface) {
     const upDelay = this.config.up_delay || 5;
     const downDelay = this.config.down_delay || 5;
-    await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
+    // specify -a so that ifplugd will not automatically enable interface, otherwise may cause trouble while adding slave into bond
+    await exec(`sudo ifplugd -pq -a -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
       this.log.error(`Failed to start ifplugd on ${iface}`);
     });
   }
