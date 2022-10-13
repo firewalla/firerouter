@@ -423,7 +423,7 @@ case "$reason" in
         fi
 
         # if there is no router recorded in the lease or the 1st router answers pings
-        if [ -z "$new_routers" ] || ping -q -c 1 "${new_routers%% *}"; then
+        if [ -z "$new_routers" ] || ping -I ${interface} -q -c 1 "${new_routers%% *}"; then
 	    # if we have $new_rfc3442_classless_static_routes then we have to
 	    # ignore $new_routers entirely
 	    if [ ! "$new_rfc3442_classless_static_routes" ]; then
