@@ -414,6 +414,10 @@ class NetworkConfigManager {
       log.warn('No wlan interface configured for wpa_supplicant')
       return []
     }
+    if (await targetWlan.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${targetWlan.name} is not present yet`);
+      return [];
+    }
 
     const wpaCliPath = await platform.getWpaCliBinPath();
     const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`

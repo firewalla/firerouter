@@ -81,6 +81,10 @@ class HostapdPlugin extends Plugin {
     if (!intfPlugin)
       this.fatal(`Cannot find interface plugin ${this.name}`);
     this.subscribeChangeFrom(intfPlugin);
+    if (await intfPlugin.isInterfacePresent() === false) {
+      this.log.warn(`WLAN interface ${this.name} is not present yet`);
+      return;
+    }
     if (this.networkConfig.bridge) {
       const bridgeIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.bridge);
       if (!bridgeIntfPlugin)

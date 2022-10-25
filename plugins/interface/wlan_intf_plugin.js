@@ -38,7 +38,19 @@ const APSafeFreqs = [
   5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
 ]
 
-const WLAN_BSS_EXPIRATION = 630
+const defaultGlobalConfig = {
+  bss_expiration_age: 630,
+  bss_expiration_scan_count: 5,
+  autoscan: 'exponential:2:300',
+
+  // sets freq_list globally limits the frequencies being scaned
+  freq_list: APSafeFreqs,
+}
+
+const defaultNetworkConfig = {
+  // sets freq_list again on each network limits the frequencies being used for connection
+  freq_list: APSafeFreqs,
+}
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -126,25 +138,27 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async writeConfigFile() {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
-    entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
-    entries.push(`autoscan=exponential:2:300`)
 
-    // sets freq_list globally limits the frequencies being scaned
-    // sets freq_list again on each network limits the frequencies being used for connection
-    entries.push(`freq_list=${APSafeFreqs.join(' ')}`)
+    const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
+    const networks = wpaSupplicant.networks || [];
+    delete wpaSupplicant.networks
 
-    const networks = this.networkConfig.wpaSupplicant.networks || [];
+    const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
+    for (const key in globalConfig) {
+      const value = await util.generateWpaSupplicantConfig(key, globalConfig);
+      entries.push(`${key}=${value}`);
+    }
+
     for (const network of networks) {
-
       entries.push("network={");
-      // freq_list set by client overrides the default AP safe setting
-      !network.freq_list && entries.push(`\tfreq_list=${APSafeFreqs.join(' ')}`)
-      for (const key of Object.keys(network)) {
-        const value = await util.generateWpaSupplicantConfig(key, network);
+      const networkConfig = Object.assign({}, defaultNetworkConfig, network)
+      for (const key in networkConfig) {
+        const value = await util.generateWpaSupplicantConfig(key, networkConfig);
         entries.push(`\t${key}=${value}`);
       }
       entries.push("}\n");
     }
+
     await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
   }
 
