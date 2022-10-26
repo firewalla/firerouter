@@ -32,6 +32,8 @@ const fs = require('fs');
 const pluginConfig = require('./config.json');
 const util = require('../../util/util');
 
+const WLANInterfacePlugin = require('../interface/wlan_intf_plugin')
+
 const WLAN_AVAILABLE_RETRY = 3
 
 class HostapdPlugin extends Plugin {
@@ -203,6 +205,10 @@ class HostapdPlugin extends Plugin {
           }
         }
       }
+
+      await WLANInterfacePlugin.simpleWpaCommand('set autoscan exponential:2:300')
+    } else {
+      await WLANInterfacePlugin.simpleWpaCommand('set autoscan periodic:10')
     }
   }
 
