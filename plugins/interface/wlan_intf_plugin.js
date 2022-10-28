@@ -102,10 +102,13 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   static async simpleWpaCommand(paramString) {
-    const instance = WLANInterfacePlugin.getInstanceWithWpaSupplicant()
+    if (!_.isString(paramString) || !paramString.trim().length)
+      throw new Error('Empty command')
+
+    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant()
     if (instance) {
       const wpaCliPath = await platform.getWpaCliBinPath();
-      const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
+      const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
       return exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${instance.name} ${paramString}`)
     }
   }
