@@ -356,9 +356,13 @@ class InterfaceBasePlugin extends Plugin {
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
       const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
+      const pdHints = this.networkConfig.dhcp6.pdHints || [];
       const pdOpts = [];
       for (let i = 1; i <= numOfPDs; i++) {
-        pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
+        if (i <= pdHints.length)
+          pdOpts.push(`ia_pd ${i}/${pdHints[i - 1]} not_exist/1`);
+        else
+          pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
       }
       content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
