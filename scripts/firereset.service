@@ -13,8 +13,8 @@ ExecStart=/bin/bash -c "sudo chown pi /home/pi/.forever/firereset.log &>/dev/nul
 ExecStopPost=/home/pi/firerouter/scripts/post_stop_firereset.sh
 ExecStartPost=/home/pi/firerouter/scripts/post_start_firereset.sh
 MemoryAccounting=yes
-# firereset usually takes ~20M
-MemoryLimit=40M
+# firereset usually takes ~20M, this is just a gate keeper for memory leak
+MemoryMax=200M
 
 [Install]
 WantedBy=multi-user.target
