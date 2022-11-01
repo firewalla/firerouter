@@ -19,6 +19,7 @@ const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const ncm = require('../../core/network_config_mgr')
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -41,7 +42,6 @@ const APSafeFreqs = [
 const defaultGlobalConfig = {
   bss_expiration_age: 630,
   bss_expiration_scan_count: 5,
-  autoscan: 'exponential:2:300',
 
   // sets freq_list globally limits the frequencies being scaned
   freq_list: APSafeFreqs,
@@ -89,6 +89,28 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async installWpaSupplicantScript() {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
+  }
+
+  static async getInstanceWithWpaSupplicant() {
+    const wpa = Object.values(pl.getPluginInstances("interface"))
+      .find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+    if (!wpa || await wpa.isInterfacePresent() == false) {
+      this.error(`No wlan interface configured with wpa_supplicant`);
+      return null
+    }
+    return wpa
+  }
+
+  static async simpleWpaCommand(paramString) {
+    if (!_.isString(paramString) || !paramString.trim().length)
+      throw new Error('Empty command')
+
+    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant()
+    if (instance) {
+      const wpaCliPath = await platform.getWpaCliBinPath();
+      const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
+      return exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${instance.name} ${paramString}`)
+    }
   }
 
   async readyToConnect() {
@@ -142,6 +164,12 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
+
+    // use exponential scan only if WWLAN is configured
+    const frcfg = await ncm.getActiveConfig()
+    if (_.isObject(frcfg.hostapd) && Object.keys(frcfg.hostapd).length) {
+      Object.assign(defaultGlobalConfig, {  autoscan: 'exponential:2:300' })
+    }
 
     const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
     for (const key in globalConfig) {
