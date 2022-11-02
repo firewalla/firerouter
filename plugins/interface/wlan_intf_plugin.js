@@ -91,21 +91,30 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
   }
 
-  static async getInstanceWithWpaSupplicant() {
-    const wpa = Object.values(pl.getPluginInstances("interface"))
-      .find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+  static async getInstanceWithWpaSupplicant(iwPhy) {
+    const wpas = Object.values(pl.getPluginInstances("interface"))
+      .filter(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+    let wpa = null;
+    // find the wlan interface with the same iw phy as the input iwPhy
+    for (const iface of wpas) {
+      const phy = await fs.readFileAsync(`/sys/class/net/${iface.name}/phy80211/name`, {encoding: "utf8"});
+      if (!iwPhy || phy == iwPhy) {
+        wpa = iface;
+        break;
+      }
+    }
     if (!wpa || await wpa.isInterfacePresent() == false) {
-      this.error(`No wlan interface configured with wpa_supplicant`);
+      console.error(`No wlan interface configured with wpa_supplicant`);
       return null
     }
     return wpa
   }
 
-  static async simpleWpaCommand(paramString) {
+  static async simpleWpaCommand(iwPhy,  paramString) {
     if (!_.isString(paramString) || !paramString.trim().length)
       throw new Error('Empty command')
 
-    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant()
+    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
       const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
