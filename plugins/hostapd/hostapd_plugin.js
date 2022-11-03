@@ -182,6 +182,7 @@ class HostapdPlugin extends Plugin {
     const confPath = this._getConfFilePath();
     await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
+    const iwPhy = await fsp.readFile(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (this.networkConfig.enabled !== false) {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
       if (this.networkConfig.bridge) {
@@ -205,10 +206,15 @@ class HostapdPlugin extends Plugin {
           }
         }
       }
-
-      await WLANInterfacePlugin.simpleWpaCommand('set autoscan exponential:2:300')
+      if (iwPhy)
+        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
+          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+        });
     } else {
-      await WLANInterfacePlugin.simpleWpaCommand('set autoscan periodic:10')
+      if (iwPhy)
+        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
+          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+        });
     }
   }
 
