@@ -174,7 +174,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
 
-    const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
+    const globalConfig = Object.assign({}, defaultGlobalConfig)
     const iwPhy = await fs.readFileAsync(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (iwPhy) {
        // use exponential scan only if WWLAN is configured
@@ -189,6 +189,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         }
       }
     }
+    // override globalConfig with dynamically-defined configuration
+    Object.assign(globalConfig, wpaSupplicant);
     for (const key in globalConfig) {
       const value = await util.generateWpaSupplicantConfig(key, globalConfig);
       entries.push(`${key}=${value}`);
