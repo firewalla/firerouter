@@ -91,21 +91,30 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
   }
 
-  static async getInstanceWithWpaSupplicant() {
-    const wpa = Object.values(pl.getPluginInstances("interface"))
-      .find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+  static async getInstanceWithWpaSupplicant(iwPhy) {
+    const wpas = Object.values(pl.getPluginInstances("interface"))
+      .filter(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+    let wpa = null;
+    // find the wlan interface with the same iw phy as the input iwPhy
+    for (const iface of wpas) {
+      const phy = await fs.readFileAsync(`/sys/class/net/${iface.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+      if (phy == iwPhy) {
+        wpa = iface;
+        break;
+      }
+    }
     if (!wpa || await wpa.isInterfacePresent() == false) {
-      this.error(`No wlan interface configured with wpa_supplicant`);
+      console.error(`No wlan interface configured with wpa_supplicant`);
       return null
     }
     return wpa
   }
 
-  static async simpleWpaCommand(paramString) {
+  static async simpleWpaCommand(iwPhy,  paramString) {
     if (!_.isString(paramString) || !paramString.trim().length)
       throw new Error('Empty command')
 
-    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant()
+    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
       const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
@@ -165,13 +174,23 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
 
-    // use exponential scan only if WWLAN is configured
-    const frcfg = await ncm.getActiveConfig()
-    if (_.isObject(frcfg.hostapd) && Object.keys(frcfg.hostapd).length) {
-      Object.assign(defaultGlobalConfig, {  autoscan: 'exponential:2:300' })
+    const globalConfig = Object.assign({}, defaultGlobalConfig)
+    const iwPhy = await fs.readFileAsync(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+    if (iwPhy) {
+       // use exponential scan only if WWLAN is configured
+      const frcfg = await ncm.getActiveConfig()
+      if (_.isObject(frcfg.hostapd) && Object.keys(frcfg.hostapd).length) {
+        for (const iface of Object.keys(frcfg.hostapd)) {
+          const phy = await fs.readFileAsync(`/sys/class/net/${iface}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+          if (phy == iwPhy) {
+            Object.assign(globalConfig, {  autoscan: 'exponential:2:300' });
+            break;
+          }
+        }
+      }
     }
-
-    const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
+    // override globalConfig with dynamically-defined configuration
+    Object.assign(globalConfig, wpaSupplicant);
     for (const key in globalConfig) {
       const value = await util.generateWpaSupplicantConfig(key, globalConfig);
       entries.push(`${key}=${value}`);
