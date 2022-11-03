@@ -97,8 +97,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     let wpa = null;
     // find the wlan interface with the same iw phy as the input iwPhy
     for (const iface of wpas) {
-      const phy = await fs.readFileAsync(`/sys/class/net/${iface.name}/phy80211/name`, {encoding: "utf8"});
-      if (!iwPhy || phy == iwPhy) {
+      const phy = await fs.readFileAsync(`/sys/class/net/${iface.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+      if (phy == iwPhy) {
         wpa = iface;
         break;
       }
@@ -174,13 +174,21 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
 
-    // use exponential scan only if WWLAN is configured
-    const frcfg = await ncm.getActiveConfig()
-    if (_.isObject(frcfg.hostapd) && Object.keys(frcfg.hostapd).length) {
-      Object.assign(defaultGlobalConfig, {  autoscan: 'exponential:2:300' })
-    }
-
     const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
+    const iwPhy = await fs.readFileAsync(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+    if (iwPhy) {
+       // use exponential scan only if WWLAN is configured
+      const frcfg = await ncm.getActiveConfig()
+      if (_.isObject(frcfg.hostapd) && Object.keys(frcfg.hostapd).length) {
+        for (const iface of Object.keys(frcfg.hostapd)) {
+          const phy = await fs.readFileAsync(`/sys/class/net/${iface}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+          if (phy == iwPhy) {
+            Object.assign(globalConfig, {  autoscan: 'exponential:2:300' });
+            break;
+          }
+        }
+      }
+    }
     for (const key in globalConfig) {
       const value = await util.generateWpaSupplicantConfig(key, globalConfig);
       entries.push(`${key}=${value}`);
