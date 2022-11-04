@@ -212,10 +212,6 @@ class PurplePlatform extends Platform {
     return "Firewalla Purple";
   }
 
-  async getActiveMac(iface) {
-    return await fs.readFileAsync(`/sys/class/net/${iface}/address`, {encoding: 'utf8'}).then(result => result.trim().toUpperCase()).catch(() => "");
-  }
-
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
     if(!this._isPhysicalInterface(iface)) {

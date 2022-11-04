@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -13,16 +13,13 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-const fs = require('fs');
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
-
 const Platform = require('../Platform.js');
 
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const WifiSD = require('../WifiSD.js')
 
 const macCache = {};
 
@@ -42,8 +39,16 @@ class PSEPlatform extends Platform {
     return "wlan0";
   }
 
+  wifiSD() {
+    // only 1 wifi sd supported now
+    if (!this._wifiSD) {
+      this._wifiSD = new WifiSD(this)
+    }
+    return this._wifiSD
+  }
+
   async getWlanVendor() {
-    return "8821cu";
+    return this.wifiSD().getDriverName()
   }
 
   async getWpaCliBinPath() {
@@ -148,10 +153,6 @@ class PSEPlatform extends Platform {
     return "Firewalla Purple SE";
   }
 
-  async getActiveMac(iface) {
-    return await fs.readFileAsync(`/sys/class/net/${iface}/address`, {encoding: 'utf8'}).then(result => result.trim().toUpperCase()).catch(() => "");
-  }
-
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
     if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
@@ -218,6 +219,10 @@ class PSEPlatform extends Platform {
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
+  }
+
+  async overrideWLANKernelModule() {
+    // nothing to do, driver in os image now
   }
 }
 
