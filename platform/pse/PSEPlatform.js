@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -13,43 +13,42 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-const fs = require('fs');
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
-
 const Platform = require('../Platform.js');
 
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
-const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const WifiSD = require('../WifiSD.js')
 
 const macCache = {};
 
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
-class PurplePlatform extends Platform {
+class PSEPlatform extends Platform {
   getName() {
-    return "purple";
+    return "pse";
   }
 
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
   }
 
-  async getWlanVendor() {
-    if ( !this.vendor ) {
-      try {
-        const procCmdline = await fs.readFileAsync("/proc/cmdline", {encoding: 'utf8'});
-        this.vendor = procCmdline.match(' wifi_rev=([0-9a-z]*) ')[1];
-      } catch(err) {
-        log.error("Failed to parse wifi_rev from /proc/cmdline", err.message);
-        return "unknown";
-      }
+  getWifiClientInterface() {
+    return "wlan0";
+  }
+
+  wifiSD() {
+    // only 1 wifi sd supported now
+    if (!this._wifiSD) {
+      this._wifiSD = new WifiSD(this)
     }
-    return this.vendor;
+    return this._wifiSD
+  }
+
+  async getWlanVendor() {
+    return this.wifiSD().getDriverName()
   }
 
   async getWpaCliBinPath() {
@@ -84,93 +83,21 @@ class PurplePlatform extends Platform {
     });
   }
 
-  async overrideEthernetKernelModule() {
-    const changed = await this.overrideKernelModule(
-      'r8168',
-      this.getBinaryPath(),
-      '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
-    if (changed) {
-      // restore MAC address of eth1 from eprom
-      const mac = await this.getMacByIface("eth1");
-
-      if (mac) {
-        await exec(`sudo ip link set eth1 address ${mac}`).catch((err) => {
-          log.error(`Failed to set MAC address of eth1`, err.message);
-        })
-      }
-    }
-  }
-
-  async configEthernet() {
-    await this.setEthernetOffload("eth1","sg","scatter-gather","on");
-    await this.setEthernetOffload("eth1","tso","TCP segmentation offload","on");
-    await this.setEthernetOffload("eth1","gso","generic segmentation offload","on");
-  }
-
-  getWifiClientInterface() {
-    return "wlan0";
-  }
-
-  getWifiAPInterface() {
-    return "wlan1";
-  }
-
-  async overrideWLANKernelModule() {
-    if (await this.getWlanVendor() == '88x2cs') {
-      const changed = await this.overrideKernelModule(
-        '88x2cs',
-        this.getBinaryPath(),
-        '/lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs');
-
-      if (changed) {
-        // restore MAC address of wlan0 from eprom
-        const clientMac = await this.getMacByIface(this.getWifiClientInterface());
-        const apMac = await this.getMacByIface(this.getWifiAPInterface());
-
-        if (clientMac && apMac) {
-          const client = this.getWifiClientInterface();
-          const ap = this.getWifiAPInterface();
-
-          // shutdown dependant services
-          await exec(`sudo systemctl stop firerouter_wpa_supplicant@${client}`).catch((err) => {})
-          await exec(`sudo systemctl stop firerouter_hostapd@${ap}`).catch((err) => {})
-
-          // a hard code 1-second wait for system to release wifi interfaces
-          await util.delay(1000);
-
-          // force shutdown interfaces
-          await exec(`sudo ip link set ${client} down`).catch((err) => {
-            log.error(`Failed to turn off interface ${client}`, err.message);
-          });
-
-          await exec(`sudo ip link set ${ap} down`).catch((err) => {
-            log.error(`Failed to turn off interface ${ap}`, err.message);
-          });
-
-          // set mac address
-          await exec(`sudo ip link set ${client} address ${clientMac}`).catch((err) => {
-            log.error(`Failed to set MAC address of ${client}`, err.message);
-          });
-
-          await exec(`sudo ip link set ${ap} address ${apMac}`).catch((err) => {
-            log.error(`Failed to set MAC address of ${ap}`, err.message);
-          });
-        }
-      }
-    }
-  }
-
   clearMacCache(iface) {
     if (macCache[iface])
       delete macCache[iface];
   }
 
   _isPhysicalInterface(iface) {
-    return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
+    return ["eth0", "eth1"].includes(iface);
+  }
+
+  _isWLANInterface(iface) {
+    return ["wlan0", "wlan1"].includes(iface);
   }
 
   async getMacByIface(iface) {
-    if(!this._isPhysicalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
       return null;
     }
 
@@ -183,6 +110,19 @@ class PurplePlatform extends Platform {
     return mac;
   }
 
+  async _getPermanentMac(iface) {
+    return await exec(`sudo ethtool -P ${iface} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
+      log.error(`Failed to get permanent address of ${iface}`, err.message);
+      return null;
+    });
+  }
+
+  async _calculatedMacWlan1() {
+    const activeMacWlan0 = await this.getActiveMac("wlan0");
+    const calculatedMacWlan1 =  Number(parseInt(activeMacWlan0.replace(/:/g,''),16)+1).toString(16).replace(/(..)(?=.)/g,'$1:');
+    return calculatedMacWlan1;
+  }
+
   async _getMacByIface(iface) {
     switch(iface) {
       case "eth0":
@@ -190,16 +130,17 @@ class PurplePlatform extends Platform {
       case "eth1":
         return await this.getMac(1);
       case "wlan0":
-        return await this.getMac(2);
+        return await this._getPermanentMac(iface);
       case "wlan1":
-        return await this.getMac(3);
+        return await this._calculatedMacWlan1();
     }
 
     return;
   }
 
+  // need to adapt to PSE board
   async getMac(index) {
-    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
+    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 0 0x51 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
           .then(result => result.stdout.trim())
           .catch((err) => {
             log.error(`Failed to get MAC address for index ${index} from EPROM`, err.message);
@@ -209,12 +150,12 @@ class PurplePlatform extends Platform {
   }
 
   getModelName() {
-    return "Firewalla Purple";
+    return "Firewalla Purple SE";
   }
 
   // must kill ifplugd before changing purple mac address
   async setHardwareAddress(iface, hwAddr) {
-    if(!this._isPhysicalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
       // for non-phy ifaces, use function from base class
       await super.setHardwareAddress(iface, hwAddr);
       return;
@@ -254,31 +195,35 @@ class PurplePlatform extends Platform {
   }
 
   async resetHardwareAddress(iface) {
-    if(!this._isPhysicalInterface(iface)) {
+    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
       // for non-phy ifaces, use function from base class
       await super.resetHardwareAddress(iface);
       return;
     }
 
     const activeMac = await this.getActiveMac(iface);
-    const eepromMac = await this.getMacByIface(iface);
-    if(!eepromMac) {
-      log.error("Unable to get eeprom mac for iface", iface);
+    const origMac = await this.getMacByIface(iface);
+    if(!origMac) {
+      log.error("Unable to get original mac for iface", iface);
       return;
     }
 
-    if ((activeMac && activeMac.toUpperCase()) !== (eepromMac && eepromMac.toUpperCase())) {
+    if ((activeMac && activeMac.toUpperCase()) !== (origMac && origMac.toUpperCase())) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
       }
 
-      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, eepromMac);
-      await this._setHardwareAddress(iface, eepromMac);
+      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, origMac);
+      await this._setHardwareAddress(iface, origMac);
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
   }
+
+  async overrideWLANKernelModule() {
+    // nothing to do, driver in os image now
+  }
 }
 
-module.exports = PurplePlatform;
+module.exports = PSEPlatform;
