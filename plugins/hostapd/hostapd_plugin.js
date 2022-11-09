@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2021-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -100,6 +100,10 @@ class HostapdPlugin extends Plugin {
     }
 
     if (params.ht_capab && !Array.isArray(params.ht_capab)) delete params.ht_capab
+
+    if (platform.wifiSD) {
+      Object.assign(parameters, platform.wifiSD().getHostapdConfig())
+    }
 
     Object.assign(parameters, params)
 
