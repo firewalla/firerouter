@@ -26,7 +26,7 @@ const macCache = {};
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
-class PSEPlatform extends Platform {
+class GSEPlatform extends Platform {
   getName() {
     return "pse";
   }
@@ -226,4 +226,4 @@ class PSEPlatform extends Platform {
   }
 }
 
-module.exports = PSEPlatform;
+module.exports = GSEPlatform;
