@@ -28,7 +28,7 @@ const maxErrCounter = 100; // do not try to set mac address again if too many er
 
 class GSEPlatform extends Platform {
   getName() {
-    return "pse";
+    return "gse";
   }
 
   getDefaultNetworkJsonFile() {
