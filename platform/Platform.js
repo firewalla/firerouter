@@ -165,6 +165,17 @@ class Platform {
       });
     }
   }
+
+  async installMiniupnpd() {
+    // replace miniupnpd binary if it is using nftables backend,
+    // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
+    const nftUsed = await exec(`ldd $(which miniupnpd) | grep libnftnl`).then(() => true).catch((err) => false);
+    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
+    if (nftUsed) {
+      log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
+      await exec(`sudo cp -f ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`);
+    }
+  }
 }
 
 module.exports = Platform;
