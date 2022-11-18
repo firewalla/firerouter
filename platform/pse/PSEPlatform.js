@@ -52,11 +52,11 @@ class PSEPlatform extends Platform {
   }
 
   async getWpaCliBinPath() {
-    return `${__dirname}/bin/wpa_cli`;
+    return `wpa_cli`;
   }
 
   async getWpaPassphraseBinPath() {
-    return `${__dirname}/bin/wpa_passphrase`;
+    return `wpa_passphrase`;
   }
 
   async ledNormalVisibleStart() {
