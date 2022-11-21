@@ -56,6 +56,11 @@ class WifiSD {
     }
   }
 
+  getHostapdConfig() {
+    return {
+      max_num_sta: 5
+    }
+  }
 }
 
 module.exports = WifiSD
