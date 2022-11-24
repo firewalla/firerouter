@@ -111,7 +111,7 @@ class NetworkConfigManager {
             done(null, [`wpa_supplicant is not configured on ${intf}`]);
             return;
           }
-          const wpaCliPath = platform.getWpaCliBinPath();
+          const wpaCliPath = await platform.getWpaCliBinPath();
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
           const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
             // TODO: taking care of SSID with '\t'?
@@ -399,7 +399,9 @@ class NetworkConfigManager {
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }
 
-  async getWlansViaWpaSupplicant() {
+  // wait for scan done before parsing result if waitForScan is set to true
+  async getWlansViaWpaSupplicant(waitForScan = false) {
+    log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
     const pluginLoader = require('../plugins/plugin_loader.js')
     const plugins = pluginLoader.getPluginInstances('interface')
     if (!plugins) {
@@ -412,17 +414,22 @@ class NetworkConfigManager {
       log.warn('No wlan interface configured for wpa_supplicant')
       return []
     }
+    if (await targetWlan.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${targetWlan.name} is not present yet`);
+      return [];
+    }
 
-    const wpaCliPath = platform.getWpaCliBinPath();
+    const wpaCliPath = await platform.getWpaCliBinPath();
     const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
 
-    // this function is usually called multiple times by the same caller
-    // start a scan here to give latest result to succeeding calls
-    exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${targetWlan.name} scan`).catch(err => {
-      log.warn('Failed to start scan', err.message)
+    // manually create a promise to return right after result parsing is finished, without waiting for process exit
+    const deferred = {}
+    deferred.promise = new Promise((resolve, reject) => {
+      deferred.resolve = resolve
+      deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '5s', `${wpaCliPath}`, '-p', ctlSocket, '-i', targetWlan.name, 'scan_results'])
+    const wpaCli = spawn('sudo', ['timeout', '15s', `${wpaCliPath}`, '-p', ctlSocket, '-i', targetWlan.name])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
@@ -430,37 +437,95 @@ class NetworkConfigManager {
       // if the code is 255, wpa_supplicant is probably not initialized
       if (code)
         log.warn('wpa_cli exited with code', code)
-    })
 
-    const rl = readline.createInterface({input: wpaCli.stdout});
+      deferred.resolve()
+    })
     const results = []
 
-    for await (const line of rl) {
-      try {
-        if (line.startsWith('Selected interface') || line.startsWith('bssid / frequency'))
+    let state = 'waitForResult'
+
+    // not using readline here as the final prompt after result won't be followed by line feed
+    // readline will wait for that and cause a 5s delay
+    wpaCli.stdout.on('data', data => {
+      if (!data) return
+      const lines = data.toString().split('\n')
+      for (const line of lines) try {
+        log.debug(state, line)
+
+        // as stdin and stdout are separate streams, the order between input output streams cannot be guaranteed
+        // so the state machine here is not strict and only distinguishes the result parsing state
+
+        // wait for scan finish
+        // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+        if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
+          waitForScan = false
+          log.info('scan done, getting result')
+          wpaCli.stdin.writable && wpaCli.stdin.write('scan_result\n', () => {
+            log.verbose('scan_result written')
+          })
           continue
-
-        const split = line.split('\t');
-
-        const mac = split.shift().toUpperCase()
-        const freq = parseInt(split.shift())
-        const signal = parseInt(split.shift())
-        const flags = split.shift().split(/[\[\]]/).filter(Boolean)
-
-        const wlan = { mac, freq, signal, flags }
-
-        wlan.ssid = util.parseEscapedString(split.shift())
-        const testSet = new Set(wlan.ssid)
-        if (testSet.size == 1 && testSet.values().next().value == '\x00') {
-          wlan.ssid = ""
         }
 
-        results.push(wlan)
+        if (line.startsWith('bssid / frequency')) {
+          log.verbose('result header seen, state => parsingResult')
+          state = 'parsingResult'
+          continue
+        }
 
+        switch (state) {
+          case 'parsingResult':
+            if (line.startsWith('>')) {
+              log.verbose('prompt seen, quit')
+              state = 'done'
+              deferred.resolve()
+
+              wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+                log.verbose('quit written')
+              })
+              break
+            }
+            if (line.startsWith('<')) {
+              log.verbose('ignoring event', line)
+              break
+            }
+
+            const split = line.split('\t');
+
+            const mac = split.shift().toUpperCase()
+            const freq = parseInt(split.shift())
+            const signal = parseInt(split.shift())
+            const flags = split.shift().split(/[\[\]]/).filter(Boolean)
+
+            const wlan = { mac, freq, signal, flags }
+
+            wlan.ssid = util.parseEscapedString(split.shift())
+            const testSet = new Set(wlan.ssid)
+            if (testSet.size == 1 && testSet.values().next().value == '\x00') {
+              wlan.ssid = ""
+            }
+
+            results.push(wlan)
+
+            break
+          case 'done':
+            // do nothing
+        }
       } catch(err) {
-        log.error('Error parsing line', line, '\n', err)
+        log.error(`Error parsing line \"${line}\"\n`, err)
       }
-    }
+    })
+
+    // start scan right away
+    wpaCli.stdin.write('scan\n', () => {
+      log.verbose('scan wirtten')
+      // only write after previous one finishes
+      if (!waitForScan) {
+        log.info('not waitForScan, getting result')
+        wpaCli.stdin.write('scan_result\n', () => {
+          log.info('scan_result written')
+        })
+      }
+    })
 
     const selfWlanMacs = []
     const config = await this.getActiveConfig()
@@ -470,23 +535,19 @@ class NetworkConfigManager {
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
+    await deferred.promise
+    log.verbose('returning')
+
     const final = results.filter(r => !selfWlanMacs.includes(r.mac))
     log.info(`Found ${final.length} SSIDs`)
     return final
   }
 
   async getAvailableChannelsHostapd() {
-    const pluginLoader = require('../plugins/plugin_loader.js')
-    const plugins = pluginLoader.getPluginInstances('hostapd')
-    if (!plugins || !Object.values(plugins).length) {
-      log.warn('No hostapd plugin found, probably still initializing')
-      return {}
-    }
-    const hostapdPlugin = Object.values(plugins)[0]
-    log.info(hostapdPlugin)
+    const HostapdPlugin = require('../plugins/hostapd/hostapd_plugin')
 
-    const channels = await hostapdPlugin.getAvailableChannels()
-    const scores = hostapdPlugin.calculateChannelScores(await this.getWlansViaWpaSupplicant())
+    const channels = await HostapdPlugin.getAvailableChannels()
+    const scores = HostapdPlugin.calculateChannelScores(await this.getWlansViaWpaSupplicant(true), false)
 
     const result = {}
     for (const channel of channels) {
@@ -499,8 +560,8 @@ class NetworkConfigManager {
     return result
   }
 
-  async getActiveConfig(transaction = false) {
-    const configString = await rclient.getAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig");
+  async getActiveConfig() {
+    const configString = await rclient.getAsync("sysdb:networkConfig");
     if(configString) {
       try {
         const config = JSON.parse(configString);
@@ -525,10 +586,14 @@ class NetworkConfigManager {
     if (!config.interface)
       return ["interface is not defined"];
     const ifaceIp4PrefixMap = {};
+    const wanIntfs = [];
     for (const ifaceType in config.interface) {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
         const iface = ifaces[name];
+        const wanType = iface.meta && iface.meta.type;
+        if (wanType === "wan")
+          wanIntfs.push(name);
         if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
           let ipv4s = [];
           if (iface.ipv4 && _.isString(iface.ipv4))
@@ -544,7 +609,7 @@ class NetworkConfigManager {
             for (const prefix in ifaceIp4PrefixMap) {
               const i = ifaceIp4PrefixMap[prefix];
               const addr2 = new Address4(prefix);
-              if ((addr.isInSubnet(addr2) || addr2.isInSubnet(addr)) && name !== i)
+              if ((addr.isInSubnet(addr2) || addr2.isInSubnet(addr)) && name !== i && !(wanType === "wan" && wanIntfs.includes(i)))
                 return [`ipv4 of ${name} conflicts with ipv4 of ${i}`];
             }
             ifaceIp4PrefixMap[ipv4] = name;

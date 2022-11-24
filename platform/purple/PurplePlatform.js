@@ -52,11 +52,11 @@ class PurplePlatform extends Platform {
     return this.vendor;
   }
 
-  getWpaCliBinPath() {
+  async getWpaCliBinPath() {
     return `${__dirname}/bin/wpa_cli`;
   }
 
-  getWpaPassphraseBinPath() {
+  async getWpaPassphraseBinPath() {
     return `${__dirname}/bin/wpa_passphrase`;
   }
 
@@ -160,6 +160,11 @@ class PurplePlatform extends Platform {
     }
   }
 
+  clearMacCache(iface) {
+    if (macCache[iface])
+      delete macCache[iface];
+  }
+
   _isPhysicalInterface(iface) {
     return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
   }
@@ -226,7 +231,7 @@ class PurplePlatform extends Platform {
 
     if(hwAddr) {
       const activeMac = await this.getActiveMac(iface);
-      if(activeMac === hwAddr) {
+      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
         log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
         return;
       }
@@ -266,7 +271,7 @@ class PurplePlatform extends Platform {
       return;
     }
 
-    if (activeMac !== eepromMac) {
+    if ((activeMac && activeMac.toUpperCase()) !== (eepromMac && eepromMac.toUpperCase())) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;

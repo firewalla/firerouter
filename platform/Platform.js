@@ -41,7 +41,11 @@ class Platform {
     return null;
   }
 
-  getWpaCliBinPath() {
+  async getWpaCliBinPath() {
+    return null;
+  }
+
+  async getWpaPassphraseBinPath() {
     return null;
   }
 
@@ -92,6 +96,10 @@ class Platform {
   async overrideEthernetKernelModule() {
   }
 
+  clearMacCache(iface) {
+
+  }
+
   async setEthernetOffload(iface,feature,desc,onoff) {
     await exec(`sudo ethtool -K ${iface} ${feature} ${onoff}`).catch( (err) => {
       log.error(`Failed to turn ${onoff} ${desc} in ${iface}`);
@@ -102,6 +110,9 @@ class Platform {
   }
 
   async overrideWLANKernelModule() {
+  }
+
+  async installWLANTools() {
   }
 
   getModelName() {

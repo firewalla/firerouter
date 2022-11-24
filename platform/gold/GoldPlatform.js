@@ -14,7 +14,6 @@
  */
 
 const Platform = require('../Platform.js');
-const { execSync } = require('child_process');
 const exec = require('child-process-promise').exec;
 const fs = require('fs'); 
 const log = require('../../util/logger.js')(__filename);
@@ -33,12 +32,18 @@ class GoldPlatform extends Platform {
     return "gold";
   }
 
-  getLSBCodeName() {
-    return execSync("lsb_release -cs", {encoding: 'utf8'}).trim();
+  async getLSBCodeName() {
+    return await exec("lsb_release -cs", {encoding: 'utf8'}).then(result=> result.stdout.trim()).catch((err)=>{
+      log.error("failed to get codename from lsb_release:",err.message);
+    });
   }
 
-  isUbuntu20() {
-    return this.getLSBCodeName() === 'focal';
+  async isUbuntu20() {
+    return await this.getLSBCodeName() === 'focal';
+  }
+
+  async isUbuntu22() {
+    return await this.getLSBCodeName() === 'jammy';
   }
 
   getDefaultNetworkJsonFile() {
@@ -49,15 +54,20 @@ class GoldPlatform extends Platform {
     return WIFI_DRV_NAME;
   }
 
-  getWpaCliBinPath() {
-    if (this.isUbuntu20())
+  async getWpaCliBinPath() {
+    if (await this.isUbuntu20())
       return `${__dirname}/bin/u20/wpa_cli`
+    else if (await this.isUbuntu22())
+      return `wpa_cli` // use system native
     else
       return `${__dirname}/bin/wpa_cli`;
   }
 
-  getWpaPassphraseBinPath() {
-    return `${__dirname}/bin/wpa_passphrase`;
+  async getWpaPassphraseBinPath() {
+    if (await this.isUbuntu22())
+      return `wpa_passphrase` // use system native
+    else
+      return `${__dirname}/bin/wpa_passphrase`;
   }
 
   getModelName() {
@@ -87,7 +97,7 @@ class GoldPlatform extends Platform {
 
     if(hwAddr) {
       const activeMac = await this.getActiveMac(iface);
-      if(activeMac === hwAddr) {
+      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
         log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
         return;
       }
@@ -101,6 +111,11 @@ class GoldPlatform extends Platform {
 
   getWifiAPInterface() {
     return IF_WLAN1;
+  }
+
+  clearMacCache(iface) {
+    if (macCache[iface])
+      delete macCache[iface];
   }
 
   async getMacByIface(iface) {
@@ -147,7 +162,7 @@ class GoldPlatform extends Platform {
     const activeMac = await this.getActiveMac(iface);
     const expectMac = await this.getMacByIface(iface);
 
-    if ( activeMac !== expectMac ) {
+    if ( (activeMac && activeMac.toUpperCase()) !== (expectMac && expectMac.toUpperCase()) ) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
@@ -191,10 +206,18 @@ class GoldPlatform extends Platform {
   }
 
   async existsUsbWifi() {
-    return await exec('lsusb -v -d 0bda: | fgrep -q Wireless').then(result => { return true;}).catch((err)=>{ return false; });
+    return await exec('sudo lsusb -v -d 0bda: | fgrep -q 802.11ac').then(result => { return true;}).catch((err)=>{ return false; });
   }
 
   async overrideWLANKernelModule() {
+    if (await this.isUbuntu22()) { // u22 has built-in wifi kernel modules
+      return;
+    }
+
+    await this._overrideWLANKernelModule();
+  }
+
+  async _overrideWLANKernelModule() {
     const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get kernel version`, err.message);
       return null
@@ -208,13 +231,41 @@ class GoldPlatform extends Platform {
     log.info(`kernel module updated is ${koUpdated}`);
     if (koUpdated) {
       // load driver if exists Realtek USB WiFi dongle
-      if (this.existsUsbWifi()) {
+      if (await this.existsUsbWifi()) {
         log.info('USB WiFi detected, loading kernel module');
-        await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err)=>{
-          log.error(`failed to load ${WIFI_DRV_NAME}`,err.message);
+        await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err) => {
+          log.error(`failed to load ${WIFI_DRV_NAME}`, err.message);
         });
       }
     }
+  }
+
+  async installWLANTools() {
+    if (await this.isUbuntu22()) { // u22 has built-in wlan tools
+      return;
+    }
+
+    await this._installWLANTools();
+  }
+
+  async _installWLANTools() {
+    log.info("Installing WLAN tools for Gold");
+    const codeName = await this.getLSBCodeName();
+    let codeDir = '';
+    switch (codeName) {
+      case 'bionic' : codeDir = '';     break;
+      case 'focal'  : codeDir = 'u20/'; break;
+      default: log.error(`Un-supported Ubuntu release:`, codeName); return;
+    }
+    const iwtPathPrefix = this.getBinaryPath()+'/'+codeDir;
+    log.info("  Installing iwconfig ...");
+    await exec(`sudo install -v -m 755 ${iwtPathPrefix}/iwconfig /sbin/`).catch((err)=>{
+      log.error(`failed to copy iwconfig:`,err.message)
+    });
+    log.info("  Installing libiw.so.30 ...");
+    await exec(`sudo install -v -m 644 ${iwtPathPrefix}/libiw.so.30 /lib/x86_64-linux-gnu/`).catch((err)=>{
+      log.error(`failed to copy libiw.so.30:`,err.message)
+    });
   }
 }
 

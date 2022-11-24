@@ -111,7 +111,7 @@ async function generatePSK(ssid, passphrase) {
   const platform = require('../platform/PlatformLoader.js').getPlatform()
   const ssidHex = _getCLangHexString(ssid);
   const passphraseHex = _getCLangHexString(passphrase);
-  const lines = await exec(`bash -c "${platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}"`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
+  const lines = await exec(`bash -c "${await platform.getWpaPassphraseBinPath()} ${ssidHex} ${passphraseHex}"`).then((result) => result.stdout.trim().split('\n').map(line => line.trim())).catch(err => []);
   for (const line of lines) {
     if (line.startsWith("psk="))
       return line.substring(4);
@@ -165,6 +165,11 @@ async function generateWpaSupplicantConfig(key, values) {
     case "private_key_passwd":
     case "private_key2_passwd":
       value = `"${value}"`;
+      break
+    case 'freq_list':
+      if (Array.isArray(value))
+        value = value.join(' ')
+      break
     default:
   }
   return value;
@@ -235,6 +240,25 @@ function channelToFreq(channel) {
   }
 }
 
+function parseNumList(str) {
+  const result = []
+  for (const item of str.split(',')) {
+    const bounds = item.split('-')
+    if (bounds.length == 1)
+      result.push(Number(bounds[0]))
+    else {
+      const lower = Number(bounds[0])
+      const upper = Number(bounds[1])
+      if (upper < lower) continue
+
+      for (let num = lower; num <= upper; num++)
+        result.push(num)
+    }
+  }
+
+  return result.filter(n => !isNaN(n))
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -248,4 +272,5 @@ module.exports = {
   parseHexString,
   freqToChannel,
   channelToFreq,
+  parseNumList,
 };

@@ -27,6 +27,7 @@ const exec = require('child-process-promise').exec;
 
 const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
+const fs = require('fs');
 
 const pluginConfig = require('./config.json');
 const util = require('../../util/util');
@@ -80,6 +81,10 @@ class HostapdPlugin extends Plugin {
     if (!intfPlugin)
       this.fatal(`Cannot find interface plugin ${this.name}`);
     this.subscribeChangeFrom(intfPlugin);
+    if (await intfPlugin.isInterfacePresent() === false) {
+      this.log.warn(`WLAN interface ${this.name} is not present yet`);
+      return;
+    }
     if (this.networkConfig.bridge) {
       const bridgeIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.bridge);
       if (!bridgeIntfPlugin)
@@ -99,7 +104,21 @@ class HostapdPlugin extends Plugin {
     parameters.ht_capab = new Set(parameters.ht_capab)
 
     if (!parameters.channel) {
-      const availableChannels = await this.getAvailableChannels()
+      let availableChannels = await HostapdPlugin.getAvailableChannels()
+
+      if (parameters.chanlist) {
+        // chanlist doesn't work in hostapd config, as it doesn't support acs
+        // use it just to filter preset available channels here
+        const chanlist = util.parseNumList(parameters.chanlist)
+        const filtered = availableChannels.filter(c => chanlist.includes(c))
+        if (filtered.length) {
+          availableChannels = filtered
+          this.log.info('chanlist set, available channels now', availableChannels)
+        } else {
+          this.log.error('No channels available after filtering, using default channels')
+        }
+        delete parameters.chanlist
+      }
 
       let availableWLANs
       for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {
@@ -120,7 +139,7 @@ class HostapdPlugin extends Plugin {
         this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
       }
       else {
-        const scores = this.calculateChannelScores(availableWLANs)
+        const scores = HostapdPlugin.calculateChannelScores(availableWLANs)
 
         let bestChannel = undefined
         for (const ch of availableChannels) {
@@ -161,15 +180,37 @@ class HostapdPlugin extends Plugin {
     const confPath = this._getConfFilePath();
     await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
-    if (this.networkConfig.enabled !== false)
+    if (this.networkConfig.enabled !== false) {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
+      if (this.networkConfig.bridge) {
+        // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
+        let addedToBridge = false;
+        let retryCount = 0
+        while (true) {
+          if (retryCount >= 10) {
+            this.log.error(`Failed to add ${this.name} to bridge ${this.networkConfig.bridge}`);
+            break;
+          }
+          await util.delay(1000);
+          addedToBridge = await fsp.access(`/sys/class/net/${this.networkConfig.bridge}/lower_${this.name}`, fs.constants.F_OK).then(() => true).catch((err) => false);
+          if (addedToBridge) {
+            this.log.info(`${this.name} is added to bridge ${this.networkConfig.bridge} by hostapd`);
+            break;
+          } else {
+            this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
+            await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
+            retryCount++;
+          }
+        }
+      }
+    }
   }
 
-  async getAvailableChannels() {
+  static async getAvailableChannels() {
     return pluginConfig.vendor[await platform.getWlanVendor()].channels
   }
 
-  calculateChannelScores(availableWLANs, withWeight = true) {
+  static calculateChannelScores(availableWLANs, withWeight = true) {
     const scores = {}
 
     for (const network of availableWLANs) {

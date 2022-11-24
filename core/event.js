@@ -45,6 +45,7 @@ module.exports = {
   EVENT_WLAN_UP: "wlan_up",
   EVENT_WLAN_DOWN: "wlan_down",
   EVENT_IP_CHANGE: "ipchange",
+  EVENT_IP6_CHANGE: "ip6change",
   EVENT_PD_CHANGE: "pdchange",
   EVENT_PPPOE_IPV6_UP: "pppoe_ipv6_up",
   EVENT_WAN_CONN_CHECK: "wan_conn_check",

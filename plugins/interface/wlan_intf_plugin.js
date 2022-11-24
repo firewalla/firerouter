@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2021-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -27,6 +27,7 @@ const event = require('../../core/event.js');
 const util = require('../../util/util.js');
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const GoldPlatform = require('../../platform/gold/GoldPlatform')
 const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
@@ -37,15 +38,35 @@ const APSafeFreqs = [
   5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
 ]
 
-const WLAN_BSS_EXPIRATION = 630
+const defaultGlobalConfig = {
+  bss_expiration_age: 630,
+  bss_expiration_scan_count: 5,
+  autoscan: 'exponential:2:300',
+
+  // sets freq_list globally limits the frequencies being scaned
+  freq_list: APSafeFreqs,
+}
+
+const defaultNetworkConfig = {
+  // sets freq_list again on each network limits the frequencies being used for connection
+  freq_list: APSafeFreqs,
+}
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await platform.overrideWLANKernelModule()
+    await platform.overrideWLANKernelModule();
+    await platform.installWLANTools();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/rtw /etc/logrotate.d/`);
+    // make crontab persistent, this actually depends on Firewalla code, but that's fine cuz
+    // update_crontab.sh exists in both Gold and Purple's base image, and covers ~/.firewalla/config/crontab/
+    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/crontab`)
+    await exec(`echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw" > ${r.getFirewallaUserConfigFolder()}/crontab/rtw-logrotate`)
+    await exec(`${r.getFirewallaHome()}/scripts/update_crontab.sh`).catch(()=>{})
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
@@ -117,23 +138,27 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async writeConfigFile() {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
-    entries.push(`bss_expiration_age=${WLAN_BSS_EXPIRATION}`);
-    // sets freq_list globally limits the frequencies being scaned
-    // sets freq_list again on each network limits the frequencies being used for connection
-    entries.push(`freq_list=${APSafeFreqs.join(' ')}`)
 
-    const networks = this.networkConfig.wpaSupplicant.networks || [];
+    const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
+    const networks = wpaSupplicant.networks || [];
+    delete wpaSupplicant.networks
+
+    const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
+    for (const key in globalConfig) {
+      const value = await util.generateWpaSupplicantConfig(key, globalConfig);
+      entries.push(`${key}=${value}`);
+    }
+
     for (const network of networks) {
-
       entries.push("network={");
-      // freq_list set by client overrides the default AP safe setting
-      !network.freq_list && entries.push(`\tfreq_list=${APSafeFreqs.join(' ')}`)
-      for (const key of Object.keys(network)) {
-        const value = await util.generateWpaSupplicantConfig(key, network);
+      const networkConfig = Object.assign({}, defaultNetworkConfig, network)
+      for (const key in networkConfig) {
+        const value = await util.generateWpaSupplicantConfig(key, networkConfig);
         entries.push(`\t${key}=${value}`);
       }
       entries.push("}\n");
     }
+
     await fs.writeFileAsync(this._getWpaSupplicantConfigPath(), entries.join('\n'));
   }
 
@@ -163,6 +188,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
     await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
 
+    if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
+      await exec('echo 4 > /proc/net/rtl8821cu/log_level').catch(()=>{})
+    }
+
     if (this.networkConfig.wpaSupplicant) {
 
       await this.writeConfigFile()
@@ -186,7 +215,18 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     // iwgetid will still return the essid during authentication process, when operstate is dormant
     // need to make sure the authentication is passed and operstate is up
     if (carrier === "1" && operstate === "up") {
-      essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
+      if (iwgetidAvailable) {
+        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      } else {
+        essid = await exec(`iw dev ${this.name} info | grep "ssid "`)
+          .then(result => {
+            const line = result.stdout.trim();
+            return line.substring(line.indexOf("ssid ") + 5);
+          }).catch(() => null);
+        if (essid && essid.length)
+          essid = util.parseEscapedString(essid);
+      }
     }
     return essid;
   }
@@ -201,9 +241,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
     const essid = await this.getEssid();
-    state.freq = await this.getFrequency()
-    state.channel = util.freqToChannel(state.freq)
     state.essid = essid;
+    state.carrier = (this.isWAN()
+      ? await this.readyToConnect().catch(() => false)
+      : state.essid && state.carrier
+    ) ? 1 : 0
+    if (state.carrier && state.essid) {
+      state.freq = await this.getFrequency()
+      state.channel = util.freqToChannel(state.freq)
+    }
     state.vendor = vendor;
     return state;
   }
@@ -214,9 +260,21 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     if (eventType === event.EVENT_WPA_CONNECTED) {
       // need to re-check connectivity status after wifi is switched
       this.setPendingTest(true);
-      this.flushIP().then(() => this.applyIpSettings()).catch((err) => {
-        this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
-      });
+      if (this.isDHCP()) {
+        this.flushIP().then(async () => {
+          await this.applyIpSettings();
+          await this.applyDnsSettings();
+          await this.changeRoutingTables();
+          if (this.isWAN()) {
+            this._wanStatus = {};
+            await this.updateRouteForDNS();
+            await this.markOutputConnection();
+          }
+          await pl.publishIfaceChangeApplied();
+        }).catch((err) => {
+          this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
+        });
+      }
     }
   }
 }
