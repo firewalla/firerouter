@@ -45,6 +45,10 @@ class Platform {
     return null;
   }
 
+  async getWpaPassphraseBinPath() {
+    return null;
+  }
+
   getBinaryPath() {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/bin`;
   }
