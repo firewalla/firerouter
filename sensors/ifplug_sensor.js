@@ -87,7 +87,7 @@ class IfPlugSensor extends Sensor {
       switch (channel) {
         case "ifup": {
           const iface = message;
-          platform.toggleEthernetLed(iface, true);
+          platform.toggleEthernetLed(iface, 1);
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
@@ -113,7 +113,7 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
-          platform.toggleEthernetLed(iface, false);
+          platform.toggleEthernetLed(iface, 0);
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
