@@ -178,6 +178,11 @@ class Platform {
       });
     }
   }
+
+  async toggleEthernetLed(iface, flag) {
+
+  }
+
 }
 
 module.exports = Platform;
