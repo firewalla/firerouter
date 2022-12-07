@@ -176,6 +176,11 @@ class Platform {
       await exec(`sudo cp -f ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`);
     }
   }
+
+  async toggleEthernetLed(iface, flag) {
+
+  }
+
 }
 
 module.exports = Platform;
