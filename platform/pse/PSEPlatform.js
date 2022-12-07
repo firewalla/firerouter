@@ -224,6 +224,10 @@ class PSEPlatform extends Platform {
   async overrideWLANKernelModule() {
     // nothing to do, driver in os image now
   }
+
+  getIfplugdScript() {
+    return `${__dirname}/files/ifupdown_publish`;
+  }
 }
 
 module.exports = PSEPlatform;

@@ -16,13 +16,13 @@
 
 const Sensor = require("./sensor.js");
 const r = require('../util/firerouter.js');
-const ifupdownPublishScript = `${r.getFireRouterHome()}/scripts/ifupdown_publish`;
 const exec = require('child-process-promise').exec;
 const ncm = require('../core/network_config_mgr.js');
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
 const PlatformLoader = require('../platform/PlatformLoader.js')
 const platform = PlatformLoader.getPlatform()
+const ifupdownPublishScript = platform.getIfplugdScript();
 const EventConstants = require('../event/EventConstants.js');
 
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();

@@ -1,0 +1,28 @@
+#!/bin/sh
+
+case "$2" in
+up)
+	redis-cli -n 1 publish "ifup" "$1"
+  case "$1" in
+    eth0)
+      echo default-on | tee /sys/class/leds/wan_led/trigger
+      ;;
+    eth1)
+      echo default-on | tee /sys/class/leds/lan_led/trigger
+      ;;
+  esac
+	;;
+down)
+	redis-cli -n 1 publish "ifdown" "$1"
+  case "$1" in
+    eth0)
+      echo none | tee /sys/class/leds/wan_led/trigger
+      ;;
+    eth1)
+      echo none | tee /sys/class/leds/lan_led/trigger
+      ;;
+  esac
+	;;
+esac
+
+exit 0
