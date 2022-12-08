@@ -173,7 +173,7 @@ class Platform {
     const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
     if (nftUsed) {
       log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
-      await exec(`sudo cp -f --preserver=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
+      await exec(`sudo cp -f --preserve=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
         log.error(`Failed to update miniupnpd with nft support`, err.message);
       });
     }
