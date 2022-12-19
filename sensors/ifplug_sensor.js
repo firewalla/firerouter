@@ -71,6 +71,12 @@ class IfPlugSensor extends Sensor {
       ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);
     }
     this.log.info("initial ifStates:",ifStates);
+
+    for(const iface in ifStates) {
+      // no need to await
+      platform.toggleEthernetLed(iface, ifStates[iface]);
+    }
+
     setTimeout(() => {
       this.toggleLedNormalVisible().catch((err) => {
         this.log.error("Failed to toggle led visible", err.message);
@@ -81,6 +87,7 @@ class IfPlugSensor extends Sensor {
       switch (channel) {
         case "ifup": {
           const iface = message;
+          platform.toggleEthernetLed(iface, 1);
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
@@ -106,6 +113,7 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
+          platform.toggleEthernetLed(iface, 0);
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;

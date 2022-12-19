@@ -23,7 +23,6 @@ const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const exec = require('child-process-promise').exec;
 const platformLoader = require('../platform/PlatformLoader.js');
 const platform = platformLoader.getPlatform();
-const PurplePlatform = require('../platform/purple/PurplePlatform')
 const era = require('../event/EventRequestApi.js');
 const EventConstants = require('../event/EventConstants.js');
 const util = require('../util/util.js');
@@ -60,12 +59,10 @@ class WPAConnectionSensor extends Sensor {
   }
 
   async run() {
-    if (platform instanceof PurplePlatform && await platform.getWlanVendor() == '88x2cs') {
-      this.rejects = []
-      this.logWatcher = new LogReader(this.config.log_file, true)
-      this.logWatcher.on('line', this.watchLog.bind(this))
-      this.logWatcher.watch()
-    }
+    this.rejects = []
+    this.logWatcher = new LogReader(this.config.log_file, true)
+    this.logWatcher.on('line', this.watchLog.bind(this))
+    this.logWatcher.watch()
 
     this.reconfigFlags = {}
     sclient.on("message", async (channel, message) => {
