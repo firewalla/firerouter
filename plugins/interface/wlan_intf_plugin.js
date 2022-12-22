@@ -19,6 +19,7 @@ const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const ncm = require('../../core/network_config_mgr')
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -41,7 +42,6 @@ const APSafeFreqs = [
 const defaultGlobalConfig = {
   bss_expiration_age: 630,
   bss_expiration_scan_count: 5,
-  autoscan: 'exponential:2:300',
 
   // sets freq_list globally limits the frequencies being scaned
   freq_list: APSafeFreqs,
@@ -89,6 +89,37 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async installWpaSupplicantScript() {
     await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
+  }
+
+  static async getInstanceWithWpaSupplicant(iwPhy) {
+    const wpas = Object.values(pl.getPluginInstances("interface"))
+      .filter(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
+    let wpa = null;
+    // find the wlan interface with the same iw phy as the input iwPhy
+    for (const iface of wpas) {
+      const phy = await fs.readFileAsync(`/sys/class/net/${iface.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+      if (phy == iwPhy) {
+        wpa = iface;
+        break;
+      }
+    }
+    if (!wpa || await wpa.isInterfacePresent() == false) {
+      console.error(`No wlan interface configured with wpa_supplicant`);
+      return null
+    }
+    return wpa
+  }
+
+  static async simpleWpaCommand(iwPhy,  paramString) {
+    if (!_.isString(paramString) || !paramString.trim().length)
+      throw new Error('Empty command')
+
+    const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
+    if (instance) {
+      const wpaCliPath = await platform.getWpaCliBinPath();
+      const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
+      return exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${instance.name} ${paramString}`)
+    }
   }
 
   async readyToConnect() {
@@ -143,7 +174,23 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
 
-    const globalConfig = Object.assign({}, defaultGlobalConfig, wpaSupplicant)
+    const globalConfig = Object.assign({}, defaultGlobalConfig)
+    const iwPhy = await fs.readFileAsync(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+    if (iwPhy) {
+       // use exponential scan only if WWLAN is configured
+      const frcfg = await ncm.getActiveConfig()
+      if (_.isObject(frcfg.hostapd) && Object.keys(frcfg.hostapd).length) {
+        for (const iface of Object.keys(frcfg.hostapd)) {
+          const phy = await fs.readFileAsync(`/sys/class/net/${iface}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
+          if (phy == iwPhy) {
+            Object.assign(globalConfig, {  autoscan: 'exponential:2:300' });
+            break;
+          }
+        }
+      }
+    }
+    // override globalConfig with dynamically-defined configuration
+    Object.assign(globalConfig, wpaSupplicant);
     for (const key in globalConfig) {
       const value = await util.generateWpaSupplicantConfig(key, globalConfig);
       entries.push(`${key}=${value}`);
