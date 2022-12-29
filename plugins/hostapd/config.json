@@ -12,7 +12,7 @@
     "ieee80211ac": 1,
     "max_num_sta": 8,
     "skip_inactivity_poll": 0,
-    "beacon_int": 500,
+    "beacon_int": 100,
     "wmm_enabled": 1
   },
   "vendor": {

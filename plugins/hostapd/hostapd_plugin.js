@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2021-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -31,6 +31,8 @@ const fs = require('fs');
 
 const pluginConfig = require('./config.json');
 const util = require('../../util/util');
+
+const WLANInterfacePlugin = require('../interface/wlan_intf_plugin')
 
 const WLAN_AVAILABLE_RETRY = 3
 
@@ -98,6 +100,10 @@ class HostapdPlugin extends Plugin {
     }
 
     if (params.ht_capab && !Array.isArray(params.ht_capab)) delete params.ht_capab
+
+    if (platform.wifiSD) {
+      Object.assign(parameters, platform.wifiSD().getHostapdConfig())
+    }
 
     Object.assign(parameters, params)
 
@@ -180,6 +186,7 @@ class HostapdPlugin extends Plugin {
     const confPath = this._getConfFilePath();
     await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
+    const iwPhy = await fsp.readFile(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (this.networkConfig.enabled !== false) {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
       if (this.networkConfig.bridge) {
@@ -203,6 +210,15 @@ class HostapdPlugin extends Plugin {
           }
         }
       }
+      if (iwPhy)
+        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
+          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+        });
+    } else {
+      if (iwPhy)
+        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
+          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+        });
     }
   }
 
