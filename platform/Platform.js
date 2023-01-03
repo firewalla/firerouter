@@ -109,6 +109,34 @@ class Platform {
     return changed;
   }
 
+  async reloadKernelModule(koName,srcDir,forceReload=false) {
+    const srcPath = `${srcDir}/${koName}.conf`;
+    const dstPath = `/etc/modprobe.d/${koName}.conf`;
+    let reloaded = false;
+    try {
+      await exec(`cmp -s ${srcPath} ${dstPath}`);
+      log.info(`kernel configuration updated in ${dstPath}`)
+    } catch (err) {
+      try {
+        // copy over <name>.conf
+        await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+        // update kernel modules mapping
+        await exec(`sudo depmod -a`);
+        const koLoaded = await this.kernelModuleLoaded(koName)
+        log.info(`kernel module ${koName} loaded - ${koLoaded}`);
+        if (koLoaded || forceReload ) {
+          // reload kernel module
+          await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
+          reloaded = true;
+        }
+        log.info(`kernel module ${koName} reloaded - ${koLoaded}`);
+      } catch(err) {
+        log.error(`Failed to reload kernel module ${koName}:`,err);
+      }
+    }
+    return reloaded;
+  }
+
   async overrideEthernetKernelModule() {
   }
 
@@ -126,6 +154,9 @@ class Platform {
   }
 
   async overrideWLANKernelModule() {
+  }
+
+  async reloadWLANKernelModule() {
   }
 
   async installWLANTools() {

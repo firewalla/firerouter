@@ -56,6 +56,18 @@ class WifiSD {
     }
   }
 
+  async reloadDriver() {
+    const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
+      log.error(`Failed to get kernel version`, err.message);
+      return null
+    });
+    const koReloaded = await this.platform.reloadKernelModule(
+      WIFI_DRV_NAME,
+      this.platform.getBinaryPath() + '/' + kernelVersion
+    );
+    log.info(`kernel module ${WIFI_DRV_NAME} reloaded is ${koReloaded}`);
+  }
+
   getHostapdConfig() {
     return {
       max_num_sta: 5
