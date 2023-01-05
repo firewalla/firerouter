@@ -116,7 +116,7 @@ class Platform {
     let confChanged = false;
     try {
       await exec(`cmp -s ${srcPath} ${dstPath}`);
-      log.warn(`kernel module ${koName} reload - bypassed due to configuration already up-to-date in ${dstPath}`)
+      log.debug(`kernel module ${koName} reload - bypassed due to configuration already up-to-date in ${dstPath}`)
     } catch (err) {
       confChanged = true;
       // copy over .conf
@@ -124,11 +124,11 @@ class Platform {
       log.info(`kernel module ${koName} reload - configuration updated in ${dstPath}`);
       // update kernel modules mapping
       await exec(`sudo depmod -a`);
-      log.info(`kernel module ${koName} reload - kernel modules mapping updated`);
+      log.debug(`kernel module ${koName} reload - kernel modules mapping updated`);
     }
     if (confChanged || forceReload) try {
       const koLoaded = await this.kernelModuleLoaded(koName);
-      log.info(`kernel module ${koName} reload - kernel module previously loaded(${koLoaded})`);
+      log.debug(`kernel module ${koName} reload - kernel module previously loaded(${koLoaded})`);
       if (koLoaded || forceReload ) {
         // reload kernel module
         await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
