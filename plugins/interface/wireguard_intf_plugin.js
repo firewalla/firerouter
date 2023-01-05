@@ -182,8 +182,14 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig.autonomous) {
-      this._automata = new WireguardMeshAutomata(this.name, this.networkConfig);
-      this._automata.start();
+      const pubKey = await exec(`echo ${this.networkConfig.privateKey} | wg pubkey`).then(result => result.stdout.trim()).catch((err) => {
+        this.log.error(`Failed to parse private key to public key`);
+        return null;
+      })
+      if (pubKey) {
+        this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig);
+        this._automata.start();
+      }
     }
   }
 
@@ -208,12 +214,44 @@ module.exports = WireguardInterfacePlugin;
 
 const dgram = require('dgram');
 
+const CTRLMessages = {
+  PEER_ENDPOINT_INFO: "msg:peer_endpoint_info",
+  ROUTE_REQUEST: "msg:route_request",
+  ROUTE_DECISION: "msg:route_decision"
+};
+const LOCK_PEER_INFO = "lock_peer_info";
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
+
+const T0 = 150;
+const T1 = 180;
+const T2 = 225;
+
 class WireguardMeshAutomata {
-  constructor(intf, config) {
+  constructor(intf, pubKey, config) {
     // config should be the network config of the intf
     this.intf = intf;
+    this.pubKey = pubKey;
     this.config = config;
     this.peerInfo = {};
+    this.effectiveAllowedIPs = {};
+    const ipv4 = this.config.ipv4;
+    const cidr = new Address4(ipv4);
+    for (const peer of this.config.peers) {
+      const allowedIPs = peer.allowedIPs || [];
+      const peerIP = allowedIPs.find(ip => {
+        const ip4 = new Address4(ip);
+        return ip4.isValid() && ip4.isInSubnet(cidr);
+      });
+      this.peerInfo[peer.publicKey] = {
+        peerIP: peerIP,
+        allowedIPs : allowedIPs,
+        router: null,
+        connected: []
+      };
+      // effective allowed IPs is set to original allowed IPs at first
+      this.effectiveAllowedIPs[peer.publicKey] = allowedIPs;
+    }
     this.log = require('../../util/logger.js')(`WireguardMeshAutomata:${this.intf}`);
   }
 
@@ -226,7 +264,37 @@ class WireguardMeshAutomata {
       message = message.toString();
       try {
         const msg = JSON.parse(message);
-        await this.handlePeerStatusMsg(msg);
+        const from = msg.from;
+        if (!from || !this.peerInfo[from]) {
+          this.log.error(`Received message from an unknown peer ${from}, ignore`);
+          return;
+        }
+        switch (msg.type) {
+          case CTRLMessages.PEER_ENDPOINT_INFO: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handlePeerEndpointInfoMsg(msg).catch((err) => {
+                this.log.error(`Failed to handle peer endpoint info message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
+          case CTRLMessages.ROUTE_REQUEST: {
+            await this.handleRouteRequestMsg(msg).catch((err) => {
+              this.log.error(`Failed to handle route request message`, err.message);
+            });
+            break;
+          }
+          case CTRLMessages.ROUTE_DECISION: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handleRouteDecisionMsg(msg).catch((err) => {
+                this.log.error(`Failed to handle route decision message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
+          default:
+            this.log.error(`Unknown message type ${msg.type} from peer ${from}, ignore`);
+        }
       } catch (err) {
         this.log.error(`Failed to handle peer status msg from ${info.address}`, message, err.message);
       }
@@ -242,21 +310,23 @@ class WireguardMeshAutomata {
     this.socket.bind(6666, ip);
     this._lastSendTs = 0;
     this.sendStatusInterval = setInterval(() => {
-      this.sendPeerStatusMsg().catch((err) => {
-        this.log.error(`Failed to send peer status`, err.message);
+      this.sendPeerEndpointInfoMsg().catch((err) => {
+        this.log.error(`Failed to send peer endpoint info message`, err.message);
       });
     }, 15000);
-    this.applyPeerInfoInterval = setInterval(() => {
-      this.applyPeerInfo().catch((err) => {
-        this.log.error(`Failed to apply peer info`, err.message);
-      });
+    this.reapplyInterval = setInterval(() => {
+      lock.acquire(LOCK_PEER_INFO, async () => {
+        await this.reapply().catch((err) => {
+          this.log.error(`Failed to reapply peer info`, err.message);
+        });
+      }).catch((err) => {});
     }, 19000); // 15 and 19 are co-prime
   }
 
   stop() {
-    if (this.applyPeerInfoInterval) {
-      clearInterval(this.applyPeerInfoInterval);
-      this.applyPeerInfoInterval = null;
+    if (this.reapplyInterval) {
+      clearInterval(this.reapplyInterval);
+      this.reapplyInterval = null;
     }
     if (this.sendStatusInterval) {
       clearInterval(this.sendStatusInterval);
@@ -268,7 +338,7 @@ class WireguardMeshAutomata {
     }
   }
 
-  async sendPeerStatusMsg() {
+  async sendPeerEndpointInfoMsg() {
     const dumpResult = await exec(`sudo wg show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
       this.log.error(`Failed to dump wireguard peers on ${this.intf}`, err.message);
       return null;
@@ -278,8 +348,9 @@ class WireguardMeshAutomata {
     if (_.isArray(dumpResult)) {
       for (const line of dumpResult) {
         try {
-          const [pubKey, psk, endpoint, allowedIPs, latestHandshake, rxBytes, txBytes, keepalive] = line.split('\t');
-          if (latestHandshake && now - latestHandshake < 120) {
+          let [pubKey, psk, endpoint, allowedIPs, latestHandshake, rxBytes, txBytes, keepalive] = line.split('\t');
+          latestHandshake = Number(latestHandshake);
+          if (now - latestHandshake < T0) {
             if (endpoint) {
               if (endpoint.startsWith("[")) {
                 // ipv6 address
@@ -299,15 +370,13 @@ class WireguardMeshAutomata {
         }
       }
     }
-    const status = {peers};
-    if (Object.keys(peers) != 0 && (!_.isEqual(status, this._lastSentStatus) || now - this._lastSendTs > 120)) { // do not send same peer status in 120 seconds
+    const status = {type: CTRLMessages.PEER_ENDPOINT_INFO, from: this.pubKey, peers};
+    if (Object.keys(peers).length != 0 && (!_.isEqual(status, this._lastSentStatus) || now - this._lastSendTs > 120)) { // do not send same peer status in 120 seconds
       const msg = JSON.stringify(status);
       this.log.debug("Send status message: ", msg);
-      const ipv4 = this.config.ipv4;
-      const cidr = new Address4(ipv4);
-      for (const peer of this.config.peers) {
-        const allowedIPs = peer.allowedIPs;
-        const peerIP = allowedIPs.find(ip => new Address4(ip).isInSubnet(cidr));
+      for (const pubKey of Object.keys(this.peerInfo)) {
+        const info = this.peerInfo[pubKey];
+        const peerIP = info.peerIP;
         if (peerIP) {
           this.socket.send(msg, 6666, peerIP.split('/')[0]);
         }
@@ -317,37 +386,84 @@ class WireguardMeshAutomata {
     }
   }
 
-  async handlePeerStatusMsg(msg) {
+  async handleRouteDecisionMsg(msg) {
+    const { from, to, router } = msg;
+    const toInfo = this.peerInfo[to];
+    if (!toInfo) {
+      this.log.error(`Unknown to peer in route decision message: ${to}`, msg);
+      return;
+    }
+    const rInfo = this.peerInfo[router];
+    if (!rInfo) {
+      this.log.error(`Unknown router peer in route decision message: ${router}`, msg);
+      return;
+    }
+    this.log.info(`Use peer ${router} as relay node for peer ${to} from route decision message`)
+    toInfo.router = router; // do not enforce allowed IPs immediately, it will be enforced in periodical reapply
+  }
+
+  async handleRouteRequestMsg(msg) {
+    const { from, to, router } = msg;
+    if (router != this.pubKey) {
+      this.log.error(`Straying route request message with wrong router`, msg);
+      return;
+    }
+    const toInfo = this.peerInfo[to];
+    if (!toInfo) {
+      this.log.error(`Unknown to peer in route request message: ${to}`, msg);
+      return;
+    }
+    const peerIP = toInfo.peerIP;
+    const routeDecisionMsg = { from: router, to: from, router: router, type: CTRLMessages.ROUTE_DECISION };
+    if (peerIP)
+      this.socket.send(JSON.stringify(routeDecisionMsg), 6666, peerIP.split('/')[0]);
+  }
+
+  async handlePeerEndpointInfoMsg(msg) {
     const peers = msg.peers || {};
     const now = Date.now() / 1000;
+    const connectedPeers = [];
     for (const key of Object.keys(peers)) {
       if (!this.peerInfo[key])
-        this.peerInfo[key] = {};
+        continue;
       const v4 = peers[key].v4;
       const v6 = peers[key].v6;
-      const ts4 = peers[key].ts4 || now;
-      const ts6 = peers[key].ts6 || now;
+      const ts4 = peers[key].ts4 || 0;
+      const ts6 = peers[key].ts6 || 0;
       const oldTs4 = this.peerInfo[key].ts4 || 0;
       const oldTs6 = this.peerInfo[key].ts6 || 0;
       const port = peers[key].port;
+      let connected = false;
       // update v4/v6 with latest handshake timestamp
-      if (v4 && ts4 > oldTs4) {
-        this.peerInfo[key].v4 = v4;
-        this.peerInfo[key].ts4 = ts4;
-        if (port)
-          this.peerInfo[key].port = port;
+      if (v4) {
+        if (ts4 > oldTs4) {
+          this.peerInfo[key].v4 = v4;
+          this.peerInfo[key].ts4 = ts4;
+          if (port)
+            this.peerInfo[key].port = port;
+        }
+        if (now - ts4 <= T1)
+          connected = true;
       }
-      if (v6 && ts6 > oldTs6) {
-        this.peerInfo[key].v6 = v6;
-        this.peerInfo[key].ts6 = ts6;
-        if (port)
-          this.peerInfo[key].port = port;
+      if (v6) {
+        if (ts6 > oldTs6) {
+          this.peerInfo[key].v6 = v6;
+          this.peerInfo[key].ts6 = ts6;
+          if (port)
+            this.peerInfo[key].port = port;
+        }
+        if (now - ts6 <= T1)
+          connected = true;
       }
+      if (connected)
+        connectedPeers.push(key);
     }
+    const from = msg.from;
+    this.peerInfo[from].connected = connectedPeers;
     this.log.debug("Current peer info: ", this.peerInfo);
   }
 
-  async applyPeerInfo() {
+  async reapply() {
     const dumpResult = await exec(`sudo wg show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
       this.log.error(`Failed to dump wireguard peers on ${this.intf}`, err.message);
       return null;
@@ -359,30 +475,128 @@ class WireguardMeshAutomata {
     } else {
       v6Supported = await exec(`ip -6 r show default table global_default`).then(result => !_.isEmpty(result.stdout.trim())).catch((err) => false);
     }
+    const t0Peers = [];
+    const t1Peers = [];
+    const t2Peers = [];
     if (_.isArray(dumpResult)) {
       for (const line of dumpResult) {
         try {
-          const [pubKey, psk, endpoint, allowedIPs, latestHandshake, rxBytes, txBytes, keepalive] = line.split('\t');
-          if (!latestHandshake || now - latestHandshake > 150) { // do not touch peers that are connected
-            const info = this.peerInfo[pubKey];
-            const ts4 = info.ts4 || 0;
-            const ts6 = info.ts6 || 0;
-            if (info && info.port) {
-              // do not change peer endpoint if handshake ts is earlier than local latest-handshake
-              if (v6Supported && info.v6 && ts6 > latestHandshake) {
-                this.log.info(`Changing peer ${pubKey} endpoint to [${info.v6}]:${info.port}`);
-                await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint [${info.v6}]:${info.port}`).catch((err) => {});
-              } else {
-                if (info.v4 && ts4 > latestHandshake) {
-                  this.log.info(`Changing peer ${pubKey} endpoint to ${info.v4}:${info.port}`);
-                  await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${info.v4}:${info.port}`).catch((err) => {});
-                }
-              }
-            }
+          let [pubKey, psk, endpoint, allowedIPs, latestHandshake, rxBytes, txBytes, keepalive] = line.split('\t');
+          latestHandshake = Number(latestHandshake);
+          const info = this.peerInfo[pubKey];
+          if (!info)
+            continue;
+          if (now - latestHandshake <= T0)
+            t0Peers.push(pubKey);
+          else {
+            if (now - latestHandshake > T1)
+              t1Peers.push(pubKey);
+            if (now - latestHandshake > T2)
+              t2Peers.push(pubKey);
           }
         } catch (err) {
           this.log.error(`Failed to parse dump result ${line}`, err.message);
         }
+      }
+
+      // peers in t0Peers are considered as connected, no need to relay this peer
+      for (const pubKey of t0Peers) {
+        const info = this.peerInfo[pubKey];
+        if (info.router) {
+          this.log.info(`Peer ${pubKey} is connected, unset relay node ${info.router}`);
+          info.router = null;
+        }
+      }
+      
+      for (const pubKey of Object.keys(this.peerInfo)) {
+        const info = this.peerInfo[pubKey];
+        if (info.router) {
+          // peers in t1Peers are considered as disconnected, these peers can not be used as relay node
+          if (t1Peers.includes(info.router)) {
+            this.log.info(`Peer ${info.router} is not connected, unset it as relay node for peer ${pubKey}`);
+            info.router = null;
+          } else {
+            // if relay node is no longer connected to this peer, unset 'route' in this peer
+            const rinfo = this.peerInfo[info.router];
+            if (!rinfo || !rinfo.connected.includes(pubKey)) {
+              this.log.info(`Peer ${info.router} is not connected to peer ${pubKey}, unset it as relay node`);
+              info.router = null;
+            }
+          }
+        }
+      }
+      // learn endpoint from other connected peers
+      for (const pubKey of t1Peers) {
+        // change endpoint to something that is learnt from another peer
+        const info = this.peerInfo[pubKey];
+        const ts4 = info.ts4 || 0;
+        const ts6 = info.ts6 || 0;
+        if (info && info.port) {
+          // do not change peer endpoint if handshake ts is earlier than local latest-handshake
+          if (v6Supported && info.v6 && ts6 > now - T1) {
+            this.log.info(`Changing peer ${pubKey} endpoint to [${info.v6}]:${info.port}`);
+            await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint [${info.v6}]:${info.port}`).catch((err) => {});
+          } else {
+            if (info.v4 && ts4 > now - T1) {
+              this.log.info(`Changing peer ${pubKey} endpoint to ${info.v4}:${info.port}`);
+              await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${info.v4}:${info.port}`).catch((err) => {});
+            }
+          }
+        }
+      }
+
+      // peers in t2Peers are disconnected for a longer time, need to find a relay node if 'router' is not set yet
+      for (const pubKey of t2Peers) {
+        const info = this.peerInfo[pubKey];
+        // the peer with smaller public key in alphabetic order initiates the relay request
+        if (this.pubKey < pubKey && !info.router) {
+          const routerPeer = t0Peers.find(k => this.peerInfo[k] && this.peerInfo[k].connected.includes(pubKey));
+          if (!routerPeer)
+            this.log.error(`Cannot find a relay node for peer ${pubKey}`);
+          else {
+            info.router = routerPeer;
+            this.log.info(`Use peer ${routerPeer} as relay node for peer ${pubKey}`);
+          }
+        }
+      }
+      
+      // calculate and enforce allowed IPs on peers based on original allowed IPs and router
+      await this.enforceAllowedIPsAndSendRouteReqMsg().catch((err) => {});
+    }
+  }
+
+  async enforceAllowedIPsAndSendRouteReqMsg() {
+    const effectiveAllowedIPs = {};
+    const routeReqMsg = [];
+    for (const pubKey of Object.keys(this.peerInfo)) {
+      if (!effectiveAllowedIPs[pubKey])
+        effectiveAllowedIPs[pubKey] = [];
+      const info = this.peerInfo[pubKey];
+      if (!info.router) {
+        Array.prototype.push.apply(effectiveAllowedIPs[pubKey], info.allowedIPs);
+      } else {
+        if (!effectiveAllowedIPs[info.router])
+          effectiveAllowedIPs[info.router] = [];
+        Array.prototype.push.apply(effectiveAllowedIPs[info.router], info.allowedIPs);
+        if (this.pubKey < pubKey) {
+          routeReqMsg.push({from: this.pubKey, to: pubKey, router: info.router, type: CTRLMessages.ROUTE_REQUEST});
+        }
+      }
+    }
+    for (const pubKey of Object.keys(this.peerInfo)) {
+      const allowedIPs = effectiveAllowedIPs[pubKey].sort();
+      const previousAllowedIPs = this.effectiveAllowedIPs[pubKey].sort();
+      if (!_.isEqual(allowedIPs, previousAllowedIPs)) {
+        const str = `"${allowedIPs.join(",")}"`;
+        this.log.info(`Setting allowed IPs of ${pubKey} to ${str}`);
+        await exec(`sudo wg set ${this.intf} peer ${pubKey} allowed-ips ${str}`).catch((err) => {});
+      }
+    }
+    this.effectiveAllowedIPs = effectiveAllowedIPs;
+    for (const msg of routeReqMsg) {
+      const peerIP = this.peerInfo[msg.router].peerIP;
+      if (peerIP) {
+        this.socket.send(JSON.stringify(msg), 6666, peerIP.split('/')[0]);
       }
     }
   }
