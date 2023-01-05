@@ -116,25 +116,25 @@ class Platform {
     let confChanged = false;
     try {
       await exec(`cmp -s ${srcPath} ${dstPath}`);
-      log.warn(`kernel module ${koName} reload bypassed - configuration already up-to-date in ${dstPath}`)
+      log.warn(`kernel module ${koName} reload - bypassed due to configuration already up-to-date in ${dstPath}`)
     } catch (err) {
       confChanged = true;
       // copy over .conf
       await exec(`sudo cp -f ${srcPath} ${dstPath}`);
-      log.info(`kernel module ${koName} reload - update configuration in ${dstPath}`);
+      log.info(`kernel module ${koName} reload - configuration updated in ${dstPath}`);
       // update kernel modules mapping
       await exec(`sudo depmod -a`);
-      log.info(`kernel module ${koName} reload - update kernel modules mapping`);
+      log.info(`kernel module ${koName} reload - kernel modules mapping updated`);
     }
     if (confChanged || forceReload) try {
       const koLoaded = await this.kernelModuleLoaded(koName);
-      log.info(`kernel module ${koName} loaded - ${koLoaded}`);
+      log.info(`kernel module ${koName} reload - kernel module previously loaded(${koLoaded})`);
       if (koLoaded || forceReload ) {
         // reload kernel module
         await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
         koReloaded = true;
       }
-      log.info(`kernel module ${koName} koReloaded - ${koLoaded}`);
+      log.info(`kernel module ${koName} reload - kernel module just reloaded(${koReloaded})`);
     } catch(err) {
       log.error(`Failed to reload kernel module ${koName}:`,err);
     }
