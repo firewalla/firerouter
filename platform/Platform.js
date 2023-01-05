@@ -112,32 +112,33 @@ class Platform {
   async reloadKernelModule(koName,srcDir,forceReload=false) {
     const srcPath = `${srcDir}/${koName}.conf`;
     const dstPath = `/etc/modprobe.d/${koName}.conf`;
-    let reloaded = false;
-    let confDiff = false;
+    let koReloaded = false;
+    let confChanged = false;
     try {
       await exec(`cmp -s ${srcPath} ${dstPath}`);
-      confDiff = false;
-      log.warn(`kernel module ${koName} reload bypassed - configuration up-to-date in ${dstPath}`)
+      log.warn(`kernel module ${koName} reload bypassed - configuration already up-to-date in ${dstPath}`)
     } catch (err) {
-      confDiff = true;
-      log.info(`kernel module ${koName} reload needed - configuration out-of-date in ${dstPath}`)
+      confChanged = true;
+      // copy over .conf
+      await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+      log.info(`kernel module ${koName} reload - update configuration in ${dstPath}`);
+      // update kernel modules mapping
+      await exec(`sudo depmod -a`);
+      log.info(`kernel module ${koName} reload - update kernel modules mapping`);
     }
-    if (confDiff || forceReload) try {
-      const koLoaded = await this.kernelModuleLoaded(koName)
+    if (confChanged || forceReload) try {
+      const koLoaded = await this.kernelModuleLoaded(koName);
       log.info(`kernel module ${koName} loaded - ${koLoaded}`);
       if (koLoaded || forceReload ) {
-        log.info(`kernel module ${koName} reload - update configuration in ${dstPath}`)
-        // copy over <name>.conf
-        await exec(`sudo cp -f ${srcPath} ${dstPath}`);
         // reload kernel module
         await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
-        reloaded = true;
+        koReloaded = true;
       }
-      log.info(`kernel module ${koName} reloaded - ${koLoaded}`);
+      log.info(`kernel module ${koName} koReloaded - ${koLoaded}`);
     } catch(err) {
       log.error(`Failed to reload kernel module ${koName}:`,err);
     }
-    return reloaded;
+    return koReloaded;
   }
 
   async overrideEthernetKernelModule() {
