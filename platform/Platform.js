@@ -113,26 +113,29 @@ class Platform {
     const srcPath = `${srcDir}/${koName}.conf`;
     const dstPath = `/etc/modprobe.d/${koName}.conf`;
     let reloaded = false;
+    let confDiff = false;
     try {
       await exec(`cmp -s ${srcPath} ${dstPath}`);
-      log.info(`kernel configuration updated in ${dstPath}`)
+      confDiff = false;
+      log.warn(`kernel module ${koName} reload bypassed - configuration up-to-date in ${dstPath}`)
     } catch (err) {
-      try {
+      confDiff = true;
+      log.info(`kernel module ${koName} reload needed - configuration out-of-date in ${dstPath}`)
+    }
+    if (confDiff || forceReload) try {
+      const koLoaded = await this.kernelModuleLoaded(koName)
+      log.info(`kernel module ${koName} loaded - ${koLoaded}`);
+      if (koLoaded || forceReload ) {
+        log.info(`kernel module ${koName} reload - update configuration in ${dstPath}`)
         // copy over <name>.conf
         await exec(`sudo cp -f ${srcPath} ${dstPath}`);
-        // update kernel modules mapping
-        await exec(`sudo depmod -a`);
-        const koLoaded = await this.kernelModuleLoaded(koName)
-        log.info(`kernel module ${koName} loaded - ${koLoaded}`);
-        if (koLoaded || forceReload ) {
-          // reload kernel module
-          await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
-          reloaded = true;
-        }
-        log.info(`kernel module ${koName} reloaded - ${koLoaded}`);
-      } catch(err) {
-        log.error(`Failed to reload kernel module ${koName}:`,err);
+        // reload kernel module
+        await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
+        reloaded = true;
       }
+      log.info(`kernel module ${koName} reloaded - ${koLoaded}`);
+    } catch(err) {
+      log.error(`Failed to reload kernel module ${koName}:`,err);
     }
     return reloaded;
   }
