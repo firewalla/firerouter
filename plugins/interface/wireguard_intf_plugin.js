@@ -370,18 +370,18 @@ class WireguardMeshAutomata {
         }
       }
     }
-    const status = {type: CTRLMessages.PEER_ENDPOINT_INFO, from: this.pubKey, peers};
-    if (Object.keys(peers).length != 0 && (!_.isEqual(status, this._lastSentStatus) || now - this._lastSendTs > 120)) { // do not send same peer status in 120 seconds
-      const msg = JSON.stringify(status);
-      this.log.debug("Send status message: ", msg);
+    const msg = {type: CTRLMessages.PEER_ENDPOINT_INFO, from: this.pubKey, asRouter: this.config.asRouter || false, peers};
+    if (Object.keys(peers).length != 0 && (!_.isEqual(msg, this._lastSentMsg) || now - this._lastSendTs > 120)) { // do not send same peer status in 120 seconds
+      const str = JSON.stringify(msg);
+      this.log.debug("Send status message: ", str);
       for (const pubKey of Object.keys(this.peerInfo)) {
         const info = this.peerInfo[pubKey];
         const peerIP = info.peerIP;
         if (peerIP) {
-          this.socket.send(msg, 6666, peerIP.split('/')[0]);
+          this.socket.send(str, 6666, peerIP.split('/')[0]);
         }
       }
-      this._lastSentStatus = status;
+      this._lastSentMsg = msg;
       this._lastSendTs = now;
     }
   }
@@ -398,6 +398,10 @@ class WireguardMeshAutomata {
       this.log.error(`Unknown router peer in route decision message: ${router}`, msg);
       return;
     }
+    if (!rInfo.asRouter) {
+      this.log.error(`Peer ${router} should not be used as a router, invalid route decision message: `, msg);
+      return;
+    }
     this.log.info(`Use peer ${router} as relay node for peer ${to} from route decision message`)
     toInfo.router = router; // do not enforce allowed IPs immediately, it will be enforced in periodical reapply
   }
@@ -406,6 +410,10 @@ class WireguardMeshAutomata {
     const { from, to, router } = msg;
     if (router != this.pubKey) {
       this.log.error(`Straying route request message with wrong router`, msg);
+      return;
+    }
+    if (!this.config.asRouter) {
+      this.log.error(`'asRouter' is false, ignore route request message`, msg);
       return;
     }
     const toInfo = this.peerInfo[to];
@@ -421,6 +429,7 @@ class WireguardMeshAutomata {
 
   async handlePeerEndpointInfoMsg(msg) {
     const peers = msg.peers || {};
+    const asRouter = msg.asRouter || false;
     const now = Date.now() / 1000;
     const connectedPeers = [];
     for (const key of Object.keys(peers)) {
@@ -460,6 +469,7 @@ class WireguardMeshAutomata {
     }
     const from = msg.from;
     this.peerInfo[from].connected = connectedPeers;
+    this.peerInfo[from].asRouter = asRouter;
     this.log.debug("Current peer info: ", this.peerInfo);
   }
 
@@ -508,6 +518,7 @@ class WireguardMeshAutomata {
         }
       }
       
+      // check 'router' of each peer is still valid
       for (const pubKey of Object.keys(this.peerInfo)) {
         const info = this.peerInfo[pubKey];
         if (info.router) {
@@ -515,11 +526,18 @@ class WireguardMeshAutomata {
           if (t1Peers.includes(info.router)) {
             this.log.info(`Peer ${info.router} is not connected, unset it as relay node for peer ${pubKey}`);
             info.router = null;
-          } else {
-            // if relay node is no longer connected to this peer, unset 'route' in this peer
-            const rinfo = this.peerInfo[info.router];
-            if (!rinfo || !rinfo.connected.includes(pubKey)) {
+            continue;
+          }
+          const rinfo = this.peerInfo[info.router];
+          if (rinfo) {
+            // if relay node is no longer connected to this peer, unset 'router in this peer
+            if (!rinfo.connected.includes(pubKey)) {
               this.log.info(`Peer ${info.router} is not connected to peer ${pubKey}, unset it as relay node`);
+              info.router = null;
+              continue;
+            }
+            if (!rinfo.asRouter) {
+              this.log.info(`Peer ${info.router} does not want to be used as router, unset it as relay node of peer ${pubKey}`);
               info.router = null;
             }
           }
@@ -550,7 +568,7 @@ class WireguardMeshAutomata {
         const info = this.peerInfo[pubKey];
         // the peer with smaller public key in alphabetic order initiates the relay request
         if (this.pubKey < pubKey && !info.router) {
-          const routerPeer = t0Peers.find(k => this.peerInfo[k] && this.peerInfo[k].connected.includes(pubKey));
+          const routerPeer = t0Peers.find(k => this.peerInfo[k] && this.peerInfo[k].asRouter && this.peerInfo[k].connected.includes(pubKey));
           if (!routerPeer)
             this.log.error(`Cannot find a relay node for peer ${pubKey}`);
           else {
