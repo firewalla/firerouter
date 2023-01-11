@@ -197,6 +197,11 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     const state = await super.state();
     if (!state.mac)
       state.mac = "02:01:22:22:22:22";
+    if (this.networkConfig.autonomous && this._automata) {
+      state.autonomy = {
+        peerInfo: this._automata.getPeerInfo()
+      };
+    }
     return state;
   }
 
@@ -336,6 +341,10 @@ class WireguardMeshAutomata {
       this.socket.close();
       this.socket = null;
     }
+  }
+
+  getPeerInfo() {
+    return this.peerInfo;
   }
 
   async sendPeerEndpointInfoMsg() {
