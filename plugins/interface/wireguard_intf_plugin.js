@@ -27,7 +27,7 @@ const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 
-const bindIntfRulePriority = 6001;
+const bindIntfRulePriority = 5999;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -60,7 +60,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async _resetBindIntfRule() {
     const bindIntf = this._bindIntf;
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     if(bindIntf) {
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
@@ -104,7 +104,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     // add FwMark option in [Interface] config for WAN selection
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     entries.push(`FwMark = ${rtid}`)
     entries.push('\n');
 
@@ -173,7 +173,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         }
       }
     }
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     if (bindIntf) {
       this.log.info(`Wireguard ${this.name} will bind to WAN ${bindIntf}`);
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
