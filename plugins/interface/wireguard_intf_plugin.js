@@ -27,7 +27,7 @@ const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 
-const bindIntfRulePriority = 6001;
+const bindIntfRulePriority = 5999;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
