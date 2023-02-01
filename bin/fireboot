@@ -122,7 +122,17 @@ logger "Uptime after fireupgrade: $(awk '{print $1}' /proc/uptime)"
 redis-cli set "fireboot:status" "firewalla"
 echo "Starting Firewalla ..."
 touch /home/pi/.firewalla/managed_reboot
-sudo systemctl restart firewalla
+# likely 'systemctl start firewalla' is called before the fireboot was restarted, do not interrupt it and start it again after it is complete
+retry=20
+while [[ $(systemctl is-active firewalla) == "activating" ]]; do
+  echo "firewalla.service is still activating, wait for it to finish before starting it again ..."
+  sleep 3
+  ((retry-=1))
+  if [[ $retry -le 0 ]]; then
+    break;
+  fi
+done
+sudo systemctl start firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"
 redis-cli HINCRBY "stats:systemd:restart" FireBoot 1
