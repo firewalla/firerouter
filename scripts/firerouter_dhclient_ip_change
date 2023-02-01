@@ -1,23 +1,19 @@
 #!/bin/sh
 
 ip_changed=""
-record_needed=""
 
 case "$reason" in
   BOUND|REBOOT)
     ip_changed="1"
-    record_needed="1"
     ;;
   RENEW|REBIND)
     if [ -n "$old_ip_address" ] && [ "$old_ip_address" != "$new_ip_address" ]; then
       ip_changed="1"
-      record_needed="1"
     fi
     ;;
   TIMEOUT)
     if [ "$exit_status" = "0" ]; then
       ip_changed="1"
-      record_needed="1"
     fi
     ;;
 esac
@@ -26,7 +22,5 @@ if [ -n "$ip_changed" ]; then
   redis-cli -n 1 publish "dhclient.ip_change" "$interface"
 fi
 
-if [ -n "$record_needed" ]; then
-  ts=$(date +%s)
-  redis-cli zadd dhclient_record:${interface} $ts "{\"interface\":\"${interface}\",\"ts\":\"${ts}\",\"reason\":\"${reason}\",\"ip\":\"${new_ip_address}\",\"gateway\":\"${new_routers}\",\"mask\":\"${new_subnet_mask}\",\"dns\":\"${new_domain_name_servers}\",\"dhcpServer\":\"${new_dhcp_server_identifier}\"}" || true
-fi
+ts=$(date +%s)
+redis-cli zadd dhclient_record:${interface} $ts "{\"interface\":\"${interface}\",\"ts\":${ts},\"reason\":\"${reason}\",\"ip\":\"${new_ip_address}\",\"gateway\":\"${new_routers}\",\"mask\":\"${new_subnet_mask}\",\"dns\":\"${new_domain_name_servers}\",\"dhcpServer\":\"${new_dhcp_server_identifier}\",\"leaseTime\":${new_dhcp_lease_time}}" || true

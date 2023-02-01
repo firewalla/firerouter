@@ -33,7 +33,8 @@ const WLAN_FLAG_PSK_SHA256  = 0b1000000
 const WLAN_FLAG_EAP_SHA256  = 0b10000000
 
 
-const _ = require('lodash')
+const _ = require('lodash');
+const { exec } = require('child-process-promise');
 let transactionTask = null;
 let inTransaction = false;
 let currentTransID = null;
@@ -374,5 +375,44 @@ router.post('/apply_current_config',
       res.status(404).send("Network config is not set.");
     }
   });
+
+router.post('/renew_dhcp_lease',
+  jsonParser,
+  async (req, res, next) => {
+    const intf = req.body.intf;
+    if (!intf) {
+      res.status(400).json({errors: ['"intf" is not specified']});
+      return;
+    }
+    const prev = await ncm.getDHCPLease(intf).catch((err) => null);
+    if (prev && prev.ts && Date.now() / 1000 - prev.ts < 60) {
+      res.status(429).json({errors: [`Renew DHCP lease on ${intf} too frequently`]});
+      return;
+    }
+    await ncm.renewDHCPLease(intf).then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to renew DHCP lease on ${intf}`]});
+    }).catch((err) => {
+      res.status(400).json({errors: [err.message]});
+    });
+  });
+
+router.get('/dhcp_lease/:intf', async (req, res, next) => {
+    const intf = req.params.intf;
+    if (!intf) {
+      res.status(400).json({errors: ['"intf" is not specified']});
+      return;
+    }
+    await ncm.getDHCPLease(intf).then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to get DHCP lease on ${intf}`]});
+    }).catch((err) => {
+      res.status(400).json({errors: [err.message]});
+    });
+  })
 
 module.exports = router;
