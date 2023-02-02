@@ -165,7 +165,10 @@ async function generateWpaSupplicantConfig(key, values) {
     case "private_key_passwd":
     case "private_key2_passwd":
       value = `"${value}"`;
+      break
     default:
+      if (Array.isArray(value))
+        value = value.join(' ')
   }
   return value;
 }

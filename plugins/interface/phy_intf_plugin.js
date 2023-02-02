@@ -49,8 +49,11 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
   async prepareEnvironment() {
     await super.prepareEnvironment();
     if (this.networkConfig.enabled) {
-      const txRingBuffer = this.networkConfig.txBuffer || 4096;
-      const rxRingBuffer = this.networkConfig.rxBuffer || 4096;
+      const maxTxRing = await exec(`sudo ethtool -g ${this.name} | grep "^TX:" | head -n 1 | awk '{print $2}'`).then((result) => result.stdout.trim()).catch((err) => null);
+      const maxRxRing = await exec(`sudo ethtool -g ${this.name} | grep "^RX:" | head -n 1 | awk '{print $2}'`).then((result) => result.stdout.trim()).catch((err) => null);
+      const txRingBuffer = this.networkConfig.txBuffer || maxTxRing || 4096;
+      const rxRingBuffer = this.networkConfig.rxBuffer || maxRxRing || 4096;
+      this.log.info(`Set TX ring to ${txRingBuffer}, RX ring to ${rxRingBuffer} on ${this.name}`);
       await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
     }
   }

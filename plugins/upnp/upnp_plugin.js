@@ -38,6 +38,7 @@ class UPnPPlugin extends Plugin {
     pl.scheduleRestartRsyslog();
     // copy logrotate config for miniupnpd log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/miniupnpd /etc/logrotate.d/`);
+    await platform.installMiniupnpd();
   }
 
   _getConfigFilePath() {

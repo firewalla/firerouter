@@ -15,18 +15,30 @@
 
 'use strict';
 
-const fs = require('fs');
 const log = require('../util/logger.js')(__filename);
+const fsp = require('fs').promises
 const r = require('../util/firerouter')
 const exec = require('child-process-promise').exec;
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
 
 class Platform {
   getName() {
   }
 
   getType() {
+  }
+
+  async getLSBCodeName() {
+    return await exec("lsb_release -cs", {encoding: 'utf8'}).then(result=> result.stdout.trim()).catch((err)=>{
+      log.error("failed to get codename from lsb_release:",err.message);
+    });
+  }
+
+  async isUbuntu20() {
+    return await this.getLSBCodeName() === 'focal';
+  }
+
+  async isUbuntu22() {
+    return await this.getLSBCodeName() === 'jammy';
   }
 
   getDefaultNetworkJsonFile() {
@@ -42,6 +54,10 @@ class Platform {
   }
 
   async getWpaCliBinPath() {
+    return null;
+  }
+
+  async getWpaPassphraseBinPath() {
     return null;
   }
 
@@ -61,6 +77,10 @@ class Platform {
   async ledAnyNetworkUp() {
   }
 
+  async kernelModuleLoaded(name) {
+    return exec(`lsmod | fgrep -q ${name}`).then(()=>true).catch(()=>false);
+  }
+
   async overrideKernelModule(koName,srcDir,dstDir) {
     const srcPath = `${srcDir}/${koName}.ko`;
     const dstPath = `${dstDir}/${koName}.ko`;
@@ -75,7 +95,7 @@ class Platform {
         await exec(`sudo cp -f ${confPath} /etc/modprobe.d/; sudo cp -f ${srcPath} ${dstPath}`);
         // update kernel modules mapping
         await exec(`sudo depmod -a`);
-        const koLoaded = await exec(`lsmod | fgrep -q ${koName}`).then( result => { return true;} ).catch((err)=>{return false;});
+        const koLoaded = await this.kernelModuleLoaded(koName)
         log.debug(`koLoaded is ${koLoaded}`);
         if (koLoaded) {
           // reload kernel module
@@ -115,6 +135,12 @@ class Platform {
     return "";
   }
 
+  async getActiveMac(iface) {
+    return fsp.readFile(`/sys/class/net/${iface}/address`, {encoding: 'utf8'})
+      .then(result => result.trim().toUpperCase())
+      .catch(() => "")
+  }
+
   async setHardwareAddress(iface, hwAddr) {
     if(!hwAddr) {
       return; // by default don't reset back when hwAddr is undefined
@@ -139,6 +165,24 @@ class Platform {
       });
     }
   }
+
+  async installMiniupnpd() {
+    // replace miniupnpd binary if it is using nftables backend,
+    // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
+    const nftUsed = await exec(`ldd $(which miniupnpd) | grep libnftnl`).then(() => true).catch((err) => false);
+    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
+    if (nftUsed) {
+      log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
+      await exec(`sudo cp -f --preserve=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
+        log.error(`Failed to update miniupnpd with nft support`, err.message);
+      });
+    }
+  }
+
+  async toggleEthernetLed(iface, flag) {
+
+  }
+
 }
 
 module.exports = Platform;
