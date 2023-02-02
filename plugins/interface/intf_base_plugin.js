@@ -1151,7 +1151,7 @@ class InterfaceBasePlugin extends Plugin {
           this.setPendingTest(true);
           // WAN interface plugged, need to reapply WAN interface config
           if (this.isDHCP()) {
-            this._reapplyNeeded = true;
+            this.propagateConfigChanged(true);
             pl.scheduleReapply();
           }
         }
