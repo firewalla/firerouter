@@ -279,7 +279,7 @@ class RoutingPlugin extends Plugin {
             }
             const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
             if (!af || af == 6) {
-              if (gw6 && ready) { // do not add IPv6 default route for inactive WAN, WAN connectivity check only uses IPv4
+              if (gw6 && (ready || type === "single")) { // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
                 await routing.addRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 await routing.addRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
               } else {
@@ -783,11 +783,18 @@ class RoutingPlugin extends Plugin {
           return;
         const payload = event.getEventPayload(e);
         const intf = payload && payload.intf;
-        const intfPlugin = pl.getPluginInstance("interface", intf);
-        if (intfPlugin && intfPlugin.isStaticIP() && this._wanStatus.hasOwnProperty(intf)) {
-          this._reapplyNeeded = true;
-          this.propagateConfigChanged(true);
-          pl.scheduleReapply();
+        for (const wan of Object.keys(this._wanStatus)) {
+          const intfPlugin  = pl.getPluginInstance("interface", wan);
+          // either intf is a wan interface or is an underlying interface of a wan interface
+          if (intfPlugin && (
+            wan === intf || 
+            (_.isArray(intfPlugin.networkConfig.intf) && intfPlugin.networkConfig.intf.includes(intf)) || 
+            (_.isString(intfPlugin.networkConfig.intf) && intfPlugin.networkConfig.intf === intf)
+          ) && intfPlugin.isStaticIP()) {
+            this._reapplyNeeded = true;
+            this.propagateConfigChanged(true);
+            pl.scheduleReapply();
+          }
         }
         break;
       }

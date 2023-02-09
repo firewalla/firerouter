@@ -414,6 +414,10 @@ class NetworkConfigManager {
       log.warn('No wlan interface configured for wpa_supplicant')
       return []
     }
+    if (await targetWlan.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${targetWlan.name} is not present yet`);
+      return [];
+    }
 
     const wpaCliPath = await platform.getWpaCliBinPath();
     const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
@@ -425,14 +429,19 @@ class NetworkConfigManager {
       deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '15s', `${wpaCliPath}`, '-p', ctlSocket, '-i', targetWlan.name])
+    const wpaCli = spawn('sudo', ['timeout', '15s', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
     wpaCli.on('exit', code => {
       // if the code is 255, wpa_supplicant is probably not initialized
-      if (code)
-        log.warn('wpa_cli exited with code', code)
+      switch(code) {
+        case 124: // timeout
+        case 255: // wpa_supplicant not initialized
+          deferred.reject(new Error(`wpa_cli exited with ${code}`))
+        default:
+          log.info('wpa_cli exited with code', code)
+      }
 
       deferred.resolve()
     })

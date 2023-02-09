@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc.
+/*    Copyright 2021-2022 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -15,11 +15,10 @@
 
 const Platform = require('../Platform.js');
 const exec = require('child-process-promise').exec;
-const fs = require('fs'); 
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
-const WIFI_DRV_NAME='8821cu';
+const WifiSD = require('../WifiSD.js')
 
 const IF_WLAN0 = "wlan0";
 const IF_WLAN1 = "wlan1";
@@ -32,26 +31,20 @@ class GoldPlatform extends Platform {
     return "gold";
   }
 
-  async getLSBCodeName() {
-    return await exec("lsb_release -cs", {encoding: 'utf8'}).then(result=> result.stdout.trim()).catch((err)=>{
-      log.error("failed to get codename from lsb_release:",err.message);
-    });
-  }
-
-  async isUbuntu20() {
-    return await this.getLSBCodeName() === 'focal';
-  }
-
-  async isUbuntu22() {
-    return await this.getLSBCodeName() === 'jammy';
-  }
-
   getDefaultNetworkJsonFile() {
     return `${__dirname}/files/default_setup.json`;
   }
 
+  wifiSD() {
+    // only 1 wifi sd supported now
+    if (!this._wifiSD) {
+      this._wifiSD = new WifiSD(this)
+    }
+    return this._wifiSD
+  }
+
   async getWlanVendor() {
-    return WIFI_DRV_NAME;
+    return this.wifiSD().getDriverName()
   }
 
   async getWpaCliBinPath() {
@@ -76,10 +69,6 @@ class GoldPlatform extends Platform {
 
   _isWLANInterface(iface) {
     return ["wlan0", "wlan1"].includes(iface);
-  }
-
-  async getActiveMac(iface) {
-    return await fs.readFileAsync(`/sys/class/net/${iface}/address`, {encoding: 'utf8'}).then(result => result.trim().toUpperCase()).catch(() => "");
   }
 
   async setHardwareAddress(iface, hwAddr) {
@@ -205,39 +194,12 @@ class GoldPlatform extends Platform {
     }
   }
 
-  async existsUsbWifi() {
-    return await exec('lsusb -v -d 0bda: | fgrep -q 802.11ac').then(result => { return true;}).catch((err)=>{ return false; });
-  }
-
   async overrideWLANKernelModule() {
     if (await this.isUbuntu22()) { // u22 has built-in wifi kernel modules
       return;
     }
 
-    await this._overrideWLANKernelModule();
-  }
-
-  async _overrideWLANKernelModule() {
-    const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
-      log.error(`Failed to get kernel version`, err.message);
-      return null
-    });
-    if ( kernelVersion === null ) return;
-    const koUpdated = await this.overrideKernelModule(
-      WIFI_DRV_NAME,
-      this.getBinaryPath()+'/'+kernelVersion,
-      `/lib/modules/${kernelVersion}/kernel/drivers/net/wireless`);
-
-    log.info(`kernel module updated is ${koUpdated}`);
-    if (koUpdated) {
-      // load driver if exists Realtek USB WiFi dongle
-      if (await this.existsUsbWifi()) {
-        log.info('USB WiFi detected, loading kernel module');
-        await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err) => {
-          log.error(`failed to load ${WIFI_DRV_NAME}`, err.message);
-        });
-      }
-    }
+    await this.wifiSD().installDriver()
   }
 
   async installWLANTools() {
