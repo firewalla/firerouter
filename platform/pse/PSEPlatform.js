@@ -224,6 +224,32 @@ class PSEPlatform extends Platform {
   async overrideWLANKernelModule() {
     // nothing to do, driver in os image now
   }
+
+  async reloadWLANKernelModule() {
+    // driver in os image now but need reload with different configuration
+    await this.wifiSD().reloadDriver();
+  }
+
+  async toggleEthernetLed(iface, flag) {
+    let led_path = null;
+
+    if (iface === "eth0") {
+      led_path = "/sys/devices/platform/gpio-leds/leds/wan_led/trigger"
+    } else if (iface === "eth1") {
+      led_path = "/sys/devices/platform/gpio-leds/leds/lan_led/trigger"
+    }
+
+    if (!led_path) {
+      return;
+    }
+
+    if (flag) {
+      await exec(`echo default-on | sudo tee ${led_path}`);
+    } else {
+      await exec(`echo none | sudo tee ${led_path}`);
+    }
+  }
+
 }
 
 module.exports = PSEPlatform;

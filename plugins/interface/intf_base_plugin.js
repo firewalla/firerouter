@@ -40,10 +40,12 @@ const event = require('../../core/event.js');
 const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
+const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
+const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 class InterfaceBasePlugin extends Plugin {
@@ -1084,6 +1086,27 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async renewDHCPLease() {
+    const ts = Math.floor(Date.now() / 1000);
+    const execSuccess = await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).then(() => true).catch((err) => false);
+    if (!execSuccess)
+      return null;
+    while (true) {
+      const info = await this.getLastDHCPLeaseInfo();
+      if (info && Number(info.ts) >= ts)
+        return info;
+      await util.delay(1000);
+      const curTs = Date.now() / 1000;
+      if (curTs - ts > 30)
+        return null;
+    }
+  }
+
+  async getLastDHCPLeaseInfo() {
+    const info = await rclient.zrangeAsync(`dhclient_record:${this.name}`, -1, -1).then((data) => data && JSON.parse(data)).catch((err) => null);
+    return info;
+  }
+
   async state() {
     let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
@@ -1128,7 +1151,7 @@ class InterfaceBasePlugin extends Plugin {
           this.setPendingTest(true);
           // WAN interface plugged, need to reapply WAN interface config
           if (this.isDHCP()) {
-            this._reapplyNeeded = true;
+            this.propagateConfigChanged(true);
             pl.scheduleReapply();
           }
         }

@@ -285,7 +285,8 @@ case "$reason" in
         ;;
 
     BOUND|RENEW|REBIND|REBOOT)
-        set_hostname
+        # do not change hostname, otherwise sudo command may fail in firerouter due to unable to resolve host
+        #set_hostname
 
         if [ -n "$old_ip_address" ] && [ -n "$alias_ip_address" ] &&
            [ "$alias_ip_address" != "$old_ip_address" ]; then
