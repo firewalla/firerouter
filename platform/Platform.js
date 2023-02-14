@@ -109,6 +109,38 @@ class Platform {
     return changed;
   }
 
+  async reloadKernelModule(koName,srcDir,forceReload=false) {
+    const srcPath = `${srcDir}/${koName}.conf`;
+    const dstPath = `/etc/modprobe.d/${koName}.conf`;
+    let koReloaded = false;
+    let confChanged = false;
+    try {
+      await exec(`cmp -s ${srcPath} ${dstPath}`);
+      log.debug(`kernel module ${koName} reload - bypassed due to configuration already up-to-date in ${dstPath}`)
+    } catch (err) {
+      confChanged = true;
+      // copy over .conf
+      await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+      log.info(`kernel module ${koName} reload - configuration updated in ${dstPath}`);
+      // update kernel modules mapping
+      await exec(`sudo depmod -a`);
+      log.debug(`kernel module ${koName} reload - kernel modules mapping updated`);
+    }
+    if (confChanged || forceReload) try {
+      const koLoaded = await this.kernelModuleLoaded(koName);
+      log.debug(`kernel module ${koName} reload - kernel module previously loaded(${koLoaded})`);
+      if (koLoaded || forceReload ) {
+        // reload kernel module
+        await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
+        koReloaded = true;
+      }
+      log.info(`kernel module ${koName} reload - kernel module just reloaded(${koReloaded})`);
+    } catch(err) {
+      log.error(`Failed to reload kernel module ${koName}:`,err);
+    }
+    return koReloaded;
+  }
+
   async overrideEthernetKernelModule() {
   }
 
@@ -126,6 +158,9 @@ class Platform {
   }
 
   async overrideWLANKernelModule() {
+  }
+
+  async reloadWLANKernelModule() {
   }
 
   async installWLANTools() {
@@ -173,11 +208,16 @@ class Platform {
     const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
     if (nftUsed) {
       log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
-      await exec(`sudo cp -f ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
+      await exec(`sudo cp -f --preserve=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
         log.error(`Failed to update miniupnpd with nft support`, err.message);
       });
     }
   }
+
+  async toggleEthernetLed(iface, flag) {
+
+  }
+
 }
 
 module.exports = Platform;
