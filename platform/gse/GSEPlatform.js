@@ -22,7 +22,8 @@ const sensorLoader = require('../../sensors/sensor_loader.js');
 const WifiSD = require('../WifiSD.js')
 
 const macCache = {};
-
+const IF_WLAN0 = "wlan0";
+const IF_WLAN1 = "wlan1";
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
@@ -36,7 +37,11 @@ class GSEPlatform extends Platform {
   }
 
   getWifiClientInterface() {
-    return "wlan0";
+    return IF_WLAN0;
+  }
+
+  getWifiAPInterface() {
+    return IF_WLAN1;
   }
 
   wifiSD() {
@@ -52,11 +57,11 @@ class GSEPlatform extends Platform {
   }
 
   async getWpaCliBinPath() {
-    return `${__dirname}/bin/wpa_cli`;
+    return `wpa_cli`;
   }
 
   async getWpaPassphraseBinPath() {
-    return `${__dirname}/bin/wpa_passphrase`;
+    return `wpa_passphrase`;
   }
 
   async ledNormalVisibleStart() {
@@ -83,24 +88,16 @@ class GSEPlatform extends Platform {
     });
   }
 
+  _isWLANInterface(iface) {
+    return ["wlan0", "wlan1"].includes(iface);
+  }
+
   clearMacCache(iface) {
     if (macCache[iface])
       delete macCache[iface];
   }
 
-  _isPhysicalInterface(iface) {
-    return ["eth0", "eth1"].includes(iface);
-  }
-
-  _isWLANInterface(iface) {
-    return ["wlan0", "wlan1"].includes(iface);
-  }
-
   async getMacByIface(iface) {
-    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
-      return null;
-    }
-
     if(macCache[iface]) {
       return macCache[iface];
     }
@@ -118,106 +115,72 @@ class GSEPlatform extends Platform {
   }
 
   async _calculatedMacWlan1() {
-    const activeMacWlan0 = await this.getActiveMac("wlan0");
+    const activeMacWlan0 = await this.getActiveMac(IF_WLAN0);
     const calculatedMacWlan1 =  Number(parseInt(activeMacWlan0.replace(/:/g,''),16)+1).toString(16).replace(/(..)(?=.)/g,'$1:');
     return calculatedMacWlan1;
   }
 
   async _getMacByIface(iface) {
     switch(iface) {
-      case "eth0":
-        return await this.getMac(0);
-      case "eth1":
-        return await this.getMac(1);
       case "wlan0":
         return await this._getPermanentMac(iface);
       case "wlan1":
         return await this._calculatedMacWlan1();
     }
-
     return;
   }
 
-  // need to adapt to PSE board
-  async getMac(index) {
-    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 0 0x51 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
-          .then(result => result.stdout.trim())
-          .catch((err) => {
-            log.error(`Failed to get MAC address for index ${index} from EPROM`, err.message);
-            return "";
-          });
-    return mac.toUpperCase();
-  }
-
-  getModelName() {
-    return "Firewalla Purple SE";
-  }
-
-  // must kill ifplugd before changing purple mac address
-  async setHardwareAddress(iface, hwAddr) {
-    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
-      // for non-phy ifaces, use function from base class
-      await super.setHardwareAddress(iface, hwAddr);
-      return;
-    }
-
-    if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
-      log.error("Skip set hardware address if too many errors on setting hardware address.");
-      return;
-    }
-
-    if(hwAddr) {
-      const activeMac = await this.getActiveMac(iface);
-      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
-        log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
-        return;
-      }
-      await this._setHardwareAddress(iface, hwAddr);
-    }
-  }
-
-  async _setHardwareAddress(iface, hwAddr) {
-    log.info(`Setting ${iface} hwaddr to`, hwAddr);
-
-    const ifplug = sensorLoader.getSensor("IfPlugSensor");
-    if(ifplug) {
-      await ifplug.stopMonitoringInterface(iface);
-    }
-    await exec(`sudo ip link set ${iface} down`);
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
-      log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
-      errCounter++;
-    });
-    await exec(`sudo ip link set ${iface} up`);
-    if(ifplug) {
-      await ifplug.startMonitoringInterface(iface);
-    }
-  }
-
   async resetHardwareAddress(iface) {
-    if(!this._isPhysicalInterface(iface) && !this._isWLANInterface(iface)) {
-      // for non-phy ifaces, use function from base class
+    log.info(`reset ${iface} hardware address`);
+    if(!this._isWLANInterface(iface)) {
+      // for non-WLAN interfaces, use function from base class
       await super.resetHardwareAddress(iface);
       return;
     }
 
     const activeMac = await this.getActiveMac(iface);
-    const origMac = await this.getMacByIface(iface);
-    if(!origMac) {
-      log.error("Unable to get original mac for iface", iface);
-      return;
-    }
+    const expectMac = await this.getMacByIface(iface);
 
-    if ((activeMac && activeMac.toUpperCase()) !== (origMac && origMac.toUpperCase())) {
+    if ( (activeMac && activeMac.toUpperCase()) !== (expectMac && expectMac.toUpperCase()) ) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
       }
 
-      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, origMac);
-      await this._setHardwareAddress(iface, origMac);
+      log.info(`Resetting the hwaddr of ${iface} to :`, expectMac);
+      await this._setHardwareAddress(iface, expectMac);
     } else {
-      log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
+      log.info(`no need to reset hwaddr of ${iface}, it's already in place.`);
+    }
+  }
+
+  async _setHardwareAddress(iface,hwAddr) {
+    log.info(`set hardware address of ${iface} to ${hwAddr}`);
+
+    // stop ifplug monitoring
+    const ifplug = sensorLoader.getSensor("IfPlugSensor");
+    if(ifplug) {
+      await ifplug.stopMonitoringInterface(iface);
+    }
+
+    // a hard code 1-second wait for system to release wifi interfaces
+    await util.delay(1000);
+
+    // force shutdown interfaces
+    await exec(`sudo ip link set ${iface} down`).catch((err) => {
+      log.error(`Failed to turn off interface ${iface}`, err.message);
+    });
+
+    // set mac address
+    log.info(`Set ${iface} MAC to ${hwAddr}`);
+    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+      log.error(`Failed to set MAC address of ${iface}`, err.message);
+      errCounter++;
+    });
+
+    // start ifplug monitoring
+    if(ifplug) {
+      await ifplug.startMonitoringInterface(iface);
     }
   }
 
