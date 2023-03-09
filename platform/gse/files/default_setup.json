@@ -14,6 +14,9 @@
         },
         "enabled": true,
         "dhcp": true
+      },
+      "eth3": {
+        "enabled": true
       }
     },
     "bridge": {
@@ -25,7 +28,8 @@
         "ipv4": "10.10.0.1/24",
         "intf": [
           "eth1",
-          "eth2"
+          "eth2",
+          "eth3"
         ],
         "enabled": true
       }
