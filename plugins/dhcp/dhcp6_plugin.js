@@ -26,7 +26,7 @@ const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 
 
 class DHCP6Plugin extends DHCPPlugin {
-  
+
   _getConfFilePath() {
     return `${dhcpConfDir}/${this.name}_v6.conf`;
   }
@@ -38,14 +38,20 @@ class DHCP6Plugin extends DHCPPlugin {
     this._restartService();
   }
 
-  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, prefixLen, leaseTime = 86400) {
+  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400) {
     tags = tags || [];
+    nameservers = nameservers || [];
     let extraTags = "";
     type = type || "stateless";
     if (tags.length > 0) {
       extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
     }
     const content = [];
+
+    if (nameservers.length > 0){
+      content.push(`dhcp-option=tag:${iface},option6:dns-server,${nameservers.map(a => `[${a}]`).join(",")}`);
+    }
+
     switch (type) {
       case "stateless": {
         // simply use slaac to configure client IPv6 address
@@ -85,7 +91,7 @@ class DHCP6Plugin extends DHCPPlugin {
       this.log.warn(`Interface ${this.name} is not present yet`);
       return;
     }
-    await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, 
+    await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,
       this.networkConfig.prefixLen, this.networkConfig.lease);
     this._restartService();
   }
