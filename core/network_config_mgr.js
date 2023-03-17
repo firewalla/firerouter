@@ -462,6 +462,14 @@ class NetworkConfigManager {
 
         // wait for scan finish
         // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+        if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
+          wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+            log.verbose('quit written')
+          })
+          // reject immediately instead of waiting for timeout
+          deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
+          continue
+        }
         if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
           waitForScan = false
           log.info('scan done, getting result')
