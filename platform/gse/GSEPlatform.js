@@ -18,6 +18,7 @@ const Platform = require('../Platform.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
+const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const WifiSD = require('../WifiSD.js')
 
