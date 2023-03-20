@@ -113,8 +113,12 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         entries.push(`PublicKey = ${peer.publicKey}`);
         if (peer.presharedKey)
           entries.push(`PresharedKey = ${peer.presharedKey}`);
-        if (peer.endpoint)
-          entries.push(`Endpoint = ${peer.endpoint}`);
+        if (peer.endpoint) {
+          const host = peer.endpoint.substring(0, peer.endpoint.lastIndexOf(':'));
+          // do not set Endpoint with domain, dns may be unavailable at the moment, causing wg setconf return error, domain will be resolved later in automata
+          if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
+            entries.push(`Endpoint = ${peer.endpoint}`);
+        }
         if (_.isArray(peer.allowedIPs) && !_.isEmpty(peer.allowedIPs))
           entries.push(`AllowedIPs = ${peer.allowedIPs.join(", ")}`);
         if (peer.persistentKeepalive)
