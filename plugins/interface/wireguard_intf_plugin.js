@@ -117,6 +117,8 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         entries.push(`PublicKey = ${peer.publicKey}`);
         if (peer.presharedKey)
           entries.push(`PresharedKey = ${peer.presharedKey}`);
+        if (peer.fqdnEndpoint) // fqdnEndpoint overrides endpoint
+          peer.endpoint = peer.fqdnEndpoint;
         if (peer.endpoint) {
           const host = peer.endpoint.substring(0, peer.endpoint.lastIndexOf(':'));
           // do not set Endpoint with domain, dns may be unavailable at the moment, causing wg setconf return error, domain will be resolved later in automata
@@ -251,6 +253,8 @@ class WireguardMeshAutomata {
     const cidr = new Address4(ipv4);
     for (const peer of this.config.peers) {
       const allowedIPs = peer.allowedIPs || [];
+      if (peer.fqdnEndpoint)
+        peer.endpoint = peer.fqdnEndpoint;
       const origEndpoint = peer.endpoint;
       const peerIP = allowedIPs.find(ip => {
         const ip4 = new Address4(ip);
