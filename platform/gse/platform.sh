@@ -3,7 +3,7 @@ NEED_FIRESTATUS=true
 BLUETOOTH_TIMEOUT=3600
 
 function get_pppoe_rps_cpus {
-  echo "7"
+  echo "f"
 }
 
 function map_target_branch {
