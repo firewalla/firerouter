@@ -140,20 +140,21 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async changeRoutingTables() {
     await super.changeRoutingTables();
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     if (_.isArray(this.networkConfig.peers)) {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
-            await routing.addRouteToTable(allowedIP, null, this.name, "main", 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
           }
         }
@@ -176,7 +177,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         }
       }
     }
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     if (bindIntf) {
       this.log.info(`Wireguard ${this.name} will bind to WAN ${bindIntf}`);
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
@@ -472,7 +472,7 @@ class WireguardMeshAutomata {
           this.peerInfo[key].v4 = v4;
           this.peerInfo[key].ts4 = ts4;
           if (port)
-            this.peerInfo[key].port = port;
+            this.peerInfo[key].port4 = port;
         }
         if (now - ts4 <= T1)
           connected = true;
@@ -482,7 +482,7 @@ class WireguardMeshAutomata {
           this.peerInfo[key].v6 = v6;
           this.peerInfo[key].ts6 = ts6;
           if (port)
-            this.peerInfo[key].port = port;
+            this.peerInfo[key].port6 = port;
         }
         if (now - ts6 <= T1)
           connected = true;
@@ -576,21 +576,21 @@ class WireguardMeshAutomata {
         const ts4 = info.ts4 || 0;
         const ts6 = info.ts6 || 0;
         let endpointSet = false;
-        if (info && info.port) {
+        if (info) {
           // do not change peer endpoint if handshake ts is earlier than local latest-handshake
-          if (v6Supported && info.v6 && ts6 > now - T1) {
-            const endpoint = `[${info.v6}]:${info.port}`;
+          if (v6Supported && info.v6 && ts6 > now - T1 && info.port6) {
+            const endpoint = `[${info.v6}]:${info.port6}`;
             if (endpoint != info.endpoint) {
               this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
               await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
             }
             endpointSet = true;
           } else {
-            if (info.v4 && ts4 > now - T1) {
-              const endpoint = `${info.v4}:${info.port}`;
+            if (info.v4 && ts4 > now - T1 && info.port4) {
+              const endpoint = `${info.v4}:${info.port4}`;
               if (endpoint != info.endpoint) {
-                this.log.info(`Changing peer ${pubKey} endpoint to ${info.v4}:${info.port}`);
-                await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${info.v4}:${info.port}`).catch((err) => {});
+                this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
+                await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
               }
               endpointSet = true;
             }
