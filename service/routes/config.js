@@ -45,6 +45,8 @@ const T_OP_REVERT = "revert";
 const validTransactionOps = [T_OP_APPEND, T_OP_COMMIT, T_OP_REVERT];
 const T_REVERT_TIMEOUT = 120 * 1000; // revert back to previous persisted config in 2 minutes
 
+const assetsController = require('../../core/assets_controller.js');
+
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig(inTransaction);
   if(config) {
@@ -415,4 +417,55 @@ router.get('/dhcp_lease/:intf', async (req, res, next) => {
     });
   })
 
+  router.put('/assets/:uid',
+    jsonParser,
+    async (req, res, next) => {
+      const uid = req.params.uid;
+      const config = req.body;
+      const errors = [];
+      await assetsController.setConfig(uid, config).catch((err) => {
+        errors.push(err.message);
+      });
+      res.status(200).json({errors});
+    }
+  )
+
+  router.get('/assets/:uid', async (req, res, next) => {
+    const uid = req.params.uid;
+    const config = await assetsController.getConfig(uid);
+    if (!config)
+      res.status(404).json({errors: [`Cannot find asset uid ${uid}`]});
+    else
+      res.status(200).json(config);
+  })
+
+  router.delete('/assets/:uid', async (req, res, next) => {
+    const uid = req.params.uid;
+    const config = await assetsController.deleteConfig(uid);
+    if (!config)
+      res.status(404).json({errors: [`Cannot find asset uid ${uid}`]});
+    else
+      res.status(200).json(config);
+  })
+
+  router.put('/assets',
+    jsonParser,
+    async (req, res, next) => {
+      const body = req.body;
+      const errors = [];
+      for (const uid of Object.keys(body)) {
+        await assetsController.setConfig(uid, body[uid]).catch((err) => {
+          errors.push(err.message);
+        });
+      }
+      res.status(200).json({errors});
+    }
+  )
+
+  router.get('/assets', async (req, res, next) => {
+    const config = await assetsController.getAllConfig();
+    res.status(200).json(config);
+  })
+
+  
 module.exports = router;
