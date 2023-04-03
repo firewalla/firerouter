@@ -56,6 +56,10 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       this._automata.stop();
       delete this._automata;
     }
+    if (this._assetsController) {
+      this._assetsController.stopServer();
+      delete this._assetsController;
+    }
   }
 
   async _resetBindIntfRule() {
@@ -197,6 +201,11 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig);
         this._automata.start();
       }
+    }
+
+    if (this.networkConfig.assetsController) {
+      this._assetsController = require('../../core/assets_controller.js');
+      this._assetsController.startServer(this.networkConfig);
     }
   }
 
