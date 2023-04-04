@@ -272,6 +272,7 @@ class WireguardMeshAutomata {
       });
       this.peerInfo[peer.publicKey] = {
         origEndpoint: origEndpoint,
+        useOrigEndpoint: true,
         peerIP: peerIP,
         allowedIPs : allowedIPs,
         router: null,
@@ -589,22 +590,32 @@ class WireguardMeshAutomata {
           // do not change peer endpoint if handshake ts is earlier than local latest-handshake
           if (v6Supported && info.v6 && ts6 > now - T1 && info.port6) {
             const endpoint = `[${info.v6}]:${info.port6}`;
-            if (endpoint != info.endpoint) {
-              this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
-              await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
-            }
-            endpointSet = true;
-          } else {
-            if (info.v4 && ts4 > now - T1 && info.port4) {
-              const endpoint = `${info.v4}:${info.port4}`;
+            // round robin between original endpoint and learnt endpoint, 
+            // so if connection cannot be established using learnt endpoint, it will try original endpoint next time, and vice versa
+            if (info.useOrigEndpoint) {
               if (endpoint != info.endpoint) {
                 this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
                 await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
               }
               endpointSet = true;
+              info.useOrigEndpoint = false;
+            }
+          } else {
+            if (info.v4 && ts4 > now - T1 && info.port4) {
+              const endpoint = `${info.v4}:${info.port4}`;
+              if (info.useOrigEndpoint) {
+                if (endpoint != info.endpoint) {
+                  this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
+                  await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
+                }
+                endpointSet = true;
+                info.useOrigEndpoint = false;
+              }
             }
           }
         }
+        if (!endpointSet)
+          info.useOrigEndpoint = true;
         if (!endpointSet && dnsAvailable && origEndpoint) {
           // set resolved original endpoint to peer, in case dns result is changed, it will resolve to updated IP
           const resolvedEndpoint = await this.resolveEndpoint(origEndpoint, v6Supported).catch((err) => null);
