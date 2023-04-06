@@ -388,7 +388,8 @@ router.post('/renew_dhcp_lease',
     }
     const prev = await ncm.getDHCPLease(intf).catch((err) => null);
     if (prev && prev.ts && Date.now() / 1000 - prev.ts < 60) {
-      res.status(429).json({errors: [`Renew DHCP lease on ${intf} too frequently`]});
+      // directly return previous lease info if renew interval is less than 60 seconds
+      res.status(200).json({errors: [], info: prev});
       return;
     }
     await ncm.renewDHCPLease(intf).then((info) => {
