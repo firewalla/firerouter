@@ -48,10 +48,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo iptables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-
-      await this._resetBindIntfRule().catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});      
     }
+    await this._resetBindIntfRule().catch((err) => {});
     if (this._automata) {
       this._automata.stop();
       delete this._automata;
@@ -100,7 +99,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     entries.push(`PrivateKey = ${this.networkConfig.privateKey}`);
     if (this.networkConfig.listenPort) {
       entries.push(`ListenPort = ${this.networkConfig.listenPort}`);
-      if (this.networkConfig.enabled) {
+      if (this.networkConfig.enabled && this.networkConfig.allowOnFirewall !== false) {
         await exec(util.wrapIptables(`sudo iptables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
         await exec(util.wrapIptables(`sudo ip6tables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
         await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
