@@ -33,7 +33,8 @@ const WLAN_FLAG_PSK_SHA256  = 0b1000000
 const WLAN_FLAG_EAP_SHA256  = 0b10000000
 
 
-const _ = require('lodash')
+const _ = require('lodash');
+const { exec } = require('child-process-promise');
 let transactionTask = null;
 let inTransaction = false;
 let currentTransID = null;
@@ -43,6 +44,8 @@ const T_OP_COMMIT = "commit";
 const T_OP_REVERT = "revert";
 const validTransactionOps = [T_OP_APPEND, T_OP_COMMIT, T_OP_REVERT];
 const T_REVERT_TIMEOUT = 120 * 1000; // revert back to previous persisted config in 2 minutes
+
+const assetsController = require('../../core/assets_controller.js');
 
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig(inTransaction);
@@ -375,4 +378,95 @@ router.post('/apply_current_config',
     }
   });
 
+router.post('/renew_dhcp_lease',
+  jsonParser,
+  async (req, res, next) => {
+    const intf = req.body.intf;
+    if (!intf) {
+      res.status(400).json({errors: ['"intf" is not specified']});
+      return;
+    }
+    const prev = await ncm.getDHCPLease(intf).catch((err) => null);
+    if (prev && prev.ts && Date.now() / 1000 - prev.ts < 60) {
+      // directly return previous lease info if renew interval is less than 60 seconds
+      res.status(200).json({errors: [], info: prev});
+      return;
+    }
+    await ncm.renewDHCPLease(intf).then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to renew DHCP lease on ${intf}`]});
+    }).catch((err) => {
+      res.status(400).json({errors: [err.message]});
+    });
+  });
+
+router.get('/dhcp_lease/:intf', async (req, res, next) => {
+    const intf = req.params.intf;
+    if (!intf) {
+      res.status(400).json({errors: ['"intf" is not specified']});
+      return;
+    }
+    await ncm.getDHCPLease(intf).then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to get DHCP lease on ${intf}`]});
+    }).catch((err) => {
+      res.status(400).json({errors: [err.message]});
+    });
+  })
+
+  router.put('/assets/:uid',
+    jsonParser,
+    async (req, res, next) => {
+      const uid = req.params.uid;
+      const config = req.body;
+      const errors = [];
+      await assetsController.setConfig(uid, config).catch((err) => {
+        errors.push(err.message);
+      });
+      res.status(200).json({errors});
+    }
+  )
+
+  router.get('/assets/:uid', async (req, res, next) => {
+    const uid = req.params.uid;
+    const config = await assetsController.getConfig(uid);
+    if (!config)
+      res.status(404).json({errors: [`Cannot find asset uid ${uid}`]});
+    else
+      res.status(200).json(config);
+  })
+
+  router.delete('/assets/:uid', async (req, res, next) => {
+    const uid = req.params.uid;
+    const config = await assetsController.deleteConfig(uid);
+    if (!config)
+      res.status(404).json({errors: [`Cannot find asset uid ${uid}`]});
+    else
+      res.status(200).json(config);
+  })
+
+  router.put('/assets',
+    jsonParser,
+    async (req, res, next) => {
+      const body = req.body;
+      const errors = [];
+      for (const uid of Object.keys(body)) {
+        await assetsController.setConfig(uid, body[uid]).catch((err) => {
+          errors.push(err.message);
+        });
+      }
+      res.status(200).json({errors});
+    }
+  )
+
+  router.get('/assets', async (req, res, next) => {
+    const config = await assetsController.getAllConfig();
+    res.status(200).json(config);
+  })
+
+  
 module.exports = router;

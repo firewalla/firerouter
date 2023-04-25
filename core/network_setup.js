@@ -20,7 +20,6 @@ let instance = null;
 const pl = require('../plugins/plugin_loader.js');
 const routing = require('../util/routing.js');
 const r = require('../util/firerouter.js');
-const util = require('../util/util.js');
 
 const exec = require('child-process-promise').exec;
 
@@ -31,6 +30,19 @@ class NetworkSetup {
     }
 
     return instance;
+  }
+
+  async _getDHCPCDDuidFilename() {
+    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+      return null;
+    });
+    if (version) {
+      if (version.startsWith("6."))
+        return `/etc/dhcpcd.duid`;
+      if (version.startsWith("7."))
+        return `/var/lib/dhcpcd/duid`;
+    }
+    return null;
   }
 
   async prepareEnvironment() {
@@ -58,6 +70,13 @@ class NetworkSetup {
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
+    // save persistent dhcpcd duid file into home directory
+    const duidFilePath = await this._getDHCPCDDuidFilename();
+    if (duidFilePath) {
+      await exec(`sudo rm ${duidFilePath}`).catch((err) => {});
+      await exec(`sudo touch ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+      await exec(`sudo ln -sf ${r.getRuntimeFolder()}/dhcpcd.duid ${duidFilePath}`).catch((err) => {});
+    }
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_DEFAULT);
