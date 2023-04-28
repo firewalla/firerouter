@@ -204,7 +204,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
     if (this.networkConfig.assetsController) {
       this._assetsController = require('../../core/assets_controller.js');
-      this._assetsController.startServer(this.networkConfig);
+      await this._assetsController.startServer(this.networkConfig, this.name);
     }
   }
 
