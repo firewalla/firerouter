@@ -225,6 +225,11 @@ class PSEPlatform extends Platform {
     // nothing to do, driver in os image now
   }
 
+  async reloadWLANKernelModule() {
+    // driver in os image now but need reload with different configuration
+    await this.wifiSD().reloadDriver();
+  }
+
   async toggleEthernetLed(iface, flag) {
     let led_path = null;
 
