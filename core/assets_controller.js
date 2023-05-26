@@ -74,19 +74,17 @@ class AssetsController {
     return config;
   }
 
-//   {"type":"assets_msg::status","mac":"20:6d:31:bb:00:00","stations":[{"mac_addr":"4a:90:f0:42:1a:a2","tx_rate":2161,"rx_rate":1441,"rssi":-36,"snr":59,"assoc_time":31087,"channel":48},{"mac_ad
-// dr":"46:f7:d9:c1:26:0f","tx_rate":2161,"rx_rate":1921,"rssi":-40,"snr":55,"assoc_time":19592,"channel":48},{"mac_addr":"0e:30:16:ae:03:17","tx_rate":72,"rx_rate":72,"rssi":-47,"snr":48,"assoc_time":834
-// 6,"channel":48}]}
+
   async recordStatus(msg) {
     const mac = msg.mac;
-    const stations = msg.stations;
-    if (!_.isEmpty(stations)) {
-      for (const station in stations) {
-        station.apMac = mac;
-        station.ts = Math.floor(new Date()/ 1000);
-        const deviceMac = station.mac;
+    const devices = msg.devices;
+    if (!_.isEmpty(devices)) {
+      for (const device of devices) {
+        device.apMac = mac;
+        device.ts = Math.floor(new Date()/ 1000);
+        const deviceMac = device.mac_addr;
         const key = `assets:status:${deviceMac}`;
-        await rclient.setAsync(key, JSON.stringify(station), "EX", 30);
+        await rclient.setAsync(key, JSON.stringify(device), "EX", 30);
       }
     }
   }
