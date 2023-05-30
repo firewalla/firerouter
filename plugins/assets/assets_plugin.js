@@ -60,6 +60,9 @@ class AssetsPlugin extends Plugin {
             effectiveConfig.wifiNetworks.push(await this.convertWifiNetworkConfig(network));
           if (effectiveConfig.wifiNetworks.filter(n => !n.hasOwnProperty("vlan")).length > 1)
             this.fatal(`More than 1 untagged network is set in "wifiNetworks" of asset ${uid}`);
+          // need to dynamically calculate channels
+          effectiveConfig.channel5g = "auto";
+          effectiveConfig.channel24g = "auto";
           break;
         }
         default:
@@ -169,14 +172,14 @@ class AssetsPlugin extends Plugin {
             switch (profile.band) {
               // need an adaptive way to select channel
               case "2.4g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", channel: "auto", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
                 break;
               case "5g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", channel: "auto", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
                 break;
               default:
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", channel: "auto", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", channel: "auto", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
             }
           }
           break;
