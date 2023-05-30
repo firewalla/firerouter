@@ -34,6 +34,7 @@ const fsp = require('fs').promises;
 const util = require('../util/util.js');
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
+const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
 
 const Promise = require('bluebird');
 
@@ -631,6 +632,24 @@ class NetworkConfigManager {
       }
     }
     return [];
+  }
+
+  async acquireConfigRWLock(func) {
+    return lock.acquire(LOCK_CONFIG_RW, async () => {
+      log.info("Config RW Lock acquired");
+      return func();
+    }).finally(() => {
+      log.info("Config RW Lock released");
+    });
+  }
+
+  async tryApplyConfigWithRWLock(config, dryRun = false) {
+    return await lock.acquire(LOCK_CONFIG_RW, async () => {
+      const errors = await this.tryApplyConfig(config, dryRun);
+      return errors;
+    }).catch((err) => {
+      return [err.message];
+    });
   }
 
   async tryApplyConfig(config, dryRun = false) {
