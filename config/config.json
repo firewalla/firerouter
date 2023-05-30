@@ -137,6 +137,18 @@
       "config_path": "docker",
       "category": "docker",
       "init_seq": 9
+    },
+    {
+      "file_path": "./profile/profile_plugin.js",
+      "config_path": "profile",
+      "category": "profile",
+      "init_seq": 10
+    },
+    {
+      "file_path": "./assets/assets_plugin.js",
+      "config_path": "assets",
+      "category": "assets",
+      "init_seq": 11
     }
   ],
   "sensors": [
