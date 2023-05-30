@@ -37,6 +37,7 @@ const WireguardInterfacePlugin = require('../interface/wireguard_intf_plugin.js'
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 10;
 const FAST_OFF_ON_THRESHOLD = 2;
+const DHCP_RESTART_INTERVAL = 4;
 
 class RoutingPlugin extends Plugin {
 
@@ -462,7 +463,6 @@ class RoutingPlugin extends Plugin {
                     if (wanStatus[viaIntf2].ready === false) {
                       // make it only one success count away from back to ready
                       wanStatus[viaIntf2].successCount = Math.max(wanStatus[viaIntf2].successCount, OFF_ON_THRESHOLD - 1);
-                      wanStatus[viaIntf2].failureCount = 0;
                     }
                     wanStatus[viaIntf2].seq = 1;
                     wanStatus[viaIntf2].plugin = viaIntf2Plugin;
@@ -509,7 +509,6 @@ class RoutingPlugin extends Plugin {
                     if (wanStatus[viaIntf].ready === false) {
                       // make it only one success count away from back to ready
                       wanStatus[viaIntf].successCount = Math.max(wanStatus[viaIntf].successCount, OFF_ON_THRESHOLD - 1);
-                      wanStatus[viaIntf].failureCount = 0;
                     }
                     wanStatus[viaIntf].seq = 0;
                     wanStatus[viaIntf].plugin = viaIntfPlugin;
@@ -559,7 +558,6 @@ class RoutingPlugin extends Plugin {
                         if (wanStatus[viaIntf].ready === false) {
                           // make it only one success count away from becoming ready
                           wanStatus[viaIntf].successCount = Math.max(wanStatus[viaIntf].successCount, OFF_ON_THRESHOLD - 1);
-                          wanStatus[viaIntf].failureCount = 0;
                         }
                         wanStatus[viaIntf].seq = seq;
                         wanStatus[viaIntf].weight = nextHop.weight;
@@ -820,6 +818,21 @@ class RoutingPlugin extends Plugin {
         } else {
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
+          const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
+          if (currentStatus.failureCount % DHCP_RESTART_INTERVAL == 0 && // exponential-backoff
+            (failureMultipliers == 1 || failureMultipliers == 2 || failureMultipliers == 4 || failureMultipliers == 8 || failureMultipliers % 16 == 0)) {
+            const intfPlugin = pl.getPluginInstance("interface", intf);
+            if (intfPlugin && _.get(intfPlugin, ["networkConfig", "dhcp"])) {
+              intfPlugin.carrierState().then((result) => {
+                if (result === "1") {
+                  this.log.info(`Restarting DHCP client on interface ${intf}, failure count is ${currentStatus.failureCount} ...`);
+                  intfPlugin.renewDHCPLease().catch((err) => {
+                    this.log.error(`Failed to renew DHCP lease on interface ${intf}`, err.message);
+                  });
+                }
+              });
+            }
+          }
         }
         const wasPendingTest = currentStatus.pendingTest;
         currentStatus.pendingTest = false;
