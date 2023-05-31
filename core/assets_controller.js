@@ -25,16 +25,12 @@ const { Address4 } = require('ip-address');
 const {BigInteger} = require('jsbn');
 const uuid = require('uuid');
 
-const ASSETS_CONFIG_KEY = "assets:config";
 const ASSETS_EFFECTIVE_CONFIG_KEY = "assets:effective_config";
-const ASSETS_PROFILE_KEY = "assets:profile";
 const ASSETS_CONTROL_PORT = 8838;
-const ASSETS_AUTH_PORT = 8839;
 
 const MSG_PULL_CONFIG = "assets_msg::pull_config";
 const MSG_PUSH_CONFIG = "assets_msg::push_config";
 const MSG_AUTH_REGISTER = "assets_msg::auth_register";
-const MSG_AUTH_GRANT = "assets_msg::auth_grant";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
 const MSG_STATUS = "assets_msg::status";
 
@@ -43,13 +39,11 @@ const KEY_CONTROLLER_ID = "assets_controller_id";
 class AssetsController {
   constructor () {
     this.controlSocket = null;
-    this.authSocket = null;
     this.uidPublicKeyMap = {};
     this.publicKeyUidMap = {};
     this.publicKeyIpMap = {};
     this.ipPublicKeyMap = {};
     this.pushConfigTimer = {};
-    this.rapidAuth = false;
     return this;
   }
 
@@ -167,7 +161,6 @@ class AssetsController {
   async startServer(wgConf, wgIntf) {
     this.stopServer();
     this.wgIntf = wgIntf;
-    this.rapidAuth = _.isObject(wgConf.assetsController) && wgConf.assetsController.rapidAuth || false;
     const peers = wgConf.peers;
     const privateKey = wgConf.privateKey;
     this.selfPublicKey = await exec(`echo ${privateKey} | wg pubkey`).then((result) => result.stdout.trim()).catch((err) => null);
@@ -206,38 +199,32 @@ class AssetsController {
         this.sendHeartbeat(uid);
       }
     }, 30000);
-    // socket for authentication
-    this.authSocket = dgram.createSocket({
-      type: "udp4",
-      reuseAddr: true
-    });
-    this.authSocket.on('message', this.processAuthMessage.bind(this));
-    this.authSocket.on('error', (err) => {
-      log.error(`Error occurred on auth socket, restarting ...`, err.message);
-      this.stopServer();
-      this.startServer(wgConf).catch((err) => {
-        log.error(`Failed to start assets controller server`, err.message);
-      });
-    });
-    this.authSocket.bind(ASSETS_AUTH_PORT);
   }
 
   async processControlMessage(message, info) {
     message = message.toString();
-    const uid = this.ipPublicKeyMap[info.address] && this.publicKeyUidMap[this.ipPublicKeyMap[info.address]];
-    if (!uid) {
-      log.error(`Cannot find uid of IP address ${info.address}`);
-      return;
-    }
     try {
       const msg = JSON.parse(message);
       switch (msg.type) {
         case MSG_PULL_CONFIG: {
+          const uid = this.ipPublicKeyMap[info.address] && this.publicKeyUidMap[this.ipPublicKeyMap[info.address]];
+          if (!uid) {
+            log.error(`Cannot find uid of IP address ${info.address}`, message);
+            return;
+          }
           this.schedulePushEffectiveConfig(uid);
           break;
         }
         case MSG_STATUS: {
           await this.recordStatus(msg);
+          break;
+        }
+        case MSG_AUTH_REGISTER: {
+          const publicKey = this.ipPublicKeyMap[info.address];
+          if (!publicKey) {
+            log.error(`Cannot find public key of IP address ${info.address}`, message);
+          }
+          await this.processAuthRegister(msg, publicKey);
           break;
         }
         default: {
@@ -249,89 +236,41 @@ class AssetsController {
     }
   }
 
-  async processAuthMessage(message, info) {
-    message = message.toString();
-    try {
-      const msg = JSON.parse(message);
-      switch (msg.type) {
-        case MSG_AUTH_REGISTER: {
-          // An asset sends a register message to register itself to controller. It includes uid of the asset, as well as the public key of the asset for control channel
-          // { "type": "assets::register", "uid": "xx:xx:xx:xx:xx:xx", "publicKey": "xxxxxxxx" }
-          const uid = msg.uid;
-          const publicKey = msg.publicKey;
-          if (!uid || !publicKey)
-            return;
-          // write after read, need to acquire RWLock
-          await ncm.acquireConfigRWLock(async () => {
-            const networkConfig = await ncm.getActiveConfig();
-            let assetConfig = _.get(networkConfig, ["assets", uid]);
-            if (assetConfig) {
-              if (assetConfig.publicKey === publicKey && this.uidPublicKeyMap[uid] === publicKey && this.publicKeyIpMap[publicKey]) {
-                this.sendAuthGrant(uid, info.address, info.port);
-                return;
-              }
-              assetConfig.publicKey = publicKey;
-            } else {
-              // create dummy assets config
-              if (!networkConfig.assets)
-                networkConfig.assets = {};
-              networkConfig.assets[uid] = { publicKey, networks: [] };
-            }
-            // update network config with updated public key and probably dummy config
-            const errors = await ncm.tryApplyConfig(networkConfig);
-            if (errors && errors.length != 0) {
-              log.error(`Failed to apply network config with dummy asset config ${uid}`, errors);
-              return;
-            }
-            await ncm.saveConfig(networkConfig);
-          });
-          // if rapid authentication is enabled, directly create wireguard peer for the new public key
-          if (this.rapidAuth) {
-            await ncm.acquireConfigRWLock(async () => {
-              const networkConfig = await ncm.getActiveConfig();
-              const wgConf = _.get(networkConfig, ["interface", "wireguard", this.wgIntf]);
-              if (!wgConf) // should not happen in theory
-                return;
-              const peers = wgConf.peers;
-              const extraPeers = wgConf.extra.peers;
-              if (peers.some(peer => peer.publicKey === publicKey)) // should not happen in theory
-                return;
-              let peerIP = this.generateRandomIP(wgConf.ipv4);
-              while (peers.some(peer => peer.allowedIPs && peer.allowedIPs.includes(peerIP)))
-                peerIP = this.generateRandomIP(wgConf.ipv4);
-              peers.push({ publicKey, allowedIPs: [peerIP], persistentKeepalive: 17 });
-              extraPeers.push({ publicKey, name: uid });
-              const errors = await ncm.tryApplyConfig(networkConfig);
-              if (errors && errors.length != 0) {
-                log.error(`Failed to authorize asset key of ${uid}`, errors);
-                return;
-              }
-              await ncm.saveConfig(networkConfig);
-            });
-          }
-          break;
-        }
-      }
-    } catch (err) {
-      log.error(`Failed to handle assets authentication message from ${info.address}`, message, err.message);
-    }
-  }
-
-  sendAuthGrant(uid, address, port) {
-    if (!this.selfPublicKey || !this.uidPublicKeyMap[uid] || !this.publicKeyIpMap[this.uidPublicKeyMap[uid]] || !this.authSocket)
+  async processAuthRegister(msg, publicKey) {  
+    // An asset sends a register message to register itself to controller. It includes uid of the asset, as well as the public key of the asset for control channel
+    // { "type": "assets_msg::auth_register", "uid": "xx:xx:xx:xx:xx:xx", "publicKey": "xxxxxxxx" }
+    const uid = msg.uid;
+    if (!uid || !publicKey)
       return;
-    const msg = JSON.stringify({type: MSG_AUTH_GRANT, uid: uid, publicKey: this.selfPublicKey, vip: this.publicKeyIpMap[this.uidPublicKeyMap[uid]]});
-    this.authSocket.send(msg, port, address);
+    // write after read, need to acquire RWLock
+    await ncm.acquireConfigRWLock(async () => {
+      const networkConfig = await ncm.getActiveConfig();
+      let assetConfig = _.get(networkConfig, ["assets", uid]);
+      if (assetConfig) {
+        if (assetConfig.publicKey === publicKey && this.uidPublicKeyMap[uid] === publicKey) {
+          return;
+        }
+        assetConfig.publicKey = publicKey;
+      } else {
+        // create dummy assets config
+        if (!networkConfig.assets)
+          networkConfig.assets = {};
+        networkConfig.assets[uid] = { publicKey, wifiNetworks: [] };
+      }
+      // update network config with updated public key and dummy config
+      const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings
+      if (errors && errors.length != 0) {
+        log.error(`Failed to apply network config with dummy asset config ${uid}`, errors);
+        return;
+      }
+      await ncm.saveConfig(networkConfig);
+    });
   }
 
   stopServer() {
     if (this.controlSocket) {
       this.controlSocket.close();
       this.controlSocket = null;
-    }
-    if (this.authSocket) {
-      this.authSocket.close();
-      this.authSocket = null;
     }
     if (this.hbInterval) {
       clearInterval(this.hbInterval);
