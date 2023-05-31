@@ -888,8 +888,10 @@ class InterfaceBasePlugin extends Plugin {
     if (expectedContent && contentFile !== "/dev/null") {
       const content = await fs.readFileAsync(contentFile, { encoding: "utf8"}).catch((err) => null);
       result.contentMismatch = (content !== expectedContent);
-      if (result.contentMismatch)
-        result.statusCode = 307; // a special code indicating content mismatch
+      if (result.contentMismatch && !result.redirectURL) { // HTTP request is redirected without using HTTP redirect, maybe from IP layer redirection
+        result.statusCode = 302;
+        result.redirectURL = testURL;
+      }
       await fs.unlinkAsync(contentFile).catch((err) => {});
     }
 
