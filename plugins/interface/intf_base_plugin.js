@@ -823,7 +823,7 @@ class InterfaceBasePlugin extends Plugin {
     return carrierState === "1";
   }
 
-  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
+  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204, expectedContent = null) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
       return null;
@@ -858,7 +858,11 @@ class InterfaceBasePlugin extends Plugin {
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
+    let contentFile = "/dev/null";
+    if (expectedContent) {
+      contentFile = `/dev/shm/${uuid.v4()}`;
+    }
+    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o ${contentFile} -w "%{http_code},%{redirect_url}" ${testURL}`;
     const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
@@ -866,8 +870,11 @@ class InterfaceBasePlugin extends Plugin {
 
     delete this.isHttpTesting[defaultTestURL];
 
-    if (!output)
+    if (!output) {
+      if (contentFile !== "/dev/null")
+        await fs.unlinkAsync(contentFile).catch((err) => {});
       return null;
+    }
     const [statusCode, redirectURL] = output.split(',', 2);
 
     const result = {
@@ -877,6 +884,12 @@ class InterfaceBasePlugin extends Plugin {
       expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
       ts: Math.floor(new Date() / 1000)
     };
+
+    if (expectedContent && contentFile !== "/dev/null") {
+      const content = await fs.readFileAsync(contentFile, { encoding: "utf8"}).catch((err) => null);
+      result.contentMismatch = (content !== expectedContent);
+      await fs.unlinkAsync(contentFile).catch((err) => {});
+    }
 
     if(this._wanStatus) {
       this._wanStatus.http = result;
