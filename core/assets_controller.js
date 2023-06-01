@@ -19,61 +19,37 @@ const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const _ = require('lodash');
 const dgram = require('dgram');
+const ncm = require('../core/network_config_mgr.js');
+const { exec } = require('child-process-promise');
+const { Address4 } = require('ip-address');
+const {BigInteger} = require('jsbn');
+const uuid = require('uuid');
 
-const ASSETS_CONFIG_KEY = "assets:config";
+const ASSETS_EFFECTIVE_CONFIG_KEY = "assets:effective_config";
 const ASSETS_CONTROL_PORT = 8838;
 
 const MSG_PULL_CONFIG = "assets_msg::pull_config";
 const MSG_PUSH_CONFIG = "assets_msg::push_config";
+const MSG_AUTH_REGISTER = "assets_msg::auth_register";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
 const MSG_STATUS = "assets_msg::status";
 
+const KEY_CONTROLLER_ID = "assets_controller_id";
+
 class AssetsController {
   constructor () {
-    this.socket = null;
-    this.uidIpMap = {};
-    this.ipUidMap = {};
-    this.uidConfigMap = {};
+    this.controlSocket = null;
+    this.uidPublicKeyMap = {};
+    this.publicKeyUidMap = {};
+    this.publicKeyIpMap = {};
+    this.ipPublicKeyMap = {};
+    this.pushConfigTimer = {};
+    return this;
   }
 
-  async setConfig(uid, config) {
-    if (!_.isObject(config)) {
-      log.error(`Set config failed on asset ${uid}, config is not an object`, config);
-      return;
-    }
-    const ts = Date.now() / 1000;
-    config._ts = ts;
-    this.uidConfigMap[uid] = config;
-    await rclient.hsetAsync(ASSETS_CONFIG_KEY, uid, JSON.stringify(config));
-    await this.pushConfig(uid);
-  }
+  async refreshEffectiveConfig(uid) {
 
-  async getConfig(uid) {
-    if (!this.uidConfigMap[uid]) {
-      const str = await rclient.hgetAsync(ASSETS_CONFIG_KEY, uid);
-      if (str)
-        this.uidConfigMap[uid] = JSON.parse(str);
-    }
-    return this.uidConfigMap[uid];
   }
-
-  async getAllConfig() {
-    const result = {};
-    for (const uid of Object.keys(this.uidIpMap)) {
-      const config = await this.getConfig(uid);
-      if (config)
-        result[uid] = config;
-    }
-    return result;
-  }
-
-  async deleteConfig(uid) {
-    const config = await this.getConfig(uid);
-    await rclient.hdelAsync(ASSETS_CONFIG_KEY, uid);
-    delete this.uidConfigMap[uid];
-    return config;
-  }
-
 
   async recordStatus(msg) {
     const mac = msg.mac;
@@ -89,110 +65,233 @@ class AssetsController {
     }
   }
 
-  async pushConfig(uid) {
-    if (!this.socket)
+  async pushEffectiveConfig(uid) {
+    if (!this.controlSocket)
       return;
-    const assetIP = this.uidIpMap[uid];
+    const assetIP = this.uidPublicKeyMap[uid] && this.publicKeyIpMap[this.uidPublicKeyMap[uid]];
     if (!assetIP) {
       log.error(`Cannot find ip of asset ${uid}`);
       return;
     }
-    const config = await this.getConfig(uid);
+    const config = await this.getEffectiveConfig(uid);
     if (!config) {
-      log.error(`Cannot find config of asset ${uid}`);
+      log.error(`Cannot find effective config of asset ${uid}`);
       return;
     }
     const msg = {type: MSG_PUSH_CONFIG, config};
-    this.socket.send(JSON.stringify(msg), ASSETS_CONTROL_PORT, assetIP);
+    this.controlSocket.send(JSON.stringify(msg), ASSETS_CONTROL_PORT, assetIP);
   }
 
   async sendHeartbeat(uid) {
-    if (!this.socket)
+    if (!this.controlSocket)
       return;
-    const assetIP = this.uidIpMap[uid];
+    const assetIP = this.uidPublicKeyMap[uid] && this.publicKeyIpMap[this.uidPublicKeyMap[uid]];
     if (!assetIP) {
       log.error(`Cannot find IP of asset ${uid}`);
       return;
     }
-    const config = await this.getConfig(uid);
+    const config = await this.getEffectiveConfig(uid);
     if (!config || !config._ts) {
-      log.debug(`Cannot find config ts of asset ${uid}`);
+      log.debug(`Cannot find effective config ts of asset ${uid}`);
       return;
     }
     // heartbeat with most recent config update timestamp, the asset can send pull_config accordingly
     const msg = {type: MSG_HEARTBEAT, ts: config._ts};
-    this.socket.send(JSON.stringify(msg), ASSETS_CONTROL_PORT, assetIP);
+    this.controlSocket.send(JSON.stringify(msg), ASSETS_CONTROL_PORT, assetIP);
   }
 
-  startServer(wgConf) {
-    if (this.socket) {
-      this.stopServer();
+  async getEffectiveConfig(uid) {
+    const effectiveConfig = await rclient.hgetAsync(ASSETS_EFFECTIVE_CONFIG_KEY, uid);
+    if (effectiveConfig)
+      return JSON.parse(effectiveConfig);
+    return null;
+  }
+
+  async setEffectiveConfig(uid, config) {
+    if (!_.isObject(config)) {
+      log.error(`Set effective config failed on asset ${uid}, config is not an object`, config);
+      return;
     }
+    if (config.publicKey) {
+      this.uidPublicKeyMap[uid] = config.publicKey;
+      this.publicKeyUidMap[config.publicKey] = uid;
+    }
+    const prevEffectiveConfig = await this.getEffectiveConfig(uid);
+    if (this.isEffectiveConfigEquivalent(prevEffectiveConfig, config)) {
+      log.info(`Effective config of asset ${uid} is not changed, skip pushing effective config`);
+      return;
+    }
+    const ts = Date.now() / 1000;
+    config._ts = ts;
+    await rclient.hsetAsync(ASSETS_EFFECTIVE_CONFIG_KEY, uid, JSON.stringify(config));
+    this.schedulePushEffectiveConfig(uid);
+  }
+
+  async deleteEffectiveConfig(uid) {
+    if (this.uidPublicKeyMap[uid]) {
+      if (this.publicKeyUidMap[this.uidPublicKeyMap[uid]] === uid)
+        delete this.publicKeyUidMap[this.uidPublicKeyMap[uid]];
+      delete this.uidPublicKeyMap[uid];
+    }
+    await rclient.hdelAsync(ASSETS_EFFECTIVE_CONFIG_KEY, uid);
+  }
+
+  isEffectiveConfigEquivalent(cfg1, cfg2) {
+    if (!_.isObject(cfg1) || !_.isObject(cfg2))
+      return cfg1 == cfg2;
+    const ignoredKeys = ["_ts"];
+    const config1 = _.pick(cfg1, Object.keys(cfg1).filter(k => !ignoredKeys.includes(k)));
+    const config2 = _.pick(cfg2, Object.keys(cfg2).filter(k => !ignoredKeys.includes(k)));
+    return _.isEqual(config1, config2);
+  }
+
+  schedulePushEffectiveConfig(uid) {
+    if (this.pushConfigTimer[uid]) {
+      clearTimeout(this.pushConfigTimer[uid]);
+    }
+    this.pushConfigTimer = setTimeout(() => {
+      this.pushEffectiveConfig(uid).catch((err) => {
+        log.error(`Failed to push assets config ${uid}`, err.message);
+      }).finally(() => {
+        delete this.pushConfigTimer[uid];
+      });
+    }, 2000);
+  }
+
+  async startServer(wgConf, wgIntf) {
+    this.stopServer();
+    this.wgIntf = wgIntf;
     const peers = wgConf.peers;
+    const privateKey = wgConf.privateKey;
+    this.selfPublicKey = await exec(`echo ${privateKey} | wg pubkey`).then((result) => result.stdout.trim()).catch((err) => null);
     if (!_.isArray(peers)) {
       log.error(`assets wg config does not include peers`, wgConf);
       return;
     }
+    const pubKeyIpMap = {};
+    const ipPubKeyMap = {};
     for (const peer of peers) {
       const publicKey = peer.publicKey;
-      const assetIP = _.isArray(peer.allowedIPs) && peer.allowedIPs[0].split('/')[0];
-      this.uidIpMap[publicKey] = assetIP;
-      this.ipUidMap[assetIP] = publicKey;
+      const ip = _.isArray(peer.allowedIPs) && peer.allowedIPs[0].split('/')[0];
+      pubKeyIpMap[publicKey] = ip;
+      ipPubKeyMap[ip] = publicKey;
     }
-    this.socket = dgram.createSocket({
+    this.publicKeyIpMap = pubKeyIpMap;
+    this.ipPublicKeyMap = ipPubKeyMap;
+    // socket for control channel
+    this.controlSocket = dgram.createSocket({
       type: "udp4",
       reuseAddr: true
     });
-    this.socket.on('message', async (message, info) => {
-      message = message.toString();
-      const uid = this.ipUidMap[info.address];
-      if (!uid) {
-        log.error(`Cannot find uid of IP address ${info.address}`);
-        return;
-      }
-      try {
-        const msg = JSON.parse(message);
-        switch (msg.type) {
-          case MSG_PULL_CONFIG : {
-            await this.pushConfig(uid);
-            break;
-          }
-          case MSG_STATUS: {
-            await this.recordStatus(msg);
-            break;
-          }
-          default: {
-            log.warn(`Unsupported message type: ${msg.type}`, msg);
-          }
-        }
-      } catch (err) {
-        log.error(`Failed to handle asset message from ${info.address}`, message, err.message);
-      }
-    });
-    this.socket.on('error', (err) => {
-      log.error(`Error occurred on UDP socket, restarting ...`, err.message);
+    this.controlSocket.on('message', this.processControlMessage.bind(this));
+    this.controlSocket.on('error', (err) => {
+      log.error(`Error occurred on control socket, restarting ...`, err.message);
       this.stopServer();
-      this.startServer(wgConf);
+      this.startServer(wgConf).catch((err) => {
+        log.error(`Failed to start assets controller server`, err.message);
+      });
     });
     const ip = wgConf.ipv4.split('/')[0];
-    this.socket.bind(ASSETS_CONTROL_PORT, ip);
+    this.controlSocket.bind(ASSETS_CONTROL_PORT, ip);
     // periodically send heartbeat to all peers
     this.hbInterval = setInterval(() => {
-      for (const peer of peers) {
-        this.sendHeartbeat(peer.publicKey);
+      for (const uid of Object.keys(this.uidPublicKeyMap)) {
+        this.sendHeartbeat(uid);
       }
     }, 30000);
   }
 
+  async processControlMessage(message, info) {
+    message = message.toString();
+    try {
+      const msg = JSON.parse(message);
+      switch (msg.type) {
+        case MSG_PULL_CONFIG: {
+          const uid = this.ipPublicKeyMap[info.address] && this.publicKeyUidMap[this.ipPublicKeyMap[info.address]];
+          if (!uid) {
+            log.error(`Cannot find uid of IP address ${info.address}`, message);
+            return;
+          }
+          this.schedulePushEffectiveConfig(uid);
+          break;
+        }
+        case MSG_STATUS: {
+          await this.recordStatus(msg);
+          break;
+        }
+        case MSG_AUTH_REGISTER: {
+          const publicKey = this.ipPublicKeyMap[info.address];
+          if (!publicKey) {
+            log.error(`Cannot find public key of IP address ${info.address}`, message);
+          }
+          await this.processAuthRegister(msg, publicKey);
+          break;
+        }
+        default: {
+          log.warn(`Unsupported message type: ${msg.type}`, msg);
+        }
+      }
+    } catch (err) {
+      log.error(`Failed to handle assets control message from ${info.address}`, message, err.message);
+    }
+  }
+
+  async processAuthRegister(msg, publicKey) {  
+    // An asset sends a register message to register itself to controller. It includes uid of the asset, as well as the public key of the asset for control channel
+    // { "type": "assets_msg::auth_register", "uid": "xx:xx:xx:xx:xx:xx", "publicKey": "xxxxxxxx" }
+    const uid = msg.uid;
+    if (!uid || !publicKey)
+      return;
+    // write after read, need to acquire RWLock
+    await ncm.acquireConfigRWLock(async () => {
+      const networkConfig = await ncm.getActiveConfig();
+      let assetConfig = _.get(networkConfig, ["assets", uid]);
+      if (assetConfig) {
+        if (assetConfig.publicKey === publicKey && this.uidPublicKeyMap[uid] === publicKey) {
+          return;
+        }
+        assetConfig.publicKey = publicKey;
+      } else {
+        // create dummy assets config
+        if (!networkConfig.assets)
+          networkConfig.assets = {};
+        networkConfig.assets[uid] = { publicKey, wifiNetworks: [] };
+      }
+      // update network config with updated public key and dummy config
+      const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings
+      if (errors && errors.length != 0) {
+        log.error(`Failed to apply network config with dummy asset config ${uid}`, errors);
+        return;
+      }
+      await ncm.saveConfig(networkConfig);
+    });
+  }
+
   stopServer() {
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
+    if (this.controlSocket) {
+      this.controlSocket.close();
+      this.controlSocket = null;
     }
     if (this.hbInterval) {
       clearInterval(this.hbInterval);
       this.hbInterval = null;
     }
+  }
+
+  generateRandomIP(cidr) {
+    const addr4 = new Address4(cidr);
+    const maskLength = addr4.subnetMask;
+    const randomBits = 32 - maskLength;
+    const randomOffsets = 1 + Math.floor(Math.random() * (Math.pow(2, randomBits) - 2));
+    return Address4.fromBigInteger(addr4.bigInteger().add(new BigInteger(randomOffsets.toString()))).correctForm() + "/32";
+  }
+
+  async getControllerID() {
+    if (!this.controllerID) {
+      await rclient.setAsync(KEY_CONTROLLER_ID, uuid.v4(), "NX"); // set if not exists
+      this.controllerID = await rclient.getAsync(KEY_CONTROLLER_ID);
+    }
+    return this.controllerID;
   }
 }
 
