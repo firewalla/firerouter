@@ -61,8 +61,10 @@ class AssetsPlugin extends Plugin {
           if (effectiveConfig.wifiNetworks.filter(n => !n.hasOwnProperty("vlan")).length > 1)
             this.fatal(`More than 1 untagged network is set in "wifiNetworks" of asset ${uid}`);
           // need to dynamically calculate channels
-          effectiveConfig.channel5g = "auto";
-          effectiveConfig.channel24g = "auto";
+          if (!effectiveConfig.channel5g)
+            effectiveConfig.channel5g = "auto";
+          if (!effectiveConfig.channel24g)
+            effectiveConfig.channel24g = "auto";
           break;
         }
         default:
