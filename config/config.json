@@ -145,10 +145,16 @@
       "init_seq": 10
     },
     {
+      "file_path": "./assets/assets_template_plugin.js",
+      "config_path": "assets_template",
+      "category": "assets_template",
+      "init_seq": 11
+    },
+    {
       "file_path": "./assets/assets_plugin.js",
       "config_path": "assets",
       "category": "assets",
-      "init_seq": 11
+      "init_seq": 12
     }
   ],
   "sensors": [
