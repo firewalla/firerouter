@@ -15,7 +15,7 @@
 
 'use strict';
 
-const Plugin = require('../plugin.js');
+const AssetsTemplatePlugin = require('./assets_template_plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter.js');
@@ -25,183 +25,25 @@ const crypto = require('crypto');
 
 const AssetsController = require('../../core/assets_controller.js');
 
-class AssetsPlugin extends Plugin {
-  async flush() {
-
-  }
-
+class AssetsPlugin extends AssetsTemplatePlugin {
   async apply() {
     const uid = this.name;
     const config = this.networkConfig;
-    const effectiveConfig = await this.generateEffectiveConfig(config);
-    await AssetsController.setEffectiveConfig(uid, effectiveConfig);
-  }
-
-  async generateEffectiveConfig(config) {
-    const effectiveConfig = {};
-    for (const key of Object.keys(config)) {
-      switch (key) {
-        case "wifiNetworks": {
-          /*
-            [
-              {
-                "intf": "br0",
-                "management": true,
-                "vlanUntag": false,
-                "ssidProfiles": ["ssid_2.4g", "ssid_5g"]
-              }
-            ]
-          */
-          if (!_.isArray(config[key])) {
-            this.fatal(`"wifiNetworks" in asset config should be an array`);
-          }
-          effectiveConfig.wifiNetworks = [];
-          for (const network of config[key])
-            effectiveConfig.wifiNetworks.push(await this.convertWifiNetworkConfig(network));
-          if (effectiveConfig.wifiNetworks.filter(n => !n.hasOwnProperty("vlan")).length > 1)
-            this.fatal(`More than 1 untagged network is set in "wifiNetworks" of asset ${uid}`);
-          // need to dynamically calculate channels
-          if (!effectiveConfig.channel5g)
-            effectiveConfig.channel5g = "auto";
-          if (!effectiveConfig.channel24g)
-            effectiveConfig.channel24g = "auto";
-          break;
-        }
-        default:
-          effectiveConfig[key] = config[key];
-      }
+    if (config.templateId) {
+      const templatePlugin = pl.getPluginInstance("assets_template", config.templateId);
+      if (!templatePlugin)
+        this.fatal(`Cannot find assets template ${config.templateId}`);
+      this.subscribeChangeFrom(templatePlugin);
+      // keys in config can overwrite keys in template
+      const mergedConfig = Object.assign({}, templatePlugin.networkConfig, config);
+      delete mergedConfig.templateId;
+      this.log.info(`Asset ${uid} will use merged config`, mergedConfig);
+      const effectiveConfig = await this.generateEffectiveConfig(mergedConfig);
+      await AssetsController.setEffectiveConfig(uid, effectiveConfig);
+    } else {
+      const effectiveConfig = await this.generateEffectiveConfig(config);
+      await AssetsController.setEffectiveConfig(uid, effectiveConfig);
     }
-    return effectiveConfig;
-  }
-
-  async convertWifiNetworkConfig(wifiNetworkConfig) {
-    if (!wifiNetworkConfig.ssidProfiles)
-      this.fatal(`ssidProfiles is not defined in wifiNetwork config on ${this.name}`);
-    const wifiConfig = {ssids: []};
-    let vlanIntf = null;
-    let vlanOverride = null;
-    let vlanUntag = false;
-    for (const key of Object.keys(wifiNetworkConfig)) {
-      const value = wifiNetworkConfig[key];
-      switch (key) {
-        case "intf": {
-          // derive vlan from intf
-          const intfPlugin = pl.getPluginInstance("interface", value);
-          if (!intfPlugin)
-            this.fatal(`"intf" ${value} is not found in config`);
-          this.subscribeChangeFrom(intfPlugin);
-          switch (intfPlugin.constructor.name) {
-            case "VLANInterfacePlugin":
-              vlanIntf = intfPlugin.networkConfig.vid;
-              break;
-            case "BridgeInterfacePlugin":
-              for (const intf of intfPlugin.networkConfig.intf) {
-                const plugin = pl.getPluginInstance("interface", intf);
-                if (plugin && plugin.constructor.name === "VLANInterfacePlugin") {
-                  vlanIntf = plugin.networkConfig.vid;
-                  break;
-                }
-              }
-              break;
-          }
-          break;
-        }
-        case "vlan": {
-          // vlan derived from intf can be overridden in config
-          vlanOverride = value;
-          break;
-        }
-        case "vlanUntag": {
-          // remove vlan id if vlanUntag is specified
-          vlanUntag = value;
-          break;
-        }
-        case "ssidProfiles": {
-          if (!_.isArray(value))
-            this.fatal(`ssidProfiles in wifiNetworks of ${this.name} is not an array`);
-          for (const ssidProfile of value) {
-            const profilePlugin = pl.getPluginInstance("profile", ssidProfile);
-            if (!profilePlugin)
-              this.fatal(`ssid profile ${ssidProfile} is not found`);
-            this.subscribeChangeFrom(profilePlugin);
-            const profile = profilePlugin.networkConfig;
-            const ssidCommonConfig = {};
-            Object.assign(ssidCommonConfig, _.pick(profile, ["ssid", "enterprise", "hidden", "isolate", "hints"]));
-            if (profile.key)
-              ssidCommonConfig.key = await util.generatePSK(profile.ssid, profile.key);
-            // randomize options for fast roaming
-            
-            // refer to https://openwrt.org/docs/guide-user/network/wifi/basic#encryption_modes
-            switch (profile.encryption) {
-              case "enterprise":
-                switch (profile.wpa) {
-                  case "3":
-                    ssidCommonConfig.encryption = "wpa3";
-                    break;
-                  case "2/3":
-                    ssidCommonConfig.encryption = "wpa3-mixed";
-                    break;
-                  default:
-                    ssidCommonConfig.encryption = "wpa2";
-                }
-                break;
-              case "open":
-                ssidCommonConfig.encryption = "none";
-                break;
-              case "enhancedOpen":
-                ssidCommonConfig.encryption = "owe";
-                break;
-              default:
-                switch (profile.wpa) {
-                  case "3":
-                    ssidCommonConfig.encryption = "sae";
-                    break;
-                  case "2/3":
-                    ssidCommonConfig.encryption = "sae-mixed";
-                    break;
-                  default:
-                    ssidCommonConfig.encryption = "psk2";
-                }
-            }
-            const ftSeed24 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "2.4g");
-            const ftSeed5 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "5g");
-            const mdId24 = ftSeed24.substring(ftSeed24.length - 4);
-            const mdId5 = ftSeed5.substring(ftSeed5.length - 4);
-            const nasId24 = ftSeed24.substring(0, 16);
-            const nasId5 = ftSeed5.substring(0, 16);
-            const khKeyHex24 = ftSeed24.substring(16, 48);
-            const khKeyHex5 = ftSeed5.substring(16, 48);
-            switch (profile.band) {
-              // need an adaptive way to select channel
-              case "2.4g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
-                break;
-              case "5g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
-                break;
-              default:
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
-            }
-          }
-          break;
-        }
-        default: {
-          wifiConfig[key] = value;
-        }
-      } 
-    }
-
-    if (!vlanUntag) {
-      if (vlanOverride || vlanIntf)
-        wifiConfig.vlan = vlanOverride || vlanIntf;
-    }
-    return wifiConfig;
-  }
-
-  async calculateFTSeed(intf, profileId, band) {
-    const controllerID = await AssetsController.getControllerID();
-    return crypto.createHash('sha256').update(`${controllerID}::${intf}::${profileId}::${band}`).digest('hex');
   }
 }
 
