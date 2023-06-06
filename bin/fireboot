@@ -122,7 +122,7 @@ logger "Uptime after fireupgrade: $(awk '{print $1}' /proc/uptime)"
 redis-cli set "fireboot:status" "firewalla"
 echo "Starting Firewalla ..."
 touch /home/pi/.firewalla/managed_reboot
-sudo systemctl start firewalla
+sudo systemctl restart firewalla
 
 redis-cli set "fireboot:status" "firewalla_service_done"
 redis-cli HINCRBY "stats:systemd:restart" FireBoot 1

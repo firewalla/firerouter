@@ -462,6 +462,14 @@ class NetworkConfigManager {
 
         // wait for scan finish
         // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+        if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
+          wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+            log.verbose('quit written')
+          })
+          // reject immediately instead of waiting for timeout
+          deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
+          continue
+        }
         if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
           waitForScan = false
           log.info('scan done, getting result')
@@ -654,6 +662,43 @@ class NetworkConfigManager {
         log.error("Redis background save returns error", err.message);
       });
     }, 3000);
+  }
+
+  async renewDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    const info = await plugin.renewDHCPLease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
+      return null;
+    });
+    return info;
+  }
+
+  async getDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    const info = await plugin.getLastDHCPLeaseInfo();
+    return info;
   }
 }
 
