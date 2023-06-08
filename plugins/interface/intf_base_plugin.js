@@ -751,8 +751,9 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       this._wanStatus = {};
       this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
-      if (!this._wanConnState.ready)
-        this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+      // the next wan conn check event will determine the 'ready' state
+      this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+      this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
 
       this.setPendingTest(true);
 
@@ -1188,8 +1189,8 @@ class InterfaceBasePlugin extends Plugin {
           // although pending test flag will be set after apply() is scheduled later, still need to set it here to prevent inconsistency in intermediate state
           this.setPendingTest(true);
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
-          if (!this._wanConnState.ready)
-            this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+          this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+          this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
           // WAN interface plugged, need to reapply WAN interface config
           if (this.isDHCP()) {
             this.propagateConfigChanged(true);
@@ -1231,8 +1232,8 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface === this.name && this.isWAN()) {
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
-          if (!this._wanConnState.ready)
-            this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+          this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+          this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
           // update route for DNS from DHCP
           this.updateRouteForDNS().catch((err) => {
             this.log.error(`Failed to update route for DNS on ${this.name}`, err.message);
