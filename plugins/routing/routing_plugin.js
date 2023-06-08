@@ -34,11 +34,6 @@ const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
 const WireguardInterfacePlugin = require('../interface/wireguard_intf_plugin.js');
 
-const ON_OFF_THRESHOLD = 2;
-const OFF_ON_THRESHOLD = 10;
-const FAST_OFF_ON_THRESHOLD = 2;
-const DHCP_RESTART_INTERVAL = 4;
-
 class RoutingPlugin extends Plugin {
 
   static async preparePlugin() {
@@ -427,17 +422,8 @@ class RoutingPlugin extends Plugin {
                     this.subscribeChangeFrom(viaIntf2Plugin);
                     wanStatus[viaIntf2] = {
                       active: false,
-                      ready: true,
-                      successCount: 0,
-                      failureCount: 0,
-                      pendingTestTimestamp: viaIntf2Plugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
-                      pendingTest: viaIntf2Plugin.isPendingTest()
+                      ready: true
                     };
-                    // inherit success/failure count based on interface name
-                    if (lastWanStatus[viaIntf2]) {
-                      wanStatus[viaIntf2].successCount = lastWanStatus[viaIntf2].successCount;
-                      wanStatus[viaIntf2].failureCount = lastWanStatus[viaIntf2].failureCount;
-                    }
                     // inherit active/ready based on seq
                     for (const intf of Object.keys(lastWanStatus)) {
                       if (lastWanStatus[intf].seq === 1) {
@@ -460,10 +446,6 @@ class RoutingPlugin extends Plugin {
                       wanStatus[viaIntf2].ready = false;
                       wanStatus[viaIntf2].active = false;
                     }
-                    if (wanStatus[viaIntf2].ready === false) {
-                      // make it only one success count away from back to ready
-                      wanStatus[viaIntf2].successCount = Math.max(wanStatus[viaIntf2].successCount, OFF_ON_THRESHOLD - 1);
-                    }
                     wanStatus[viaIntf2].seq = 1;
                     wanStatus[viaIntf2].plugin = viaIntf2Plugin;
                   }
@@ -475,16 +457,8 @@ class RoutingPlugin extends Plugin {
                     this.subscribeChangeFrom(viaIntfPlugin);
                     wanStatus[viaIntf] = {
                       active: false,
-                      ready: true,
-                      successCount: 0,
-                      failureCount: 0,
-                      pendingTestTimestamp: viaIntfPlugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
-                      pendingTest: viaIntfPlugin.isPendingTest()
+                      ready: true
                     };
-                    if (lastWanStatus[viaIntf]) {
-                      wanStatus[viaIntf].successCount = lastWanStatus[viaIntf].successCount;
-                      wanStatus[viaIntf].failureCount = lastWanStatus[viaIntf].failureCount;
-                    }
                     for (const intf of Object.keys(lastWanStatus)) {
                       if (lastWanStatus[intf].seq === 0) {
                         wanStatus[viaIntf].active = lastWanStatus[intf].active;
@@ -506,10 +480,6 @@ class RoutingPlugin extends Plugin {
                       wanStatus[viaIntf].ready = false;
                       wanStatus[viaIntf].active = false;
                     }
-                    if (wanStatus[viaIntf].ready === false) {
-                      // make it only one success count away from back to ready
-                      wanStatus[viaIntf].successCount = Math.max(wanStatus[viaIntf].successCount, OFF_ON_THRESHOLD - 1);
-                    }
                     wanStatus[viaIntf].seq = 0;
                     wanStatus[viaIntf].plugin = viaIntfPlugin;
                     break;
@@ -524,16 +494,8 @@ class RoutingPlugin extends Plugin {
                         this.subscribeChangeFrom(viaIntfPlugin);
                         wanStatus[viaIntf] = {
                           active: false,
-                          ready: true,
-                          successCount: 0,
-                          failureCount: 0,
-                          pendingTestTimestamp: viaIntfPlugin.isPendingTest() ? Math.floor(new Date() / 1000) : null,
-                          pendingTest: viaIntfPlugin.isPendingTest()
+                          ready: true
                         };
-                        if (lastWanStatus[viaIntf]) {
-                          wanStatus[viaIntf].successCount = lastWanStatus[viaIntf].successCount;
-                          wanStatus[viaIntf].failureCount = lastWanStatus[viaIntf].failureCount;
-                        }
                         for (const intf of Object.keys(lastWanStatus)) {
                           if (lastWanStatus[intf].seq === seq) {
                             wanStatus[viaIntf].active = lastWanStatus[intf].active;
@@ -554,10 +516,6 @@ class RoutingPlugin extends Plugin {
                           // directly mark ready to false if interface does not exist at the moment
                           wanStatus[viaIntf].ready = false;
                           wanStatus[viaIntf].active = false;
-                        }
-                        if (wanStatus[viaIntf].ready === false) {
-                          // make it only one success count away from becoming ready
-                          wanStatus[viaIntf].successCount = Math.max(wanStatus[viaIntf].successCount, OFF_ON_THRESHOLD - 1);
                         }
                         wanStatus[viaIntf].seq = seq;
                         wanStatus[viaIntf].weight = nextHop.weight;
@@ -587,7 +545,6 @@ class RoutingPlugin extends Plugin {
                 }
                 // in apply context here
                 this._wanStatus = wanStatus;
-                this.log.info("wan config change, routing is re/applied, set pendingTest to true for all wan interfaces");
                 await this._applyActiveGlobalDefaultRouting(false);
                 if (!_.isEmpty(changeDescs)) {
                   for (const desc of changeDescs) {
@@ -658,9 +615,7 @@ class RoutingPlugin extends Plugin {
                     active: true, // always set active to true for non-global routing plugin
                     ready: true,
                     seq: 0,
-                    plugin: viaIntfPlugin,
-                    successCount: 0,
-                    failureCount: 0
+                    plugin: viaIntfPlugin
                   };
                   // local and default routing table accesible to the interface
                   await routing.createPolicyRoutingRule("all", iface, `${viaIntf}_local`, 2001);
@@ -754,7 +709,6 @@ class RoutingPlugin extends Plugin {
       return {
         ready: this._wanStatus[name].ready,
         active: this._wanStatus[name].active,
-        pendingTest: this._wanStatus[name].pendingTest
       };
     }
     return null;
@@ -797,6 +751,8 @@ class RoutingPlugin extends Plugin {
         break;
       }
       case event.EVENT_WAN_CONN_CHECK: {
+        // this event is also handled in interface plugin, which is the upstream plugin of routing plugin,
+        // onEvent of upstream plugin is already completed and wan interface internal state is updated before this function is invoked
         const payload = event.getEventPayload(e);
         if (!payload)
           return;
@@ -804,41 +760,21 @@ class RoutingPlugin extends Plugin {
           return;
         const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || "single";
         const intf = payload.intf;
-        const active = payload.active || false;
-        const forceState = payload.forceState;
         const failures = payload.failures;
         if (!this._wanStatus[intf]) {
           this.log.warn(`Interface ${intf} is not defined in global routing plugin, ignore event`, e);
           return;
         }
         const currentStatus = this._wanStatus[intf];
-        if (active) {
-          currentStatus.successCount++;
-          currentStatus.failureCount = 0;
-        } else {
-          currentStatus.successCount = 0;
-          currentStatus.failureCount++;
-          const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
-          if (currentStatus.failureCount % DHCP_RESTART_INTERVAL == 0 && // exponential-backoff
-            (failureMultipliers == 1 || failureMultipliers == 2 || failureMultipliers == 4 || failureMultipliers == 8 || failureMultipliers % 16 == 0)) {
-            const intfPlugin = pl.getPluginInstance("interface", intf);
-            if (intfPlugin && _.get(intfPlugin, ["networkConfig", "dhcp"])) {
-              intfPlugin.carrierState().then((result) => {
-                if (result === "1") {
-                  this.log.info(`Restarting DHCP client on interface ${intf}, failure count is ${currentStatus.failureCount} ...`);
-                  intfPlugin.renewDHCPLease().catch((err) => {
-                    this.log.error(`Failed to renew DHCP lease on interface ${intf}`, err.message);
-                  });
-                }
-              });
-            }
-          }
+        const intfPlugin = pl.getPluginInstance("interface", intf);
+        if (!intfPlugin) {
+          this.log.error(`Cannot find interface plugin ${intf} from wan_conn_check event`);
+          return;
         }
-        const wasPendingTest = currentStatus.pendingTest;
         currentStatus.pendingTest = false;
         let changeActiveWanNeeded = false;
         let changeDesc = null;
-        if (currentStatus.ready && (forceState !== true && currentStatus.failureCount >= ON_OFF_THRESHOLD || forceState === false)) {
+        if (currentStatus.ready && !intfPlugin.isReady()) {
           currentStatus.ready = false;
           if (currentStatus.active && type !== "single")
             changeActiveWanNeeded = true;
@@ -850,7 +786,7 @@ class RoutingPlugin extends Plugin {
             failures: failures
           };
         }
-        if (!currentStatus.ready && (forceState !== false && (currentStatus.successCount >= OFF_ON_THRESHOLD || (currentStatus.successCount >= FAST_OFF_ON_THRESHOLD && this.getActiveWANPlugins().length === 0)) || forceState === true)) {
+        if (!currentStatus.ready && intfPlugin.isReady()) {
           currentStatus.ready = true;
           // need to be stricter if inactive WAN is back to ready or fast failback if no WAN is active currently
           switch (type) {
@@ -872,24 +808,6 @@ class RoutingPlugin extends Plugin {
             ready: true,
             wanSwitched: changeActiveWanNeeded,
             failures: failures
-          };
-        }
-
-        if(wasPendingTest) {
-          const stats = _.pick(currentStatus, ["active", "ready", "successCount", "failureCount", "pendingTest"]);
-          const lastTS = currentStatus.pendingTestTimestamp;
-          const duration = lastTS ? Math.floor(new Date() / 1000) - currentStatus.pendingTestTimestamp : 0;
-          this.log.info(`Finished 1st wan status testing (took ${duration} seconds) after config change, ${intf} final status:`, stats);
-        }
-
-        if (!changeDesc && wasPendingTest) {
-          // send a wan conn change event with noNotify bit set to true
-          changeDesc = {
-            intf: intf,
-            ready: currentStatus.ready,
-            wanSwitched: false,
-            failures: failures,
-            noNotify: true
           };
         }
         if (changeDesc) {
@@ -947,9 +865,7 @@ class RoutingPlugin extends Plugin {
         return {
           name: i,
           ready: this._wanStatus[i].ready,
-          seq: this._wanStatus[i].seq,
-          successCount: this._wanStatus[i].successCount,
-          failureCount:  this._wanStatus[i].failureCount
+          seq: this._wanStatus[i].seq
         };
       }));
       // in async context here
