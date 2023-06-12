@@ -36,6 +36,15 @@ const MSG_STATUS = "assets_msg::status";
 
 const KEY_CONTROLLER_ID = "assets_controller_id";
 
+const defaultTemplateMap = {
+  ap: {
+    name: "ap_default",
+    value: {
+      wifiNetworks: []
+    }
+  }
+};
+
 class AssetsController {
   constructor () {
     this.controlSocket = null;
@@ -242,9 +251,15 @@ class AssetsController {
     const uid = msg.uid;
     if (!uid || !publicKey)
       return;
+    const deviceType = msg.type || "ap";
     // write after read, need to acquire RWLock
     await ncm.acquireConfigRWLock(async () => {
       const networkConfig = await ncm.getActiveConfig();
+      const template = defaultTemplateMap[deviceType];
+      if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.name])) {
+        networkConfig.assets_template = {};
+        networkConfig.assets_template[template.name] = template.value;
+      }
       let assetConfig = _.get(networkConfig, ["assets", uid]);
       if (assetConfig) {
         if (assetConfig.publicKey === publicKey && this.uidPublicKeyMap[uid] === publicKey) {
@@ -255,7 +270,9 @@ class AssetsController {
         // create dummy assets config
         if (!networkConfig.assets)
           networkConfig.assets = {};
-        networkConfig.assets[uid] = { publicKey, wifiNetworks: [] };
+        networkConfig.assets[uid] = { publicKey };
+        if (template)
+          Object.assign(networkConfig.assets[uid], template.value);
       }
       // update network config with updated public key and dummy config
       const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings
