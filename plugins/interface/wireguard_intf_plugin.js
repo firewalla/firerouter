@@ -27,7 +27,7 @@ const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 
-const bindIntfRulePriority = 6001;
+const bindIntfRulePriority = 5999;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -48,19 +48,22 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo iptables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-
-      await this._resetBindIntfRule().catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});      
     }
+    await this._resetBindIntfRule().catch((err) => {});
     if (this._automata) {
       this._automata.stop();
       delete this._automata;
+    }
+    if (this._assetsController) {
+      this._assetsController.stopServer();
+      delete this._assetsController;
     }
   }
 
   async _resetBindIntfRule() {
     const bindIntf = this._bindIntf;
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     if(bindIntf) {
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
@@ -96,7 +99,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     entries.push(`PrivateKey = ${this.networkConfig.privateKey}`);
     if (this.networkConfig.listenPort) {
       entries.push(`ListenPort = ${this.networkConfig.listenPort}`);
-      if (this.networkConfig.enabled) {
+      if (this.networkConfig.enabled && this.networkConfig.allowOnFirewall !== false) {
         await exec(util.wrapIptables(`sudo iptables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
         await exec(util.wrapIptables(`sudo ip6tables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
         await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
@@ -104,7 +107,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     // add FwMark option in [Interface] config for WAN selection
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     entries.push(`FwMark = ${rtid}`)
     entries.push('\n');
 
@@ -117,8 +120,15 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         entries.push(`PublicKey = ${peer.publicKey}`);
         if (peer.presharedKey)
           entries.push(`PresharedKey = ${peer.presharedKey}`);
-        if (peer.endpoint)
-          entries.push(`Endpoint = ${peer.endpoint}`);
+        let endpoint = peer.endpoint;
+        if (peer.fqdnEndpoint) // fqdnEndpoint overrides endpoint
+          endpoint = peer.fqdnEndpoint;
+        if (endpoint) {
+          const host = endpoint.substring(0, endpoint.lastIndexOf(':'));
+          // do not set Endpoint with domain, dns may be unavailable at the moment, causing wg setconf return error, domain will be resolved later in automata
+          if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
+            entries.push(`Endpoint = ${endpoint}`);
+        }
         if (_.isArray(peer.allowedIPs) && !_.isEmpty(peer.allowedIPs))
           entries.push(`AllowedIPs = ${peer.allowedIPs.join(", ")}`);
         if (peer.persistentKeepalive)
@@ -133,20 +143,21 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async changeRoutingTables() {
     await super.changeRoutingTables();
+    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     if (_.isArray(this.networkConfig.peers)) {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
-            await routing.addRouteToTable(allowedIP, null, this.name, "main", 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, 512, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
             }
           }
         }
@@ -169,7 +180,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         }
       }
     }
-    const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (bindIntf) {
       this.log.info(`Wireguard ${this.name} will bind to WAN ${bindIntf}`);
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
@@ -190,6 +200,11 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig);
         this._automata.start();
       }
+    }
+
+    if (this.networkConfig.assetsController) {
+      this._assetsController = require('../../core/assets_controller.js');
+      this._assetsController.startServer(this.networkConfig);
     }
   }
 
@@ -227,6 +242,7 @@ const CTRLMessages = {
 const LOCK_PEER_INFO = "lock_peer_info";
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
+const LRU = require('lru-cache');
 
 const T0 = 150;
 const T1 = 180;
@@ -237,18 +253,25 @@ class WireguardMeshAutomata {
     // config should be the network config of the intf
     this.intf = intf;
     this.pubKey = pubKey;
-    this.config = config;
+    this.config = JSON.parse(JSON.stringify(config));
     this.peerInfo = {};
     this.effectiveAllowedIPs = {};
+    this.dnsCache = new LRU({ maxAge: 300 * 1000 });
+    this.domainZoneCache = new LRU({ maxAge: 3600 * 1000 });
     const ipv4 = this.config.ipv4;
     const cidr = new Address4(ipv4);
     for (const peer of this.config.peers) {
       const allowedIPs = peer.allowedIPs || [];
+      if (peer.fqdnEndpoint)
+        peer.endpoint = peer.fqdnEndpoint;
+      const origEndpoint = peer.endpoint;
       const peerIP = allowedIPs.find(ip => {
         const ip4 = new Address4(ip);
         return ip4.isValid() && ip4.isInSubnet(cidr);
       });
       this.peerInfo[peer.publicKey] = {
+        origEndpoint: origEndpoint,
+        useOrigEndpoint: true,
         peerIP: peerIP,
         allowedIPs : allowedIPs,
         router: null,
@@ -458,7 +481,7 @@ class WireguardMeshAutomata {
           this.peerInfo[key].v4 = v4;
           this.peerInfo[key].ts4 = ts4;
           if (port)
-            this.peerInfo[key].port = port;
+            this.peerInfo[key].port4 = port;
         }
         if (now - ts4 <= T1)
           connected = true;
@@ -468,7 +491,7 @@ class WireguardMeshAutomata {
           this.peerInfo[key].v6 = v6;
           this.peerInfo[key].ts6 = ts6;
           if (port)
-            this.peerInfo[key].port = port;
+            this.peerInfo[key].port6 = port;
         }
         if (now - ts6 <= T1)
           connected = true;
@@ -483,6 +506,7 @@ class WireguardMeshAutomata {
   }
 
   async reapply() {
+    let dnsAvailable = true;
     const dumpResult = await exec(`sudo wg show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
       this.log.error(`Failed to dump wireguard peers on ${this.intf}`, err.message);
       return null;
@@ -505,6 +529,7 @@ class WireguardMeshAutomata {
           const info = this.peerInfo[pubKey];
           if (!info)
             continue;
+          info.endpoint = endpoint;
           if (now - latestHandshake <= T0)
             t0Peers.push(pubKey);
           else {
@@ -556,17 +581,49 @@ class WireguardMeshAutomata {
       for (const pubKey of t1Peers) {
         // change endpoint to something that is learnt from another peer
         const info = this.peerInfo[pubKey];
+        const origEndpoint = info.origEndpoint;
         const ts4 = info.ts4 || 0;
         const ts6 = info.ts6 || 0;
-        if (info && info.port) {
+        let endpointSet = false;
+        if (info) {
           // do not change peer endpoint if handshake ts is earlier than local latest-handshake
-          if (v6Supported && info.v6 && ts6 > now - T1) {
-            this.log.info(`Changing peer ${pubKey} endpoint to [${info.v6}]:${info.port}`);
-            await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint [${info.v6}]:${info.port}`).catch((err) => {});
+          if (v6Supported && info.v6 && ts6 > now - T1 && info.port6) {
+            const endpoint = `[${info.v6}]:${info.port6}`;
+            // round robin between original endpoint and learnt endpoint, 
+            // so if connection cannot be established using learnt endpoint, it will try original endpoint next time, and vice versa
+            if (info.useOrigEndpoint) {
+              if (endpoint != info.endpoint) {
+                this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
+                await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
+              }
+              endpointSet = true;
+              info.useOrigEndpoint = false;
+            }
           } else {
-            if (info.v4 && ts4 > now - T1) {
-              this.log.info(`Changing peer ${pubKey} endpoint to ${info.v4}:${info.port}`);
-              await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${info.v4}:${info.port}`).catch((err) => {});
+            if (info.v4 && ts4 > now - T1 && info.port4) {
+              const endpoint = `${info.v4}:${info.port4}`;
+              if (info.useOrigEndpoint) {
+                if (endpoint != info.endpoint) {
+                  this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
+                  await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
+                }
+                endpointSet = true;
+                info.useOrigEndpoint = false;
+              }
+            }
+          }
+        }
+        if (!endpointSet)
+          info.useOrigEndpoint = true;
+        if (!endpointSet && dnsAvailable && origEndpoint) {
+          // set resolved original endpoint to peer, in case dns result is changed, it will resolve to updated IP
+          const resolvedEndpoint = await this.resolveEndpoint(origEndpoint, v6Supported).catch((err) => null);
+          if (!resolvedEndpoint)
+            dnsAvailable = false;
+          else {
+            if (resolvedEndpoint != info.endpoint) {
+              this.log.info(`Set peer ${pubKey} endpoint to original value ${resolvedEndpoint}`);
+              await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${resolvedEndpoint}`).catch((err) => {});
             }
           }
         }
@@ -626,5 +683,54 @@ class WireguardMeshAutomata {
         this.socket.send(JSON.stringify(msg), 6666, peerIP.split('/')[0]);
       }
     }
+  }
+
+  async getZone(host) {
+    let zone = this.domainZoneCache.peek(host);
+    if (zone)
+      return zone;
+    zone = await exec(`dig +time=3 +tries=2 SOA ${host} | grep ";; AUTHORITY SECTION" -A 1 | tail -n 1 | awk '{print $1}'`).then(result => result.stdout.trim()).catch((err) => null);
+    if (zone)
+      this.domainZoneCache.set(host, zone);
+    return zone;
+  }
+
+  async resolveEndpoint(endpoint, v6Supported) {
+    const host = endpoint.substring(0, endpoint.lastIndexOf(':'));
+    // plain IP address, no need to resolve
+    if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
+      return endpoint;
+    const port = endpoint.substring(endpoint.lastIndexOf(':') + 1);
+    const zone = await this.getZone(host);
+    let authServers = null;
+    // try to use authoritative DNS server if possible
+    if (zone)
+      authServers = await exec(`dig +time=3 +tries=2 +short NS ${zone}`).then(result => result.stdout.trim().split('\n').filter(line => !line.startsWith(";;"))).catch((err) => null);
+    if (v6Supported) {
+      let v6Addr = this.dnsCache.peek(`v6::${host}`); // peek will not update last used timestamp in LRU
+      if (v6Addr) {
+        return `[${v6Addr}]:${port}`;
+      }
+      if (_.isEmpty(authServers))
+        v6Addr = await exec(`dig AAAA +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()).catch((err) => null);
+      else
+        v6Addr = await Promise.any(authServers.map(async (server) => exec(`dig AAAA @${server} +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()))).catch((err) => null);
+      if (v6Addr && new Address6(v6Addr).isValid()) {
+        this.dnsCache.set(`v6::${host}`, v6Addr);
+        return `[${v6Addr}]:${port}`;
+      }
+    }
+    let v4Addr = this.dnsCache.peek(`v4::${host}`);
+    if (v4Addr)
+      return `${v4Addr}:${port}`;
+    if (_.isEmpty(authServers))
+      v4Addr = await exec(`dig A +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()).catch((err) => null);
+    else
+      v4Addr = await Promise.any(authServers.map(async (server) => exec(`dig A @${server} +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()))).catch((err) => null);
+    if (v4Addr && new Address4(v4Addr).isValid()) {
+      this.dnsCache.set(`v4::${host}`, v4Addr);
+      return `${v4Addr}:${port}`;
+    }
+    return null;
   }
 }
