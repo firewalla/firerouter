@@ -417,5 +417,16 @@ router.get('/dhcp_lease/:intf', async (req, res, next) => {
       res.status(400).json({errors: [err.message]});
     });
   })
+
+  router.get('/sta_status', async (req, res, next) => {
+    await assetsController.getAllSTAStatus().then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to get STA status`]});
+    }).catch((err) => {
+      res.status(500).json({errors: [err.message]});
+    });
+  })
   
 module.exports = router;

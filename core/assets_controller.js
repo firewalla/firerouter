@@ -32,7 +32,10 @@ const MSG_PULL_CONFIG = "assets_msg::pull_config";
 const MSG_PUSH_CONFIG = "assets_msg::push_config";
 const MSG_AUTH_REGISTER = "assets_msg::auth_register";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
-const MSG_STATUS = "assets_msg::status";
+const MSG_STA_STATUS = "assets_msg::status";
+
+const KEY_STA_STATUS = "assets:ap_sta_status"
+const TIMEOUT_STA_STATUS = 30;
 
 const KEY_CONTROLLER_ID = "assets_controller_id";
 
@@ -60,16 +63,35 @@ class AssetsController {
 
   }
 
-  async recordStatus(msg) {
+  async getAllSTAStatus() {
+    const result = await rclient.hgetallAsync(KEY_STA_STATUS) || {};
+    const keysToDelete = [];
+    for (const key of Object.keys(result)) {
+      const obj = JSON.parse(result[key]);
+      if (obj.ts && obj.ts >= Date.now() / 1000 - TIMEOUT_STA_STATUS)
+        result[key] = obj;
+      else {
+        delete result[key];
+        keysToDelete.push(key);
+      }
+    }
+    if (!_.isEmpty(keysToDelete))
+      await rclient.hdelAsync(KEY_STA_STATUS, ...keysToDelete);
+    return result;
+  }
+
+  async recordAPSTAStatus(msg) {
     const mac = msg.mac;
     const devices = msg.devices;
     if (!_.isEmpty(devices)) {
       for (const device of devices) {
-        device.apMac = mac;
+        device.bssid = mac;
         device.ts = Math.floor(new Date()/ 1000);
-        const deviceMac = device.mac_addr;
-        const key = `assets:status:${deviceMac}`;
-        await rclient.setAsync(key, JSON.stringify(device), "EX", 30);
+        if (_.isString(device.mac_addr) && !_.isEmpty(device.mac_addr)) {
+          const deviceMac = device.mac_addr.toUpperCase();
+          delete device.mac_addr;
+          await rclient.hsetAsync(KEY_STA_STATUS, deviceMac, JSON.stringify(device));
+        }
       }
     }
   }
@@ -224,8 +246,8 @@ class AssetsController {
           this.schedulePushEffectiveConfig(uid);
           break;
         }
-        case MSG_STATUS: {
-          await this.recordStatus(msg);
+        case MSG_STA_STATUS: {
+          await this.recordAPSTAStatus(msg);
           break;
         }
         case MSG_AUTH_REGISTER: {
