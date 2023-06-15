@@ -136,10 +136,14 @@ class WanConnCheckSensor extends Sensor {
       return;
     }
 
-    for(const site of sites) {
-      const httpResult = await intfPlugin.checkHttpStatus(site);
-      if (httpResult) {
-        break;
+    // use firewalla-hosted captive check page to check status code as well as content
+    let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+    if (!httpResult) {
+      for(const site of sites) {
+        httpResult = await intfPlugin.checkHttpStatus(site);
+        if (httpResult) {
+          break;
+        }
       }
     }
   }
