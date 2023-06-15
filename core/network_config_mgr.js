@@ -233,17 +233,20 @@ class NetworkConfigManager {
     if(result.carrier) {
       const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
+      // use firewalla-hosted captive check page to check status code as well as content
+      let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+      if (!httpResult) {
+        httpResult = await Promise.any(sites.map(async (site) => {
+          const result = await intfPlugin.checkHttpStatus(site);
+          if(!result) {
+            throw new Error("http check failed on site " + site);
+          }
+          return result;
+        })).catch((err) => {
+          log.error("Failed to check http status on all sites, err:", err.message);
+        });
+      }
       // return if any of them succeeds
-      const httpResult = await Promise.any(sites.map(async (site) => {
-        const result = await intfPlugin.checkHttpStatus(site);
-        if(!result) {
-          throw new Error("http check failed on site " + site);
-        }
-        return result;
-      })).catch((err) => {
-        log.error("Failed to check http status on all sites, err:", err.message);
-      });
-
       if (httpResult) {
         result.http = httpResult;
       }
