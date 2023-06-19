@@ -294,7 +294,7 @@ class AssetsController {
           networkConfig.assets = {};
         networkConfig.assets[uid] = { publicKey };
         if (template)
-          Object.assign(networkConfig.assets[uid], template.value);
+          Object.assign(networkConfig.assets[uid], {templateId: template.name});
       }
       // update network config with updated public key and dummy config
       const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings
