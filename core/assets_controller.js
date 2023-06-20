@@ -32,9 +32,10 @@ const MSG_PULL_CONFIG = "assets_msg::pull_config";
 const MSG_PUSH_CONFIG = "assets_msg::push_config";
 const MSG_AUTH_REGISTER = "assets_msg::auth_register";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
-const MSG_STA_STATUS = "assets_msg::status";
+const MSG_STATUS = "assets_msg::status";
 
-const KEY_STA_STATUS = "assets:ap_sta_status"
+const KEY_STA_STATUS = "assets:ap_sta_status";
+const KEY_ASSETS_STATUS = "assets:status";
 const TIMEOUT_STA_STATUS = 30;
 
 const KEY_CONTROLLER_ID = "assets_controller_id";
@@ -67,12 +68,16 @@ class AssetsController {
     const result = await rclient.hgetallAsync(KEY_STA_STATUS) || {};
     const keysToDelete = [];
     for (const key of Object.keys(result)) {
-      const obj = JSON.parse(result[key]);
-      if (obj.ts && obj.ts >= Date.now() / 1000 - TIMEOUT_STA_STATUS)
-        result[key] = obj;
-      else {
-        delete result[key];
-        keysToDelete.push(key);
+      try {
+        const obj = JSON.parse(result[key]);
+        if (obj.ts && obj.ts >= Date.now() / 1000 - TIMEOUT_STA_STATUS)
+          result[key] = obj;
+        else {
+          delete result[key];
+          keysToDelete.push(key);
+        }
+      } catch (err) {
+        log.error(`Failed to parse sta status of ${key}`, err.message);
       }
     }
     if (!_.isEmpty(keysToDelete))
@@ -80,7 +85,28 @@ class AssetsController {
     return result;
   }
 
-  async recordAPSTAStatus(msg) {
+  async getAllAssetsStatus() {
+    const result = await rclient.hgetallAsync(KEY_ASSETS_STATUS) || {};
+    const keysToDelete = [];
+    for (const key of Object.keys(result)) {
+      try {
+        if (this.uidPublicKeyMap[key]) {
+          const obj = JSON.parse(result[key]);
+          result[key] = obj;
+        } else {
+          delete result[key];
+          keysToDelete.push(key);
+        }
+      } catch (err) {
+        log.error(`Failed to parse assets status of ${key}`, err.message);
+      }
+    }
+    if (!_.isEmpty(keysToDelete))
+      await rclient.hdelAsync(KEY_STA_STATUS, ...keysToDelete);
+    return result;
+  }
+
+  async processStatusMsg(msg) {
     const mac = msg.mac;
     const devices = msg.devices;
     if (!_.isEmpty(devices)) {
@@ -93,6 +119,11 @@ class AssetsController {
           await rclient.hsetAsync(KEY_STA_STATUS, deviceMac, JSON.stringify(device));
         }
       }
+    }
+
+    if (mac) {
+      const assetsStatus = {ts: Date.now() / 1000, mac: mac, sysUptime: msg.uptime, procUptime: msg.process_uptime, version: msg.version};
+      await rclient.hsetAsync(KEY_ASSETS_STATUS, mac, JSON.stringify(assetsStatus));
     }
   }
 
@@ -246,8 +277,8 @@ class AssetsController {
           this.schedulePushEffectiveConfig(uid);
           break;
         }
-        case MSG_STA_STATUS: {
-          await this.recordAPSTAStatus(msg);
+        case MSG_STATUS: {
+          await this.processStatusMsg(msg);
           break;
         }
         case MSG_AUTH_REGISTER: {
