@@ -91,6 +91,11 @@ sudo iptables -w -A FR_FORWARD -j FR_IGMP
 # any mac address or subnet in this set will be blocked until fully verified
 sudo ipset create -! osi_mac_set hash:mac &>/dev/null
 sudo ipset create -! osi_subnet_set hash:net &>/dev/null
+sudo ipset flush -! osi_mac_set &>/dev/null
+sudo ipset flush -! osi_subnet_set &>/dev/null
+# fullfil from redis
+redis-cli smembers osi:mac | xargs -n 100 sudo ipset add -! osi_mac_set &>/dev/null
+redis-cli smembers osi:subnet | xargs -n 100 sudo ipset add -! osi_subnet_set &>/dev/null
 sudo iptables -w -N FR_OSI &> /dev/null
 sudo iptables -w -F FR_OSI &> /dev/null
 sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j DROP &>/dev/null
