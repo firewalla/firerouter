@@ -87,6 +87,17 @@ sudo iptables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
 sudo iptables -w -A FR_FORWARD -j FR_IGMP
 
+# chain for Office Secondary Inspection
+# any mac address or subnet in this set will be blocked until fully verified
+sudo ipset create -! osi_mac_set hash:mac &>/dev/null
+sudo ipset create -! osi_subnet_set hash:net &>/dev/null
+sudo iptables -w -N FR_OSI &> /dev/null
+sudo iptables -w -F FR_OSI &> /dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j DROP &>/dev/null
+sudo iptables -w -C FR_FORWARD -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -j FR_OSI &> /dev/null
+
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
 sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
