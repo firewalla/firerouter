@@ -106,6 +106,9 @@ sudo ipset flush -! osi_verified_subnet_set &>/dev/null
 # allow verified ones to passthrough
 sudo iptables -w -N FR_OSI_INSPECTION &> /dev/null
 sudo iptables -w -F FR_OSI_INSPECTION &> /dev/null
+## these two lines are controlled by policy apply codes
+sudo iptables -w -A FR_OSI_INSPECTION -s 0.0.0.0/1 -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -s 128.0.0.0/1 -j DROP &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set src -j RETURN &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN &>/dev/null
