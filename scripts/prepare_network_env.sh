@@ -96,12 +96,31 @@ sudo ipset flush -! osi_subnet_set &>/dev/null
 # fullfil from redis
 redis-cli smembers osi:mac | xargs -n 100 sudo ipset add -! osi_mac_set &>/dev/null
 redis-cli smembers osi:subnet | xargs -n 100 sudo ipset add -! osi_subnet_set &>/dev/null
+
+# ipset for verified mac address and subnet, as the verify process may be async
+sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
+sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
+sudo ipset flush -! osi_verified_mac_set &>/dev/null
+sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+
+# allow verified ones to passthrough
+sudo iptables -w -N FR_OSI_INSPECTION &> /dev/null
+sudo iptables -w -F FR_OSI_INSPECTION &> /dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set src -j RETURN &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
+
 sudo iptables -w -N FR_OSI &> /dev/null
 sudo iptables -w -F FR_OSI &> /dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j DROP &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j DROP &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j DROP &>/dev/null
+# only these devices are subjected to inspection
+sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -C FR_FORWARD -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -j FR_OSI &> /dev/null
+
+
+
 
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
