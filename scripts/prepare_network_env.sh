@@ -112,7 +112,8 @@ sudo ipset flush -! osi_verified_subnet_set &>/dev/null
 sudo iptables -w -N FR_OSI_INSPECTION &> /dev/null
 sudo iptables -w -F FR_OSI_INSPECTION &> /dev/null
 ## knob will be turned off when policy are all applied, for now, just vpnclient
-sudo iptables -w -A FR_OSI_INSPECTION -s set --match-set osi_match_all_knob -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob src -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob dst -j DROP &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set src -j RETURN &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN &>/dev/null
