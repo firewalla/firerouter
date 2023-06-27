@@ -90,8 +90,8 @@ sudo iptables -w -A FR_FORWARD -j FR_IGMP
 # chain for Office Secondary Inspection
 # any mac address or subnet in this set will be blocked until fully verified
 # use timeout for final protection, in case something is wrong
-sudo ipset create -! osi_mac_set hash:mac timeout 900 &>/dev/null
-sudo ipset create -! osi_subnet_set hash:net timeout 900 &>/dev/null
+sudo ipset create -! osi_mac_set hash:mac timeout 600 &>/dev/null
+sudo ipset create -! osi_subnet_set hash:net timeout 600 &>/dev/null
 # use this knob to match everything if needed
 sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
 sudo ipset flush -! osi_mac_set &>/dev/null
@@ -113,6 +113,7 @@ if [[ ! -e /dev/shm/main.touch ]]; then
   redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
   redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
   redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
 
   # only clear for initial setup
   sudo ipset flush -! osi_verified_mac_set &>/dev/null
