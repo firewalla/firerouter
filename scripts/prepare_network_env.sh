@@ -89,18 +89,20 @@ sudo iptables -w -A FR_FORWARD -j FR_IGMP
 
 # chain for Office Secondary Inspection
 # any mac address or subnet in this set will be blocked until fully verified
-sudo ipset create -! osi_mac_set hash:mac &>/dev/null
-sudo ipset create -! osi_subnet_set hash:net &>/dev/null
+# use timeout for final protection, in case something is wrong
+sudo ipset create -! osi_mac_set hash:mac timeout 1800 &>/dev/null
+sudo ipset create -! osi_subnet_set hash:net timeout 1800 &>/dev/null
 # use this knob to match everything if needed
 sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
 sudo ipset flush -! osi_mac_set &>/dev/null
 sudo ipset flush -! osi_subnet_set &>/dev/null
 sudo ipset flush -! osi_match_all_knob &>/dev/null
 
-sudo ipset add -! osi_match_all_knob 0.0.0.0/0 &>/dev/null
+sudo ipset add -! osi_match_all_knob 0.0.0.0/1 &>/dev/null
+sudo ipset add -! osi_match_all_knob 128.0.0.0/1 &>/dev/null
 # fullfil from redis
-redis-cli smembers osi:mac | xargs -n 100 sudo ipset add -! osi_mac_set &>/dev/null
-redis-cli smembers osi:subnet | xargs -n 100 sudo ipset add -! osi_subnet_set &>/dev/null
+redis-cli smembers osi:mac | xargs -n 1 -I ZZZ sudo ipset -exist add -! osi_mac_set ZZZ &>/dev/null
+redis-cli smembers osi:subnet | xargs -n 1 -I ZZZ sudo ipset -exist add -! osi_subnet_set ZZZ &>/dev/null
 
 # ipset for verified mac address and subnet, as the verify process may be async
 sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
