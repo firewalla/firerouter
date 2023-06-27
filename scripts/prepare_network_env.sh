@@ -109,15 +109,18 @@ sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
 # main.touch means firemain service has ever started at once
 # if this file doesnt exist, it means a FRESH BOOT UP
 if [[ ! -e /dev/shm/main.touch ]]; then
-  # fullfil from redis
-  redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
-  redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
-  redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
-  redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+  # Only if FW_FORWARD does NOT exist
+  if ! sudo iptables -S FW_FORWARD &>/dev/null; then
+    # fullfil from redis
+    redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
 
-  # only clear for initial setup
-  sudo ipset flush -! osi_verified_mac_set &>/dev/null
-  sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+    # only clear for initial setup
+    sudo ipset flush -! osi_verified_mac_set &>/dev/null
+    sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+  fi
 fi
 
 
