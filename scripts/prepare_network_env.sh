@@ -110,8 +110,9 @@ sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
 # if this file doesnt exist, it means a FRESH BOOT UP
 if [[ ! -e /dev/shm/main.touch ]]; then
   # fullfil from redis
-  redis-cli smembers osi:mac | xargs -n 1 -I ZZZ sudo ipset -exist add -! osi_mac_set ZZZ &>/dev/null
-  redis-cli smembers osi:subnet | xargs -n 1 -I ZZZ sudo ipset -exist add -! osi_subnet_set ZZZ &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
 
   # only clear for initial setup
   sudo ipset flush -! osi_verified_mac_set &>/dev/null
@@ -138,7 +139,6 @@ sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPE
 sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -C FR_FORWARD -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -j FR_OSI &> /dev/null
 sudo iptables -w -C FR_INPUT -j FR_OSI &> /dev/null || sudo iptables -w -A FR_INPUT -j FR_OSI &> /dev/null
-
 
 
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
