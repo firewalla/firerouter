@@ -128,7 +128,7 @@ sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTI
 sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -C FR_FORWARD -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -j FR_OSI &> /dev/null
-
+sudo iptables -w -C FR_INPUT -j FR_OSI &> /dev/null || sudo iptables -w -A FR_INPUT -j FR_OSI &> /dev/null
 
 
 
