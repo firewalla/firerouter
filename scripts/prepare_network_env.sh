@@ -92,14 +92,24 @@ sudo iptables -w -A FR_FORWARD -j FR_IGMP
 # use timeout for final protection, in case something is wrong
 sudo ipset create -! osi_mac_set hash:mac timeout 600 &>/dev/null
 sudo ipset create -! osi_subnet_set hash:net timeout 600 &>/dev/null
-# use this knob to match everything if needed
-sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
+sudo ipset create -! osi_pbr_mac_set hash:mac timeout 600 &>/dev/null
+sudo ipset create -! osi_pbr_subnet_set hash:net timeout 600 &>/dev/null
 sudo ipset flush -! osi_mac_set &>/dev/null
 sudo ipset flush -! osi_subnet_set &>/dev/null
-sudo ipset flush -! osi_match_all_knob &>/dev/null
+sudo ipset flush -! osi_pbr_mac_set &>/dev/null
+sudo ipset flush -! osi_pbr_subnet_set &>/dev/null
 
+# use this knob to match everything if needed
+sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
+sudo ipset flush -! osi_match_all_knob &>/dev/null
 sudo ipset add -! osi_match_all_knob 0.0.0.0/1 &>/dev/null
 sudo ipset add -! osi_match_all_knob 128.0.0.0/1 &>/dev/null
+
+# use this knob to match everything if needed for pbr
+sudo ipset create -! osi_pbr_match_all_knob hash:net &>/dev/null
+sudo ipset flush -! osi_pbr_match_all_knob &>/dev/null
+sudo ipset add -! osi_pbr_match_all_knob 0.0.0.0/1 &>/dev/null
+sudo ipset add -! osi_pbr_match_all_knob 128.0.0.0/1 &>/dev/null
 
 # ipset for verified mac address and subnet, as the verify process may be async
 sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
@@ -135,12 +145,23 @@ sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set
 sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN &>/dev/null
 sudo iptables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
 
+# allow verified ones to passthrough
+sudo iptables -w -N FR_OSI_PBR &> /dev/null
+sudo iptables -w -F FR_OSI_PBR &> /dev/null
+## knob will be turned off when policy are all applied, for now, just vpnclient
+sudo iptables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob src -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob dst -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_PBR -j DROP &>/dev/null
+
 sudo iptables -w -N FR_OSI &> /dev/null
 sudo iptables -w -F FR_OSI &> /dev/null
 # only these devices are subjected to inspection
 sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_pbr_mac_set src -j FR_OSI_PBR &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_pbr_subnet_set src -j FR_OSI_PBR &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_pbr_subnet_set dst -j FR_OSI_PBR &>/dev/null
 sudo iptables -w -C FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
 sudo iptables -w -C FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo iptables -w -A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
 
