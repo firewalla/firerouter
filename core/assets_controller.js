@@ -46,7 +46,7 @@ const defaultTemplateMap = {
     value: {
       meta: {
         name: "Default AP Group"
-      }
+      },
       wifiNetworks: []
     }
   }
