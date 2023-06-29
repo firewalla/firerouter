@@ -51,7 +51,9 @@ sudo iptables -w -N FR_INPUT &> /dev/null
 sudo iptables -w -F FR_INPUT
 
 # always accept loopback traffic
-sudo iptables -w -A FR_INPUT -s 127.0.0.0/8 -i lo -j ACCEPT
+sudo iptables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
+# always accept dhcp reply from server to local
+sudo iptables -w -A FR_INPUT -p udp --sport 67 --dport 68 -j ACCEPT
 sudo iptables -w -C INPUT -j FR_INPUT &> /dev/null || sudo iptables -w -I INPUT -j FR_INPUT
 
 # chain for igmp proxy
@@ -209,7 +211,9 @@ sudo ip6tables -w -N FR_INPUT &> /dev/null
 sudo ip6tables -w -F FR_INPUT
 
 # always accept loopback traffic
-sudo ip6tables -w -A FR_INPUT -s ::1/128 -i lo -j ACCEPT
+sudo ip6tables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
+# always accept dhcp reply from server to local
+sudo ip6tables -w -A FR_INPUT -p udp --sport 67 --dport 68 -j ACCEPT
 sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
 
 # chain for icmp
