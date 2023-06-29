@@ -149,7 +149,9 @@ sudo ip6tables -w -N FR_PASSTHROUGH &> /dev/null
 sudo ip6tables -w -F FR_PASSTHROUGH
 sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
+
 # ------ flush routing tables
+sudo flock /tmp/rt_tables.lock -c "
 sudo ip r flush table global_local
 sudo ip r flush table global_default
 sudo ip r flush table wan_routable metric 0 # only delete routes with metric 0, routes with non-zero metric are not added by firerouter
@@ -161,6 +163,7 @@ sudo ip -6 r flush table global_default
 sudo ip -6 r flush table wan_routable metric 0
 sudo ip -6 r flush table lan_routable metric 0
 sudo ip -6 r flush table static
+"
 
 # ------ initialize ip rules
 # do not touch ip rules created by Firewalla
@@ -168,21 +171,25 @@ rules_to_remove=`ip rule list | grep -v -e "^\(5000\|6000\|10000\):" | cut -d: -
 while IFS= read -r line; do
   sudo ip rule del $line
 done <<< "$rules_to_remove"
+sudo flock /tmp/rt_tables.lock -c "
 sudo ip rule add pref 0 from all lookup local
 sudo ip rule add pref 32766 from all lookup main
 sudo ip rule add pref 32767 from all lookup default
 
 sudo ip rule add pref 500 from all iif lo lookup global_local
 sudo ip rule add pref 4001 from all lookup static
+"
 
 rules_to_remove=`ip -6 rule list | grep -v -e "^\(5000\|6000\|10000\):" | cut -d: -f2-`;
 while IFS= read -r line; do
   sudo ip -6 rule del $line
 done <<< "$rules_to_remove"
+sudo flock /tmp/rt_tables.lock -c "
 sudo ip -6 rule add pref 0 from all lookup local
 sudo ip -6 rule add pref 32766 from all lookup main
 sudo ip -6 rule add pref 32767 from all lookup default
 
 sudo ip -6 rule add pref 500 from all iif lo lookup global_local
 sudo ip -6 rule add pref 4001 from all lookup static
+"
 

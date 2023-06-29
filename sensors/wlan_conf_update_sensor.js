@@ -47,29 +47,31 @@ class WlanConfUpdateSensor extends Sensor {
   }
 
   async checkAndUpdateNetworkConfig(iface) {
-    const currentConfig = await ncm.getActiveConfig();
-    if (currentConfig && currentConfig.interface) { // assume "interface" exists under root
-      if (!currentConfig.interface.wlan || !currentConfig.interface.wlan[iface]) {
-        if (!currentConfig.interface.wlan)
-          currentConfig.interface.wlan = {};
-        const wlanConfig = {};
-        wlanConfig[iface] = {
-          enabled: true,
-          wpaSupplicant: {},
-          allowHotplug: true
-        };
-        currentConfig.interface.wlan = Object.assign({}, currentConfig.interface.wlan, wlanConfig);
-        const errors = await ncm.tryApplyConfig(currentConfig).catch((err) => {
-          this.log.error(`Failed to apply updated config`, err.message);
-          return;
-        });
-        if (errors && errors.length != 0) {
-          this.log.error(`Error occured while applying updated config`, errors);
-          return;
+    await ncm.acquireConfigRWLock(async () => {
+      const currentConfig = await ncm.getActiveConfig();
+      if (currentConfig && currentConfig.interface) { // assume "interface" exists under root
+        if (!currentConfig.interface.wlan || !currentConfig.interface.wlan[iface]) {
+          if (!currentConfig.interface.wlan)
+            currentConfig.interface.wlan = {};
+          const wlanConfig = {};
+          wlanConfig[iface] = {
+            enabled: true,
+            wpaSupplicant: {},
+            allowHotplug: true
+          };
+          currentConfig.interface.wlan = Object.assign({}, currentConfig.interface.wlan, wlanConfig);
+          const errors = await ncm.tryApplyConfig(currentConfig).catch((err) => {
+            this.log.error(`Failed to apply updated config`, err.message);
+            return;
+          });
+          if (errors && errors.length != 0) {
+            this.log.error(`Error occured while applying updated config`, errors);
+            return;
+          }
+          await ncm.saveConfig(currentConfig, false);
         }
-        await ncm.saveConfig(currentConfig, false);
       }
-    }
+    });
   }
 }
 

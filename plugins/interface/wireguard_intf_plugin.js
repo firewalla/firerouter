@@ -48,13 +48,16 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo iptables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-
-      await this._resetBindIntfRule().catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});      
     }
+    await this._resetBindIntfRule().catch((err) => {});
     if (this._automata) {
       this._automata.stop();
       delete this._automata;
+    }
+    if (this._assetsController) {
+      this._assetsController.stopServer();
+      delete this._assetsController;
     }
   }
 
@@ -96,7 +99,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     entries.push(`PrivateKey = ${this.networkConfig.privateKey}`);
     if (this.networkConfig.listenPort) {
       entries.push(`ListenPort = ${this.networkConfig.listenPort}`);
-      if (this.networkConfig.enabled) {
+      if (this.networkConfig.enabled && this.networkConfig.allowOnFirewall !== false) {
         await exec(util.wrapIptables(`sudo iptables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
         await exec(util.wrapIptables(`sudo ip6tables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
         await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
@@ -126,8 +129,13 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
           if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
             entries.push(`Endpoint = ${endpoint}`);
         }
+        const allowedIPs = [];
         if (_.isArray(peer.allowedIPs) && !_.isEmpty(peer.allowedIPs))
-          entries.push(`AllowedIPs = ${peer.allowedIPs.join(", ")}`);
+          Array.prototype.push.apply(allowedIPs, peer.allowedIPs);
+        if (peer.asDefaultRoute)
+          allowedIPs.push("0.0.0.0/0");
+        if (!_.isEmpty(allowedIPs))
+          entries.push(`AllowedIPs = ${allowedIPs.join(", ")}`);
         if (peer.persistentKeepalive)
           entries.push(`PersistentKeepalive = ${peer.persistentKeepalive}`);
         entries.push('\n');
@@ -158,6 +166,8 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
             }
           }
         }
+        if (peer.asDefaultRoute)
+          await routing.addRouteToTable("default", null, this.name, `${this.name}_default`, rtid, 4).catch((err) => {});
       }
     }
 
@@ -198,6 +208,52 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         this._automata.start();
       }
     }
+
+    if (this.networkConfig.assetsController) {
+      this._assetsController = require('../../core/assets_controller.js');
+      this._assetsController.startServer(this.networkConfig);
+    }
+  }
+
+  isDefaultRoute(cidr) {
+    let addr = new Address4(cidr);
+    if (addr.isValid() && addr.subnetMask == 0) {
+      return true;
+    } else {
+      addr = new Address6(cidr);
+      if (addr.isValid() && addr.subnetMask == 0)
+        return true;
+    }
+    return false;
+  }
+
+  isWAN() {
+    if (super.isWAN())
+      return true;
+    if (_.isArray(this.networkConfig.peers)) {
+      for (const peer of this.networkConfig.peers) {
+        if (peer.asDefaultRoute) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  async getRoutableSubnets() {
+    const routableSubnets = [];
+    if (_.isArray(this.networkConfig.peers)) {
+      for (const peer of this.networkConfig.peers) {
+        if (_.isArray(peer.allowedIPs)) {
+          for (const cidr of peer.allowedIPs) {
+            routableSubnets.push(cidr);
+          }
+        }
+        if (peer.asDefaultRoute)
+          routableSubnets.push("0.0.0.0/0");
+      }
+    }
+    return _.uniq(routableSubnets);
   }
 
   async state() {
@@ -254,6 +310,8 @@ class WireguardMeshAutomata {
     const cidr = new Address4(ipv4);
     for (const peer of this.config.peers) {
       const allowedIPs = peer.allowedIPs || [];
+      if (peer.asDefaultRoute)
+        allowedIPs.push("0.0.0.0/0");
       if (peer.fqdnEndpoint)
         peer.endpoint = peer.fqdnEndpoint;
       const origEndpoint = peer.endpoint;
