@@ -49,6 +49,11 @@ sudo iptables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m co
 
 sudo iptables -w -N FR_INPUT &> /dev/null
 sudo iptables -w -F FR_INPUT
+
+# always accept loopback traffic
+sudo iptables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
+# always accept dhcp reply from server to local
+sudo iptables -w -A FR_INPUT -p udp --sport 67 --dport 68 -j ACCEPT
 sudo iptables -w -C INPUT -j FR_INPUT &> /dev/null || sudo iptables -w -I INPUT -j FR_INPUT
 
 # chain for igmp proxy
@@ -86,6 +91,85 @@ sudo iptables -w -F FR_PASSTHROUGH
 sudo iptables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
 sudo iptables -w -A FR_FORWARD -j FR_IGMP
+
+# chain for Office Secondary Inspection
+# any mac address or subnet in this set will be blocked until fully verified
+# use timeout for final protection, in case something is wrong
+sudo ipset create -! osi_mac_set hash:mac timeout 600 &>/dev/null
+sudo ipset create -! osi_subnet_set hash:net timeout 600 &>/dev/null
+sudo ipset create -! osi_pbr_mac_set hash:mac timeout 600 &>/dev/null
+sudo ipset create -! osi_pbr_subnet_set hash:net timeout 600 &>/dev/null
+sudo ipset flush -! osi_mac_set &>/dev/null
+sudo ipset flush -! osi_subnet_set &>/dev/null
+sudo ipset flush -! osi_pbr_mac_set &>/dev/null
+sudo ipset flush -! osi_pbr_subnet_set &>/dev/null
+
+# use this knob to match everything if needed
+sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
+sudo ipset flush -! osi_match_all_knob &>/dev/null
+sudo ipset add -! osi_match_all_knob 0.0.0.0/1 &>/dev/null
+sudo ipset add -! osi_match_all_knob 128.0.0.0/1 &>/dev/null
+
+# use this knob to match everything if needed for pbr
+sudo ipset create -! osi_pbr_match_all_knob hash:net &>/dev/null
+sudo ipset flush -! osi_pbr_match_all_knob &>/dev/null
+sudo ipset add -! osi_pbr_match_all_knob 0.0.0.0/1 &>/dev/null
+sudo ipset add -! osi_pbr_match_all_knob 128.0.0.0/1 &>/dev/null
+
+# ipset for verified mac address and subnet, as the verify process may be async
+sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
+sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
+
+# DO NOT FULLFIL FROM REDIS WHEN FIREWALLA IS ALREADY RUNNING
+# main.touch means firemain service has ever started at once
+# if this file doesnt exist, it means a FRESH BOOT UP
+if [[ ! -e /dev/shm/main.touch ]]; then
+  # Only if FW_FORWARD does NOT exist
+  if ! sudo iptables -S FW_FORWARD &>/dev/null; then
+    # fullfil from redis
+    redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+
+    # only clear for initial setup
+    sudo ipset flush -! osi_verified_mac_set &>/dev/null
+    sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+  fi
+fi
+
+
+# allow verified ones to passthrough
+sudo iptables -w -N FR_OSI_INSPECTION &> /dev/null
+sudo iptables -w -F FR_OSI_INSPECTION &> /dev/null
+## knob will be turned off when policy are all applied, for now, just vpnclient
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob src -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob dst -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set src -j RETURN &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN &>/dev/null
+sudo iptables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
+
+# allow verified ones to passthrough
+sudo iptables -w -N FR_OSI_PBR &> /dev/null
+sudo iptables -w -F FR_OSI_PBR &> /dev/null
+## knob will be turned off when policy are all applied, for now, just vpnclient
+sudo iptables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob src -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob dst -j DROP &>/dev/null
+sudo iptables -w -A FR_OSI_PBR -j DROP &>/dev/null
+
+sudo iptables -w -N FR_OSI &> /dev/null
+sudo iptables -w -F FR_OSI &> /dev/null
+# only these devices are subjected to inspection
+sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_pbr_mac_set src -j FR_OSI_PBR &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_pbr_subnet_set src -j FR_OSI_PBR &>/dev/null
+sudo iptables -w -A FR_OSI -m set --match-set osi_pbr_subnet_set dst -j FR_OSI_PBR &>/dev/null
+sudo iptables -w -C FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
+sudo iptables -w -C FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo iptables -w -A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
+
 
 sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
 sudo ip6tables -w -t nat -F FR_PREROUTING
@@ -125,6 +209,11 @@ sudo ip6tables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m c
 
 sudo ip6tables -w -N FR_INPUT &> /dev/null
 sudo ip6tables -w -F FR_INPUT
+
+# always accept loopback traffic
+sudo ip6tables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
+# always accept dhcp reply from server to local
+sudo ip6tables -w -A FR_INPUT -p udp --sport 547 --dport 546 -j ACCEPT
 sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
 
 # chain for icmp
@@ -148,6 +237,72 @@ sudo ip6tables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS 
 sudo ip6tables -w -N FR_PASSTHROUGH &> /dev/null
 sudo ip6tables -w -F FR_PASSTHROUGH
 sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
+
+# for mac ipset, reuse the same for iptables (v4)
+sudo ipset create -! osi_subnet6_set hash:net family inet6 timeout 600 &>/dev/null
+sudo ipset create -! osi_pbr_subnet6_set hash:net family inet6 timeout 600 &>/dev/null
+sudo ipset flush -! osi_subnet6_set &>/dev/null
+sudo ipset flush -! osi_pbr_subnet6_set &>/dev/null
+
+# use this knob to match everything if needed
+sudo ipset create -! osi_match_all_knob6 hash:net family inet6 &>/dev/null
+sudo ipset flush -! osi_match_all_knob6 &>/dev/null
+sudo ipset add -! osi_match_all_knob6 ::/1 &>/dev/null
+sudo ipset add -! osi_match_all_knob6 128::/1 &>/dev/null
+
+# use this knob to match everything if needed for pbr
+sudo ipset create -! osi_pbr_match_all_knob6 hash:net family inet6 &>/dev/null
+sudo ipset flush -! osi_pbr_match_all_knob6 &>/dev/null
+sudo ipset add -! osi_pbr_match_all_knob6 ::/1 &>/dev/null
+sudo ipset add -! osi_pbr_match_all_knob6 128::/1 &>/dev/null
+
+sudo ipset create -! osi_verified_subnet6_set hash:net family inet6 &>/dev/null
+
+# DO NOT FULLFIL FROM REDIS WHEN FIREWALLA IS ALREADY RUNNING
+# main.touch means firemain service has ever started at once
+# if this file doesnt exist, it means a FRESH BOOT UP
+if [[ ! -e /dev/shm/main.touch ]]; then
+  # Only if FW_FORWARD does NOT exist
+  if ! sudo ip6tables -S FW_FORWARD &>/dev/null; then
+    # fullfil from redis
+    # only need to fulfill the ipv6 specific ones
+    redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
+    redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
+
+    sudo ipset flush -! osi_verified_subnet6_set &>/dev/null
+  fi
+fi
+
+# allow verified ones to passthrough
+sudo ip6tables -w -N FR_OSI_INSPECTION &> /dev/null
+sudo ip6tables -w -F FR_OSI_INSPECTION &> /dev/null
+## knob will be turned off when policy are all applied, for now, just vpnclient
+sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 src -j DROP &>/dev/null
+sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 dst -j DROP &>/dev/null
+sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
+sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet6_set src -j RETURN &>/dev/null
+sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet6_set dst -j RETURN &>/dev/null
+sudo ip6tables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
+
+# allow verified ones to passthrough
+sudo ip6tables -w -N FR_OSI_PBR &> /dev/null
+sudo ip6tables -w -F FR_OSI_PBR &> /dev/null
+## knob will be turned off when policy are all applied, for now, just vpnclient
+sudo ip6tables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob6 src -j DROP &>/dev/null
+sudo ip6tables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob6 dst -j DROP &>/dev/null
+sudo ip6tables -w -A FR_OSI_PBR -j DROP &>/dev/null
+
+sudo ip6tables -w -N FR_OSI &> /dev/null
+sudo ip6tables -w -F FR_OSI &> /dev/null
+# only these devices are subjected to inspection
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_subnet6_set src -j FR_OSI_INSPECTION &>/dev/null
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_subnet6_set dst -j FR_OSI_INSPECTION &>/dev/null
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_pbr_mac_set src -j FR_OSI_PBR &>/dev/null
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_pbr_subnet6_set src -j FR_OSI_PBR &>/dev/null
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_pbr_subnet6_set dst -j FR_OSI_PBR &>/dev/null
+sudo ip6tables -w -C FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo ip6tables -w -A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
+sudo ip6tables -w -C FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo ip6tables -w -A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
 
 
 # ------ flush routing tables

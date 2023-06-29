@@ -34,7 +34,20 @@ const MSG_AUTH_REGISTER = "assets_msg::auth_register";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
 const MSG_STATUS = "assets_msg::status";
 
+const KEY_STA_STATUS = "assets:ap_sta_status";
+const KEY_ASSETS_STATUS = "assets:status";
+const TIMEOUT_STA_STATUS = 30;
+
 const KEY_CONTROLLER_ID = "assets_controller_id";
+
+const defaultTemplateMap = {
+  ap: {
+    name: "ap_default",
+    value: {
+      wifiNetworks: []
+    }
+  }
+};
 
 class AssetsController {
   constructor () {
@@ -51,17 +64,66 @@ class AssetsController {
 
   }
 
-  async recordStatus(msg) {
+  async getAllSTAStatus() {
+    const result = await rclient.hgetallAsync(KEY_STA_STATUS) || {};
+    const keysToDelete = [];
+    for (const key of Object.keys(result)) {
+      try {
+        const obj = JSON.parse(result[key]);
+        if (obj.ts && obj.ts >= Date.now() / 1000 - TIMEOUT_STA_STATUS)
+          result[key] = obj;
+        else {
+          delete result[key];
+          keysToDelete.push(key);
+        }
+      } catch (err) {
+        log.error(`Failed to parse sta status of ${key}`, err.message);
+      }
+    }
+    if (!_.isEmpty(keysToDelete))
+      await rclient.hdelAsync(KEY_STA_STATUS, ...keysToDelete);
+    return result;
+  }
+
+  async getAllAssetsStatus() {
+    const result = await rclient.hgetallAsync(KEY_ASSETS_STATUS) || {};
+    const keysToDelete = [];
+    for (const key of Object.keys(result)) {
+      try {
+        if (this.uidPublicKeyMap[key]) {
+          const obj = JSON.parse(result[key]);
+          result[key] = obj;
+        } else {
+          delete result[key];
+          keysToDelete.push(key);
+        }
+      } catch (err) {
+        log.error(`Failed to parse assets status of ${key}`, err.message);
+      }
+    }
+    if (!_.isEmpty(keysToDelete))
+      await rclient.hdelAsync(KEY_STA_STATUS, ...keysToDelete);
+    return result;
+  }
+
+  async processStatusMsg(msg) {
     const mac = msg.mac;
     const devices = msg.devices;
     if (!_.isEmpty(devices)) {
       for (const device of devices) {
-        device.apMac = mac;
+        device.bssid = mac;
         device.ts = Math.floor(new Date()/ 1000);
-        const deviceMac = device.mac_addr;
-        const key = `assets:status:${deviceMac}`;
-        await rclient.setAsync(key, JSON.stringify(device), "EX", 30);
+        if (_.isString(device.mac_addr) && !_.isEmpty(device.mac_addr)) {
+          const deviceMac = device.mac_addr.toUpperCase();
+          delete device.mac_addr;
+          await rclient.hsetAsync(KEY_STA_STATUS, deviceMac, JSON.stringify(device));
+        }
       }
+    }
+
+    if (mac) {
+      const assetsStatus = {ts: Date.now() / 1000, mac: mac, sysUptime: msg.uptime, procUptime: msg.process_uptime, version: msg.version};
+      await rclient.hsetAsync(KEY_ASSETS_STATUS, mac, JSON.stringify(assetsStatus));
     }
   }
 
@@ -216,7 +278,7 @@ class AssetsController {
           break;
         }
         case MSG_STATUS: {
-          await this.recordStatus(msg);
+          await this.processStatusMsg(msg);
           break;
         }
         case MSG_AUTH_REGISTER: {
@@ -242,9 +304,15 @@ class AssetsController {
     const uid = msg.uid;
     if (!uid || !publicKey)
       return;
+    const deviceType = msg.deviceType || "ap";
     // write after read, need to acquire RWLock
     await ncm.acquireConfigRWLock(async () => {
       const networkConfig = await ncm.getActiveConfig();
+      const template = defaultTemplateMap[deviceType];
+      if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.name])) {
+        networkConfig.assets_template = {};
+        networkConfig.assets_template[template.name] = template.value;
+      }
       let assetConfig = _.get(networkConfig, ["assets", uid]);
       if (assetConfig) {
         if (assetConfig.publicKey === publicKey && this.uidPublicKeyMap[uid] === publicKey) {
@@ -255,7 +323,9 @@ class AssetsController {
         // create dummy assets config
         if (!networkConfig.assets)
           networkConfig.assets = {};
-        networkConfig.assets[uid] = { publicKey, wifiNetworks: [] };
+        networkConfig.assets[uid] = { publicKey };
+        if (template)
+          Object.assign(networkConfig.assets[uid], {templateId: template.name});
       }
       // update network config with updated public key and dummy config
       const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings
