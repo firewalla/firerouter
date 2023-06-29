@@ -304,7 +304,7 @@ class AssetsController {
     const uid = msg.uid;
     if (!uid || !publicKey)
       return;
-    const deviceType = msg.type || "ap";
+    const deviceType = msg.deviceType || "ap";
     // write after read, need to acquire RWLock
     await ncm.acquireConfigRWLock(async () => {
       const networkConfig = await ncm.getActiveConfig();
