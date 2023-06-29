@@ -42,8 +42,11 @@ const KEY_CONTROLLER_ID = "assets_controller_id";
 
 const defaultTemplateMap = {
   ap: {
-    name: "ap_default",
+    key: "ap_default",
     value: {
+      meta: {
+        name: "Default AP Group"
+      }
       wifiNetworks: []
     }
   }
@@ -309,9 +312,9 @@ class AssetsController {
     await ncm.acquireConfigRWLock(async () => {
       const networkConfig = await ncm.getActiveConfig();
       const template = defaultTemplateMap[deviceType];
-      if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.name])) {
+      if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.key])) {
         networkConfig.assets_template = networkConfig.assets_template || {};
-        networkConfig.assets_template[template.name] = template.value;
+        networkConfig.assets_template[template.key] = template.value;
       }
       let assetConfig = _.get(networkConfig, ["assets", uid]);
       if (assetConfig) {
@@ -325,7 +328,7 @@ class AssetsController {
           networkConfig.assets = {};
         networkConfig.assets[uid] = { publicKey };
         if (template)
-          Object.assign(networkConfig.assets[uid], {templateId: template.name});
+          Object.assign(networkConfig.assets[uid], {templateId: template.key});
       }
       // update network config with updated public key and dummy config
       const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings
