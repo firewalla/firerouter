@@ -153,10 +153,11 @@ sudo iptables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
 # allow verified ones to passthrough
 sudo iptables -w -N FR_OSI_PBR &> /dev/null
 sudo iptables -w -F FR_OSI_PBR &> /dev/null
-## knob will be turned off when policy are all applied, for now, just vpnclient
+
+## knob will be turned off when PBR rules are all applied
+## when knob is off, all traffic should be bypassed
 sudo iptables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob src -j DROP &>/dev/null
 sudo iptables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob dst -j DROP &>/dev/null
-sudo iptables -w -A FR_OSI_PBR -j DROP &>/dev/null
 
 sudo iptables -w -N FR_OSI &> /dev/null
 sudo iptables -w -F FR_OSI &> /dev/null
@@ -287,10 +288,11 @@ sudo ip6tables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
 # allow verified ones to passthrough
 sudo ip6tables -w -N FR_OSI_PBR &> /dev/null
 sudo ip6tables -w -F FR_OSI_PBR &> /dev/null
-## knob will be turned off when policy are all applied, for now, just vpnclient
+
+## knob will be turned off when PBR rules are all applied,
+## when knob is off, all traffic should be bypassed
 sudo ip6tables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob6 src -j DROP &>/dev/null
 sudo ip6tables -w -A FR_OSI_PBR -m set --match-set osi_pbr_match_all_knob6 dst -j DROP &>/dev/null
-sudo ip6tables -w -A FR_OSI_PBR -j DROP &>/dev/null
 
 sudo ip6tables -w -N FR_OSI &> /dev/null
 sudo ip6tables -w -F FR_OSI &> /dev/null
