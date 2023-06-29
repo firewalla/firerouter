@@ -310,7 +310,7 @@ class AssetsController {
       const networkConfig = await ncm.getActiveConfig();
       const template = defaultTemplateMap[deviceType];
       if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.name])) {
-        networkConfig.assets_template = {};
+        networkConfig.assets_template = networkConfig.assets_template || {};
         networkConfig.assets_template[template.name] = template.value;
       }
       let assetConfig = _.get(networkConfig, ["assets", uid]);
