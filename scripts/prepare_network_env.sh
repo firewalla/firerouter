@@ -249,13 +249,13 @@ sudo ipset flush -! osi_rules_subnet6_set &>/dev/null
 sudo ipset create -! osi_match_all_knob6 hash:net family inet6 &>/dev/null
 sudo ipset flush -! osi_match_all_knob6 &>/dev/null
 sudo ipset add -! osi_match_all_knob6 ::/1 &>/dev/null
-sudo ipset add -! osi_match_all_knob6 128::/1 &>/dev/null
+sudo ipset add -! osi_match_all_knob6 8000::/1 &>/dev/null
 
 # use this knob to match everything if needed for rules
 sudo ipset create -! osi_rules_match_all_knob6 hash:net family inet6 &>/dev/null
 sudo ipset flush -! osi_rules_match_all_knob6 &>/dev/null
 sudo ipset add -! osi_rules_match_all_knob6 ::/1 &>/dev/null
-sudo ipset add -! osi_rules_match_all_knob6 128::/1 &>/dev/null
+sudo ipset add -! osi_rules_match_all_knob6 8000::/1 &>/dev/null
 
 sudo ipset create -! osi_verified_subnet6_set hash:net family inet6 &>/dev/null
 
