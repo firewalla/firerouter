@@ -120,26 +120,32 @@ sudo ipset add -! osi_rules_match_all_knob 128.0.0.0/1 &>/dev/null
 sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
 sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
 
+function prepare_osi {
+  # fullfil from redis
+  redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_mac_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_mac_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "all" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
+
+  # only clear for initial setup
+  sudo ipset flush -! osi_verified_mac_set &>/dev/null
+  sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+}
+
+
 # DO NOT FULLFIL FROM REDIS WHEN FIREWALLA IS ALREADY RUNNING
 # main.touch means firemain service has ever started at once
 # if this file doesnt exist, it means a FRESH BOOT UP
 if [[ ! -e /dev/shm/main.touch ]]; then
   # Only if FW_FORWARD does NOT exist
   if ! sudo iptables -S FW_FORWARD &>/dev/null; then
-    # fullfil from redis
-    redis-cli smembers osi:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
-    redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
-    redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
-    redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_mac_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_mac_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "all" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
-
-    # only clear for initial setup
-    sudo ipset flush -! osi_verified_mac_set &>/dev/null
-    sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+    # put it to background to speed up
+    prepare_osi &
   fi
 fi
 
@@ -264,21 +270,25 @@ sudo ipset add -! osi_rules_match_all_knob6 8000::/1 &>/dev/null
 
 sudo ipset create -! osi_verified_subnet6_set hash:net family inet6 &>/dev/null
 
+function prepare_osi6 {
+  # fullfil from redis
+  # only need to fulfill the ipv6 specific ones
+  redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
+  redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
+  redis-cli smembers osi:rules:active | awk -F, '$1 == "all" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
+
+  sudo ipset flush -! osi_verified_subnet6_set &>/dev/null
+}
+
 # DO NOT FULLFIL FROM REDIS WHEN FIREWALLA IS ALREADY RUNNING
 # main.touch means firemain service has ever started at once
 # if this file doesnt exist, it means a FRESH BOOT UP
 if [[ ! -e /dev/shm/main.touch ]]; then
   # Only if FW_FORWARD does NOT exist
   if ! sudo ip6tables -S FW_FORWARD &>/dev/null; then
-    # fullfil from redis
-    # only need to fulfill the ipv6 specific ones
-    redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
-    redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
-    redis-cli smembers osi:rules:active | awk -F, '$1 == "all" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
-
-    sudo ipset flush -! osi_verified_subnet6_set &>/dev/null
+    prepare_osi6 &
   fi
 fi
 
