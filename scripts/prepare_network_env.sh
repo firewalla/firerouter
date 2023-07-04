@@ -131,6 +131,11 @@ if [[ ! -e /dev/shm/main.touch ]]; then
     redis-cli smembers osi:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_mac_set &>/dev/null
     redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
     redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "mac" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_mac_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "tag" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_mac_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "all" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet_set &>/dev/null
 
     # only clear for initial setup
     sudo ipset flush -! osi_verified_mac_set &>/dev/null
@@ -269,6 +274,9 @@ if [[ ! -e /dev/shm/main.touch ]]; then
     # only need to fulfill the ipv6 specific ones
     redis-cli smembers osi:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
     redis-cli smembers osi:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_subnet6_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "network" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "identity" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
+    redis-cli smembers osi:rules:active | awk -F, '$1 == "all" {print $NF}' | xargs -n 1 sudo ipset -exist add -! osi_rules_subnet6_set &>/dev/null
 
     sudo ipset flush -! osi_verified_subnet6_set &>/dev/null
   fi
