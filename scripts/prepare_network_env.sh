@@ -120,12 +120,17 @@ sudo ipset add -! osi_rules_match_all_knob 128.0.0.0/1 &>/dev/null
 sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
 sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
 
+OSI_TIMEOUT=$(redis-cli get osi:admin:timeout)
+if [[ -z "$OSI_TIMEOUT" ]]; then
+  OSI_TIMEOUT=600 # default 10 mins
+fi
+
 function prepare_osi {
   # fullfil from redis
-  redis-cli smembers osi:active | awk -F, '$1 == "mac" || $1 == "tag" {print "add osi_mac_set " $NF}' | sudo ipset -exist restore &> /dev/null
-  redis-cli smembers osi:active | awk -F, '$1 == "network" || $1 == "identity" || $1 == "identityTag" {print "add osi_subnet_set " $NF}' | sudo ipset -exist restore &> /dev/null
-  redis-cli smembers osi:rules:active | awk -F, '$1 == "mac" || $1 == "tag" {print "add osi_rules_mac_set " $NF}' | sudo ipset -exist restore &> /dev/null
-  redis-cli smembers osi:rules:active | awk -F, '$1 == "network" || $1 == "identity" || $1 == "identityTag" {print "add osi_rules_subnet_set " $NF}' | sudo ipset -exist restore &> /dev/null
+  redis-cli smembers osi:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "mac" || $1 == "tag" {print "add osi_mac_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
+  redis-cli smembers osi:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "network" || $1 == "identity" || $1 == "identityTag" {print "add osi_subnet_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
+  redis-cli smembers osi:rules:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "mac" || $1 == "tag" {print "add osi_rules_mac_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
+  redis-cli smembers osi:rules:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "network" || $1 == "identity" || $1 == "identityTag" {print "add osi_rules_subnet_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
 
   # only clear for initial setup
   sudo ipset flush -! osi_verified_mac_set &>/dev/null
@@ -268,8 +273,8 @@ sudo ipset create -! osi_verified_subnet6_set hash:net family inet6 &>/dev/null
 function prepare_osi6 {
   # fullfil from redis
   # only need to fulfill the ipv6 specific ones
-  redis-cli smembers osi:active | awk -F, '$1 == "network6" {print "add osi_subnet6_set " $NF}' | sudo ipset -exist restore &> /dev/null
-  redis-cli smembers osi:rules:active | awk -F, '$1 == "network6" {print "add osi_rules_subnet6_set " $NF}' | sudo ipset -exist restore &> /dev/null
+  redis-cli smembers osi:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "network6" {print "add osi_subnet6_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
+  redis-cli smembers osi:rules:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "network6" {print "add osi_rules_subnet6_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
 
   sudo ipset flush -! osi_verified_subnet6_set &>/dev/null
 }
