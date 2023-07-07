@@ -89,6 +89,9 @@ class AssetsTemplatePlugin extends Plugin {
           if (!intfPlugin)
             this.fatal(`"intf" ${value} is not found in config`);
           this.subscribeChangeFrom(intfPlugin);
+          const ip4s = await intfPlugin.getIPv4Addresses();
+          if (!_.isEmpty(ip4s))
+            wifiConfig.ipv4Hint = ip4s[0];
           switch (intfPlugin.constructor.name) {
             case "VLANInterfacePlugin":
               vlanIntf = intfPlugin.networkConfig.vid;

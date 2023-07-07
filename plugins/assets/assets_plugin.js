@@ -16,12 +16,8 @@
 'use strict';
 
 const AssetsTemplatePlugin = require('./assets_template_plugin.js');
-const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
-const r = require('../../util/firerouter.js');
-const _ = require('lodash');
-const util = require('../../util/util.js');
-const crypto = require('crypto');
+const { Address4 } = require('ip-address');
 
 const AssetsController = require('../../core/assets_controller.js');
 
@@ -43,6 +39,22 @@ class AssetsPlugin extends AssetsTemplatePlugin {
     } else {
       const effectiveConfig = await this.generateEffectiveConfig(config);
       await AssetsController.setEffectiveConfig(uid, effectiveConfig);
+    }
+  }
+
+  async validateIP(assetIP, effectiveConfig) {
+    const addr4 = new Address4(assetIP);
+    if (!addr4.isValid())
+      return;
+    for (const key of Object.keys(effectiveConfig)) {
+      switch (key) {
+        case "wifiNetworks": {
+          
+          
+          break;
+        }
+        default:
+      }
     }
   }
 }
