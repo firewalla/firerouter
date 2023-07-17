@@ -226,6 +226,10 @@ sudo ip6tables -w -F FR_INPUT
 sudo ip6tables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
 # always accept dhcp reply from server to local
 sudo ip6tables -w -A FR_INPUT -p udp --sport 547 --dport 546 -j ACCEPT
+sudo ip6tables -w -A FR_INPUT -p icmpv6 --icmpv6-type neighbour-solicitation -j ACCEPT
+sudo ip6tables -w -A FR_INPUT -p icmpv6 --icmpv6-type neighbour-advertisement -j ACCEPT
+sudo ip6tables -w -A FR_INPUT -p icmpv6 --icmpv6-type router-advertisement -j ACCEPT
+
 sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
 
 # chain for icmp
