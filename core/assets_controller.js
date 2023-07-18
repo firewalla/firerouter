@@ -26,6 +26,7 @@ const ASSETS_CONTROL_PORT = 8838;
 const MSG_PULL_CONFIG = "assets_msg::pull_config";
 const MSG_PUSH_CONFIG = "assets_msg::push_config";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
+const MSG_STATUS = "assets_msg::status";
 
 class AssetsController {
   constructor () {
@@ -71,6 +72,21 @@ class AssetsController {
     await rclient.hdelAsync(ASSETS_CONFIG_KEY, uid);
     delete this.uidConfigMap[uid];
     return config;
+  }
+
+
+  async recordStatus(msg) {
+    const mac = msg.mac;
+    const devices = msg.devices;
+    if (!_.isEmpty(devices)) {
+      for (const device of devices) {
+        device.apMac = mac;
+        device.ts = Math.floor(new Date()/ 1000);
+        const deviceMac = device.mac_addr;
+        const key = `assets:status:${deviceMac}`;
+        await rclient.setAsync(key, JSON.stringify(device), "EX", 30);
+      }
+    }
   }
 
   async pushConfig(uid) {
@@ -139,6 +155,10 @@ class AssetsController {
         switch (msg.type) {
           case MSG_PULL_CONFIG : {
             await this.pushConfig(uid);
+            break;
+          }
+          case MSG_STATUS: {
+            await this.recordStatus(msg);
             break;
           }
           default: {
