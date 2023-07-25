@@ -30,7 +30,7 @@ const pl = require('../plugin_loader.js');
 const _ = require('lodash');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
-const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
+const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts2";
 const dhcpRuntimeDir = r.getRuntimeFolder() + "/dhcp";
 
 let _restartTask = null;
