@@ -20,6 +20,7 @@ let instance = null;
 const pl = require('../plugins/plugin_loader.js');
 const routing = require('../util/routing.js');
 const r = require('../util/firerouter.js');
+const fsp = require('fs').promises;
 
 const exec = require('child-process-promise').exec;
 
@@ -76,6 +77,15 @@ class NetworkSetup {
       await exec(`sudo rm ${duidFilePath}`).catch((err) => {});
       await exec(`sudo touch ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
       await exec(`sudo ln -sf ${r.getRuntimeFolder()}/dhcpcd.duid ${duidFilePath}`).catch((err) => {});
+      let duid = await fsp.readFile(`${r.getRuntimeFolder()}/dhcpcd.duid`, {encoding: 'utf8'}).catch((err) => null);
+      if (!duid) {
+        // generate DUID based on link layer address of eth0, DUID-LL seems compatibile with most DHCPv6 servers
+        const eth0Mac = await fsp.readFile("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        if (eth0Mac) {
+          duid = `00:03:${eth0Mac}`;
+          await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+        }
+      }
     }
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
