@@ -78,6 +78,11 @@ class PlatformLoader {
           this.platform = new PSEPlatform();
           break;
         }
+        case "gold-se": {
+          const GSEPlatform = require('./gse/GSEPlatform.js');
+          this.platform = new GSEPlatform();
+          break;
+        }
         default: {
           return null;
         }
