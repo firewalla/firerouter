@@ -357,8 +357,8 @@ class InterfaceBasePlugin extends Plugin {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-      const pdSize = this.networkConfig.dhcp6.pdSize || 60;
-      if (pdSize > 64)
+      const pdSize = this.networkConfig.dhcp6.pdSize || null;
+      if (pdSize && pdSize > 64)
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
       const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
@@ -369,7 +369,7 @@ class InterfaceBasePlugin extends Plugin {
         if (i <= pdHints.length)
           pdOpts.push(`ia_pd ${i}/${pdHints[i - 1]} not_exist/1`);
         else
-          pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
+          pdOpts.push(`ia_pd ${i}${pdSize ? `/::/${pdSize}` : ""} not_exist/1`);
       }
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
       content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
@@ -796,6 +796,11 @@ class InterfaceBasePlugin extends Plugin {
     return dns;
   }
 
+  async getPrefixDelegations() {
+    const pds = await fs.readFileAsync(r.getInterfaceDelegatedPrefixPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.length > 0)).catch((err) => null);
+    return pds;
+  }
+
   async getRoutableSubnets() {
     return null;
   }
@@ -1146,7 +1151,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, pds, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1164,6 +1169,7 @@ class InterfaceBasePlugin extends Plugin {
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDNSNameservers(),
       this.getOrigDNSNameservers(),
+      this.getPrefixDelegations(),
       this.isInterfacePresent()
     ]);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -1176,7 +1182,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, pds, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
