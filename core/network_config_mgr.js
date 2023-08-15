@@ -224,6 +224,9 @@ class NetworkConfigManager {
 
     let result = {};
 
+    // always enable ping/dns test in manual test
+    options.pingTestEnabled = true;
+    options.dnsTestEnabled = true;
     result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 1, 0.5, "github.com", options);
     if (result.dns === null) {
       result.dns = false;
