@@ -57,7 +57,6 @@ class DHCPPlugin extends Plugin {
     const targetFile = r.getTempFolder() + "/firerouter_dhcp.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   static async installDHCPScript() {
