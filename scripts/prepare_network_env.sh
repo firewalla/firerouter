@@ -41,6 +41,10 @@ sudo iptables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -
 # save the updated fwmark into the connmark, which may be used in tc filter actions
 sudo iptables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
 
+sudo iptables -w -t mangle -N FR_MROUTE &>/dev/null
+sudo iptables -w -t mangle -F FR_MROUTE &>/dev/null
+sudo iptables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE &>/dev/null || sudo iptables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE
+
 sudo iptables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo iptables -w -t mangle -F FR_OUTPUT &> /dev/null
 sudo iptables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo iptables -w -t mangle -A OUTPUT -j FR_OUTPUT
@@ -212,6 +216,10 @@ sudo ip6tables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo i
 sudo ip6tables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
 # save the updated fwmark into the connmark, which may be used in tc filter actions
 sudo ip6tables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
+
+sudo ip6tables -w -t mangle -N FR_MROUTE &>/dev/null
+sudo ip6tables -w -t mangle -F FR_MROUTE &>/dev/null
+sudo ip6tables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE &>/dev/null || sudo ip6tables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE
 
 sudo ip6tables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo ip6tables -w -t mangle -F FR_OUTPUT &> /dev/null
