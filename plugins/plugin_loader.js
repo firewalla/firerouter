@@ -62,6 +62,9 @@ async function initPlugins() {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }
   }
+  await exec(`sudo systemctl daemon-reload`).catch((err) => {
+    log.error(`Failed to reload systemctl daemon`, err.message);
+  });
 
   log.info("Plugin initialized", pluginConfs);
 }
