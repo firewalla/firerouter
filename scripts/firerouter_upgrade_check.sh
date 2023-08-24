@@ -23,7 +23,7 @@ source ${FIREROUTER_HOME}/bin/common
 source ${FIREROUTER_HOME}/platform/platform.sh
 
 # Run upgrade
-${FIREROUTER_HOME}/scripts/firerouter_upgrade.sh
+${FIREROUTER_HOME}/scripts/firerouter_upgrade.sh $1
 
 # If upgrade complete, the file below should exist
 if [[ -f /dev/shm/firerouter.upgraded ]]; then
