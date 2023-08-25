@@ -11,9 +11,6 @@ MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo
 
 source ${FIREROUTER_HOME}/platform/platform.sh
 
-# 1: force upgrade even no_auto_upgrade is set
-force=${1:-0}
-
 # timeout_check - timeout control given process or last background process
 # returns:
 #   0 - process exits before timeout
@@ -40,7 +37,7 @@ timeout_check() {
     return 1
 }
 
-/home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($force) Starting FIRST "+`date`
+/home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Starting FIRST "+`date`
 
 function sync_time() {
     time_website=$1
@@ -114,7 +111,7 @@ done
 
 if [[ $rc -ne 0 ]]
 then
-    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($force) Failed No Network "+`date`
+    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Failed No Network "+`date`
     rm -f /dev/shm/firerouter.upgraded
     touch /dev/shm/firerouter.upgrade.failed
     exit 1
@@ -144,8 +141,8 @@ fi
 
 echo "upgrade on branch $branch"
 
-if [[ -e "/home/pi/.router/config/.no_auto_upgrade" && $force -eq 0 ]]; then
-  /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE SKIP UPGRADE"
+if [[ -e "/home/pi/.router/config/.no_auto_upgrade" ]]; then
+  /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO UPGRADE"
   echo '======= SKIP UPGRADING BECAUSE OF FLAG /home/pi/.router/config/.no_auto_upgrade ======='
   rm -f /dev/shm/firerouter.upgraded
   exit 0
