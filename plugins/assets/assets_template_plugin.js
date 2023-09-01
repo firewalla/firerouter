@@ -167,12 +167,16 @@ class AssetsTemplatePlugin extends Plugin {
             }
             const ftSeed24 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "2.4g");
             const ftSeed5 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "5g");
+            const ftSeed6 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "6g");
             const mdId24 = ftSeed24.substring(ftSeed24.length - 4);
             const mdId5 = ftSeed5.substring(ftSeed5.length - 4);
+            const mdId6 = ftSeed6.substring(ftSeed6.length - 4);
             const nasId24 = ftSeed24.substring(0, 16);
             const nasId5 = ftSeed5.substring(0, 16);
+            const nasId6 = ftSeed6.substring(0, 16);
             const khKeyHex24 = ftSeed24.substring(16, 48);
             const khKeyHex5 = ftSeed5.substring(16, 48);
+            const khKeyHex6 = ftSeed6.substring(16, 48);
             switch (profile.band) {
               // need an adaptive way to select channel
               case "2.4g":
@@ -180,6 +184,8 @@ class AssetsTemplatePlugin extends Plugin {
                 break;
               case "5g":
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
+              case "6g":
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
                 break;
               default:
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
