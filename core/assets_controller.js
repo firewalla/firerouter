@@ -42,8 +42,11 @@ const KEY_CONTROLLER_ID = "assets_controller_id";
 
 const defaultTemplateMap = {
   ap: {
-    name: "ap_default",
+    key: "ap_default",
     value: {
+      meta: {
+        name: "Default AP Group"
+      },
       wifiNetworks: []
     }
   }
@@ -56,6 +59,7 @@ class AssetsController {
     this.publicKeyUidMap = {};
     this.publicKeyIpMap = {};
     this.ipPublicKeyMap = {};
+    this.pubKeyPrivKeyMap = {};
     this.pushConfigTimer = {};
     return this;
   }
@@ -140,7 +144,9 @@ class AssetsController {
       log.error(`Cannot find effective config of asset ${uid}`);
       return;
     }
-    const msg = {type: MSG_PUSH_CONFIG, config};
+    const pubKey = this.uidPublicKeyMap[uid];
+    const channelConfig = {boxPubKey: this.selfPublicKey, boxIp: this.selfIP, boxListenPort: this.wgListenPort, pubKey: pubKey, privKey: this.pubKeyPrivKeyMap[pubKey], ip: assetIP, endpoint: `fire.walla:${this.wgListenPort}`};
+    const msg = {type: MSG_PUSH_CONFIG, config: Object.assign({}, config, {wg: channelConfig})};
     this.controlSocket.send(JSON.stringify(msg), ASSETS_CONTROL_PORT, assetIP);
   }
 
@@ -223,7 +229,9 @@ class AssetsController {
   async startServer(wgConf, wgIntf) {
     this.stopServer();
     this.wgIntf = wgIntf;
+    this.wgListenPort = wgConf.listenPort;
     const peers = wgConf.peers;
+    const extraPeers = wgConf.extra && wgConf.extra.peers;
     const privateKey = wgConf.privateKey;
     this.selfPublicKey = await exec(`echo ${privateKey} | wg pubkey`).then((result) => result.stdout.trim()).catch((err) => null);
     if (!_.isArray(peers)) {
@@ -232,14 +240,21 @@ class AssetsController {
     }
     const pubKeyIpMap = {};
     const ipPubKeyMap = {};
+    const pubKeyPrivKeyMap = {};
     for (const peer of peers) {
       const publicKey = peer.publicKey;
       const ip = _.isArray(peer.allowedIPs) && peer.allowedIPs[0].split('/')[0];
       pubKeyIpMap[publicKey] = ip;
       ipPubKeyMap[ip] = publicKey;
     }
+    for (const peer of extraPeers) {
+      const {publicKey, privateKey} = peer;
+      if (publicKey && privateKey)
+        pubKeyPrivKeyMap[publicKey] = privateKey;
+    }
     this.publicKeyIpMap = pubKeyIpMap;
     this.ipPublicKeyMap = ipPubKeyMap;
+    this.pubKeyPrivKeyMap = pubKeyPrivKeyMap;
     // socket for control channel
     this.controlSocket = dgram.createSocket({
       type: "udp4",
@@ -254,6 +269,7 @@ class AssetsController {
       });
     });
     const ip = wgConf.ipv4.split('/')[0];
+    this.selfIP = ip;
     this.controlSocket.bind(ASSETS_CONTROL_PORT, ip);
     // periodically send heartbeat to all peers
     this.hbInterval = setInterval(() => {
@@ -309,9 +325,9 @@ class AssetsController {
     await ncm.acquireConfigRWLock(async () => {
       const networkConfig = await ncm.getActiveConfig();
       const template = defaultTemplateMap[deviceType];
-      if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.name])) {
-        networkConfig.assets_template = {};
-        networkConfig.assets_template[template.name] = template.value;
+      if (template && (!networkConfig.assets_template || !networkConfig.assets_template[template.key])) {
+        networkConfig.assets_template = networkConfig.assets_template || {};
+        networkConfig.assets_template[template.key] = template.value;
       }
       let assetConfig = _.get(networkConfig, ["assets", uid]);
       if (assetConfig) {
@@ -325,7 +341,7 @@ class AssetsController {
           networkConfig.assets = {};
         networkConfig.assets[uid] = { publicKey };
         if (template)
-          Object.assign(networkConfig.assets[uid], {templateId: template.name});
+          Object.assign(networkConfig.assets[uid], {templateId: template.key});
       }
       // update network config with updated public key and dummy config
       const errors = await ncm.tryApplyConfig(networkConfig); // this will transitively call setEffectiveConfig, which updates the uid and public key mappings

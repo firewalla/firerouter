@@ -30,7 +30,7 @@ const pl = require('../plugin_loader.js');
 const _ = require('lodash');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
-const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
+const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts2";
 const dhcpRuntimeDir = r.getRuntimeFolder() + "/dhcp";
 
 let _restartTask = null;
@@ -57,7 +57,6 @@ class DHCPPlugin extends Plugin {
     const targetFile = r.getTempFolder() + "/firerouter_dhcp.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   static async installDHCPScript() {
