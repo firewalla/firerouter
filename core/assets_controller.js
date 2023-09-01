@@ -59,6 +59,7 @@ class AssetsController {
     this.publicKeyUidMap = {};
     this.publicKeyIpMap = {};
     this.ipPublicKeyMap = {};
+    this.pubKeyPrivKeyMap = {};
     this.pushConfigTimer = {};
     return this;
   }
@@ -143,7 +144,9 @@ class AssetsController {
       log.error(`Cannot find effective config of asset ${uid}`);
       return;
     }
-    const msg = {type: MSG_PUSH_CONFIG, config};
+    const pubKey = this.uidPublicKeyMap[uid];
+    const channelConfig = {boxPubKey: this.selfPublicKey, boxIp: this.selfIP, boxListenPort: this.wgListenPort, pubKey: pubKey, privKey: this.pubKeyPrivKeyMap[pubKey], ip: assetIP, endpoint: `fire.walla:${this.wgListenPort}`};
+    const msg = {type: MSG_PUSH_CONFIG, config: Object.assign({}, config, {wg: channelConfig})};
     this.controlSocket.send(JSON.stringify(msg), ASSETS_CONTROL_PORT, assetIP);
   }
 
@@ -226,7 +229,9 @@ class AssetsController {
   async startServer(wgConf, wgIntf) {
     this.stopServer();
     this.wgIntf = wgIntf;
+    this.wgListenPort = wgConf.listenPort;
     const peers = wgConf.peers;
+    const extraPeers = wgConf.extra && wgConf.extra.peers;
     const privateKey = wgConf.privateKey;
     this.selfPublicKey = await exec(`echo ${privateKey} | wg pubkey`).then((result) => result.stdout.trim()).catch((err) => null);
     if (!_.isArray(peers)) {
@@ -235,14 +240,21 @@ class AssetsController {
     }
     const pubKeyIpMap = {};
     const ipPubKeyMap = {};
+    const pubKeyPrivKeyMap = {};
     for (const peer of peers) {
       const publicKey = peer.publicKey;
       const ip = _.isArray(peer.allowedIPs) && peer.allowedIPs[0].split('/')[0];
       pubKeyIpMap[publicKey] = ip;
       ipPubKeyMap[ip] = publicKey;
     }
+    for (const peer of extraPeers) {
+      const {publicKey, privateKey} = peer;
+      if (publicKey && privateKey)
+        pubKeyPrivKeyMap[publicKey] = privateKey;
+    }
     this.publicKeyIpMap = pubKeyIpMap;
     this.ipPublicKeyMap = ipPubKeyMap;
+    this.pubKeyPrivKeyMap = pubKeyPrivKeyMap;
     // socket for control channel
     this.controlSocket = dgram.createSocket({
       type: "udp4",
@@ -257,6 +269,7 @@ class AssetsController {
       });
     });
     const ip = wgConf.ipv4.split('/')[0];
+    this.selfIP = ip;
     this.controlSocket.bind(ASSETS_CONTROL_PORT, ip);
     // periodically send heartbeat to all peers
     this.hbInterval = setInterval(() => {
