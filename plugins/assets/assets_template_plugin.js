@@ -166,6 +166,8 @@ class AssetsTemplatePlugin extends Plugin {
             // FIXME: do not generate PSK for wpa3 network, due to AP config limitation
             if (profile.key && ! ["3", "2/3"].includes(profile.wpa)) {
               ssidCommonConfig.key = await util.generatePSK(profile.ssid, profile.key);
+            } else {
+              ssidCommonConfig.key = profile.key;
             }
 
             // randomize options for fast roaming
