@@ -129,10 +129,7 @@ class AssetsTemplatePlugin extends Plugin {
             const profile = profilePlugin.networkConfig;
             const ssidCommonConfig = {};
             Object.assign(ssidCommonConfig, _.pick(profile, ["ssid", "enterprise", "hidden", "isolate", "hints"]));
-            if (profile.key)
-              ssidCommonConfig.key = await util.generatePSK(profile.ssid, profile.key);
-            // randomize options for fast roaming
-            
+
             // refer to https://openwrt.org/docs/guide-user/network/wifi/basic#encryption_modes
             switch (profile.encryption) {
               case "enterprise":
@@ -165,6 +162,13 @@ class AssetsTemplatePlugin extends Plugin {
                     ssidCommonConfig.encryption = "psk2";
                 }
             }
+
+            // FIXME: do not generate PSK for wpa3 network, due to AP config limitation
+            if (profile.key && ! ["3", "2/3"].includes(profile.wpa)) {
+              ssidCommonConfig.key = await util.generatePSK(profile.ssid, profile.key);
+            }
+
+            // randomize options for fast roaming
             const ftSeed24 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "2.4g");
             const ftSeed5 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "5g");
             const ftSeed6 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "6g");
