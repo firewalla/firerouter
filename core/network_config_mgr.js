@@ -34,6 +34,7 @@ const fsp = require('fs').promises;
 const util = require('../util/util.js');
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
+const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
 
 const Promise = require('bluebird');
 
@@ -232,17 +233,20 @@ class NetworkConfigManager {
     if(result.carrier) {
       const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
+      // use firewalla-hosted captive check page to check status code as well as content
+      let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+      if (!httpResult) {
+        httpResult = await Promise.any(sites.map(async (site) => {
+          const result = await intfPlugin.checkHttpStatus(site);
+          if(!result) {
+            throw new Error("http check failed on site " + site);
+          }
+          return result;
+        })).catch((err) => {
+          log.error("Failed to check http status on all sites, err:", err.message);
+        });
+      }
       // return if any of them succeeds
-      const httpResult = await Promise.any(sites.map(async (site) => {
-        const result = await intfPlugin.checkHttpStatus(site);
-        if(!result) {
-          throw new Error("http check failed on site " + site);
-        }
-        return result;
-      })).catch((err) => {
-        log.error("Failed to check http status on all sites, err:", err.message);
-      });
-
       if (httpResult) {
         result.http = httpResult;
       }
@@ -631,6 +635,24 @@ class NetworkConfigManager {
       }
     }
     return [];
+  }
+
+  async acquireConfigRWLock(func) {
+    return lock.acquire(LOCK_CONFIG_RW, async () => {
+      log.info("Config RW Lock acquired");
+      return func();
+    }).finally(() => {
+      log.info("Config RW Lock released");
+    });
+  }
+
+  async tryApplyConfigWithRWLock(config, dryRun = false) {
+    return await lock.acquire(LOCK_CONFIG_RW, async () => {
+      const errors = await this.tryApplyConfig(config, dryRun);
+      return errors;
+    }).catch((err) => {
+      return [err.message];
+    });
   }
 
   async tryApplyConfig(config, dryRun = false) {
