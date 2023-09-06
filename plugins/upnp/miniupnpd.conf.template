@@ -9,14 +9,16 @@ enable_natpmp=%ENABLE_NATPMP%
 enable_upnp=%ENABLE_UPNP%
 
 upnp_nat_chain=UPNP_%INTERNAL_INTERFACE%
+upnp_forward_chain=UPNP_%INTERNAL_INTERFACE%
+upnp_nat_postrouting_chain=UPNP_PR_%INTERNAL_INTERFACE%
 
 lease_file=/var/run/upnp.%INTERNAL_INTERFACE%.leases
 
-friendly_name=Firewalla Gold
+friendly_name=%MODEL_NAME%
 manufacturer_name=Firewalla
 manufacturer_url=https://firewalla.com
-model_name=Firewalla Gold
-model_description=Firewalla Gold
+model_name=%MODEL_NAME%
+model_description=%MODEL_NAME%
 model_url=https://firewalla.com
 
 secure_mode=yes

@@ -27,9 +27,11 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const pl = require('../plugin_loader.js');
+const _ = require('lodash');
+const { Address4 } = require('ip-address');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
-const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts";
+const dhcpHostsDir = r.getUserConfigFolder() + "/dhcp/hosts2";
 const dhcpRuntimeDir = r.getRuntimeFolder() + "/dhcp";
 
 let _restartTask = null;
@@ -56,7 +58,6 @@ class DHCPPlugin extends Plugin {
     const targetFile = r.getTempFolder() + "/firerouter_dhcp.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   static async installDHCPScript() {
@@ -96,9 +97,20 @@ class DHCPPlugin extends Plugin {
     if (searchDomains.length > 0)
       dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}119,${searchDomains.join(",")}`);
 
+    let useDhcpBoot = extraOptions.hasOwnProperty("66") && extraOptions.hasOwnProperty("67");
+    if (useDhcpBoot) {
+      dhcpOptions.push(`dhcp-boot=tag:${iface},${extraTags}${extraOptions["67"]},${new Address4(extraOptions["66"]).isValid() ? `,${extraOptions["66"]}` : extraOptions["66"]}`)
+    }
     if (Object.keys(extraOptions).length > 0) {
       for (const key of Object.keys(extraOptions)) {
-        dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}${key},${extraOptions[key]}`);
+        const option = extraOptions[key];
+        if ((key === "66" || key === "67") && useDhcpBoot)
+          continue;
+        // value can be either a literal string or an object.
+        if (!_.isObject(option))
+          dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}${key},${option}`);
+        else // if it is an object, dhcp-option-force can be used if force is set to true
+          dhcpOptions.push(`dhcp-option${option.force === true ? "-force" : ""}=tag:${iface},${extraTags}${key},${option.value}`);
       }
     }
     

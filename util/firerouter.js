@@ -22,6 +22,7 @@ const util = require('util');
 
 // TODO: Read this from config file
 const home = process.env.FIREROUTER_HOME || "/home/pi/firerouter"
+const firewallaHome = process.env.FIREWALLA_HOME || "/home/pi/firewalla"
 let _isProduction = null;
 let _isDocker = null;
 let _platform = null;
@@ -34,6 +35,10 @@ let latestCommitHash = null;
 
 function getFireRouterHome() {
   return home;
+}
+
+function getFirewallaHome() {
+  return firewallaHome;
 }
 
 function getBranch() {
@@ -159,7 +164,7 @@ function getInterfaceDelegatedPrefixPath(iface) {
 }
 
 function getInterfacePDCacheDirectory(iface) {
-  return `${getRuntimeFolder()}/dhcpcd/${iface}`;
+  return `${getRuntimeFolder()}/dhcpcd/${iface}/pd_cache`;
 }
 
 function getInterfaceSysFSDirectory(iface) {
@@ -241,6 +246,7 @@ module.exports = {
   getProcessName:getProcessName,
   getLatestCommitHash:getLatestCommitHash,
   getFireRouterHome:getFireRouterHome,
+  getFirewallaHome,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
   getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,

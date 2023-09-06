@@ -19,6 +19,10 @@ class NavyPlatform extends Platform {
   getName() {
     return "navy";
   }
+
+  getModelName() {
+    return "Firewalla Blue Plus";
+  }
 }
 
 module.exports = NavyPlatform;

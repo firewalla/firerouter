@@ -18,6 +18,9 @@ duid
 # Persist interface configuration when dhcpcd exits.
 persistent
 
+# do not automatically install default route, it will be handled by hook script
+nogateway
+
 # Rapid commit support.
 # Safe to enable by default because it requires the equivalent option set
 # on the server to actually work.
@@ -38,6 +41,6 @@ require dhcp_server_identifier
 #slaac private
 
 # Dummy prefix delegation entry to simply get prefix to delegate without configuring any interface, evil!
-ia_pd 1/::/%PD_SIZE% not_exist/1
+%IA_PD_OPTS%
 
-ia_na
+%IA_NA_OPTS%

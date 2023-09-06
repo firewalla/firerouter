@@ -4,6 +4,12 @@
       "file_path": "./interface/phy_intf_plugin.js",
       "config_path": "interface.phy",
       "category": "interface",
+      "init_seq": 0
+    },
+    {
+      "file_path": "./interface/bond_intf_plugin.js",
+      "config_path": "interface.bond",
+      "category": "interface",
       "init_seq": 1
     },
     {
@@ -31,20 +37,8 @@
       "init_seq": 4
     },
     {
-      "file_path": "./interface/bond_intf_plugin.js",
-      "config_path": "interface.bond",
-      "category": "interface",
-      "init_seq": 4
-    },
-    {
       "file_path": "./interface/openvpn_intf_plugin.js",
       "config_path": "interface.openvpn",
-      "category": "interface",
-      "init_seq": 4
-    },
-    {
-      "file_path": "./interface/wireguard_intf_plugin.js",
-      "config_path": "interface.wireguard",
       "category": "interface",
       "init_seq": 4
     },
@@ -55,22 +49,34 @@
       "init_seq": 4
     },
     {
+      "file_path": "./interface/docker_intf_plugin.js",
+      "config_path": "interface.docker",
+      "category": "interface",
+      "init_seq": 4
+    },
+    {
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
       "init_seq": 5
     },
     {
+      "file_path": "./interface/wireguard_intf_plugin.js",
+      "config_path": "interface.wireguard",
+      "category": "interface",
+      "init_seq": 6
+    },
+    {
       "file_path": "./nat/nat_plugin.js",
       "config_path": "nat",
       "category": "nat",
-      "init_seq": 6
+      "init_seq": 7
     },
     {
       "file_path": "./dns/dns_plugin.js",
       "config_path": "dns",
       "category": "dns",
-      "init_seq":7
+      "init_seq":8
     },
     {
       "file_path": "./dhcp/dhcp_plugin.js",
@@ -115,6 +121,12 @@
       "init_seq": 9
     },
     {
+      "file_path": "./mroute/mroute_plugin.js",
+      "config_path": "mroute",
+      "category": "mroute",
+      "init_seq": 9
+    },
+    {
       "file_path": "./icmp/icmp_plugin.js",
       "config_path": "icmp",
       "category": "icmp",
@@ -125,13 +137,20 @@
       "config_path": "hostapd",
       "category": "hostapd",
       "init_seq": 9
+    },
+    {
+      "file_path": "./docker/docker_plugin.js",
+      "config_path": "docker",
+      "category": "docker",
+      "init_seq": 9
     }
   ],
   "sensors": [
     {
       "file_path": "./ifplug_sensor.js",
       "config": {
-        "up_delay": 5
+        "up_delay": 5,
+        "down_delay": 5
       }
     },
     {
@@ -152,13 +171,28 @@
     {
       "file_path": "./if_presence_sensor.js",
       "config": {
-        
+
       }
     },
     {
       "file_path": "./wpa_connection_sensor.js",
       "config": {
-        
+        "log_file": "/var/log/wpa_supplicant.log",
+        "reject_threshold_count": 3,
+        "reject_threshold_min_interval": 20,
+        "reject_threshold_time_seconds": 300
+      }
+    },
+    {
+      "file_path": "./rtw_sensor.js",
+      "config": {
+        "log_file": "/var/log/rtw.log",
+        "fail_threshold_count": 3
+      }
+    },
+    {
+      "file_path": "./wlan_conf_update_sensor.js",
+      "config": {
       }
     }
   ]

@@ -42,7 +42,7 @@ timeout_check() {
 function sync_time() {
     time_website=$1
     logger "Syncing time from ${time_website}..."
-    time=$(curl -m5 -D - ${time_website} -o /dev/null --silent | awk -F ": " '/^Date: / {print $2}')
+    time=$(curl -ILsm5 ${time_website} | awk -F ": " '/^[Dd]ate: / {print $2}'|tail -1)
     if [[ "x$time" == "x" ]]; then
         logger "ERROR: Failed to load date info from website: $time_website"
         return 1
@@ -77,18 +77,36 @@ fi
 logger "FIREROUTER.UPGRADE.DATE.SYNC.DONE"
 sync
 
-NETWORK_CHECK_URL=https://one.one.one.one
+NETWORK_CHECK_HOSTS='
+  1.1.1.1 443
+  1.0.0.1 443
+  8.8.8.8 443
+  9.9.9.9 443
+  208.67.222.222 443
+  149.112.112.112 443
+  check.firewalla.com 443
+'
 
 logger `date`
 rc=1
 for i in `seq 1 10`; do
-    HTTP_STATUS_CODE=`curl -s -o /dev/null -w "%{http_code}" $NETWORK_CHECK_URL`
-    if [[ $HTTP_STATUS_CODE == "200" ]]; then
+  while read NETWORK_CHECK_HOST NETWORK_CHECK_PORT; do
+    test -n "$NETWORK_CHECK_HOST" || continue
+    test -n "$NETWORK_CHECK_PORT" || continue
+
+    # no need to check status code, even 4xx/5xx means the network is accessible
+    if nc -v -z -w 3 $NETWORK_CHECK_HOST $NETWORK_CHECK_PORT; then
       rc=0
       break
     fi
-    /usr/bin/logger "ERROR: FIREROUTER.UPGRADE NO Network $i"
-    sleep 1
+
+    /usr/bin/logger "ERROR: cannot access $NETWORK_CHECK_HOST"
+  done < <(echo "$NETWORK_CHECK_HOSTS")
+  if [[ $rc -eq 0 ]]; then
+    break
+  fi
+  /usr/bin/logger "ERROR: FIREROUTER.UPGRADE NO Network $i"
+  sleep 1
 done
 
 if [[ $rc -ne 0 ]]
@@ -103,10 +121,14 @@ fi
 cd /home/pi/firerouter
 sudo chown -R pi /home/pi/firerouter/.git
 branch=$(git rev-parse --abbrev-ref HEAD)
+remote_branch=$(map_target_branch $branch)
+# ensure the remote fetch branch is up-to-date
+git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
+git config "branch.$branch.merge" "refs/heads/$remote_branch"
 $MGIT fetch
 
 current_hash=$(git rev-parse HEAD)
-latest_hash=$(git rev-parse origin/$branch)
+latest_hash=$(git rev-parse origin/$remote_branch)
 
 if [ "$current_hash" == "$latest_hash" ]; then
    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
@@ -128,14 +150,23 @@ fi
 
 if $(/bin/systemctl -q is-active watchdog.service) ; then sudo /bin/systemctl stop watchdog.service ; fi
 sudo rm -f /home/pi/firerouter/.git/*.lock
-GIT_COMMAND="(sudo -u pi $MGIT fetch origin $branch && sudo -u pi $MGIT reset --hard FETCH_HEAD)"
+GIT_COMMAND="(sudo -u pi $MGIT fetch origin $remote_branch && sudo -u pi $MGIT reset --hard FETCH_HEAD)"
 eval $GIT_COMMAND ||
   (sleep 3; eval $GIT_COMMAND) ||
   (sleep 3; eval $GIT_COMMAND) ||
   (sleep 3; eval $GIT_COMMAND) || (date >> ~/.firerouter.upgrade.failed; exit 1)
 
+# set node_modules link to the proper directory
+NODE_MODULES_PATH=$(get_node_modules_dir)
+if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
+  if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
+    ln -sfT $NODE_MODULES_PATH ${FIREROUTER_HOME}/node_modules
+  fi
+fi
+
 touch /dev/shm/firerouter.upgraded
 
+run-parts ${FIREROUTER_HOME}/scripts/post_upgrade.d/
 
 /home/pi/firerouter/scripts/firelog -t debug -m  "FIREROUTER.UPGRADE Done $branch"
 

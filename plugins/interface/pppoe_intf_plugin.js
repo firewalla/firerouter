@@ -37,7 +37,6 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/pppoe`).catch((err) => {});
     // copy firerouter_pppd.service
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   async flushIP() {
@@ -120,6 +119,20 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     } else {
       await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
     }
+  }
+
+  async carrierState() {
+    // carrier of pppoe interface in /sys/class/net is not up-to-date, need to get carrier of base interface
+    const state = await super.carrierState();
+    let baseIntfState = state;
+    if (state === "1") {
+      if (this.networkConfig.intf) {
+        const baseIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);
+        if (baseIntfPlugin)
+          baseIntfState = await baseIntfPlugin.carrierState();
+      }
+    }
+    return baseIntfState;
   }
 
   onEvent(e) {

@@ -20,8 +20,9 @@ const r = require('../util/firerouter.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
-const era = require('../event/EventRequestApi.js');
+const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const _ = require('lodash');
+const InterfaceBasePlugin = require('../plugins/interface/intf_base_plugin.js');
 
 class WanConnCheckSensor extends Sensor {
 
@@ -36,106 +37,115 @@ class WanConnCheckSensor extends Sensor {
         });
       }, 20000);
     }, 60000);
+
+    this.hookOnInterfaceEvents();
   }
 
-  async _checkWanConnectivity() {
-    const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin.isWAN());
+  // run immediately when interface is up/down
+  hookOnInterfaceEvents() {
+    sclient.on("message", (channel, message) => {
+      switch (channel) {
+      case "ifdown": {
+        const intf = message;
+        const intfPlugin = pl.getPluginInstance("interface", intf);
+        if (intfPlugin) {
+          // ifdown of an underlying interface will affect the wan connectivity of the upper layer wan interface
+          const wanSubscriberNames = (intfPlugin.getRecursiveSubscriberPlugins() || []).filter(plugin => plugin && plugin instanceof InterfaceBasePlugin && plugin.isWAN()).map(plugin => plugin.name);
+          if (intfPlugin.isWAN())
+            wanSubscriberNames.push(intf);
+          this._checkWanConnectivity(wanSubscriberNames).catch((err) => {
+            this.log.error("Failed to do WAN connectivity check", err.message);
+          });
+        }
+        break;
+      }
+      default:
+      }
+    });
+
+    sclient.subscribe("ifdown");
+  }
+
+  async _checkWanConnectivity(ifaces = null) {
+    if (pl.isApplyInProgress()) {
+      this.log.info("A network config is being applied, skip WAN connectivity check this round");
+      return;
+    }
+    const t1 = Date.now() / 1000;
+    const wanIntfPlugins = Object.keys(pl.getPluginInstances("interface")).filter(name => !_.isArray(ifaces) || ifaces.includes(name)).map(name => pl.getPluginInstance("interface", name)).filter(ifacePlugin => ifacePlugin && ifacePlugin.isWAN());
     const defaultPingTestIP = this.config.ping_test_ip || ["1.1.1.1", "8.8.8.8", "9.9.9.9"];
     const defaultPingTestCount = this.config.ping_test_count || 8;
     const defaultPingSuccessRate = this.config.ping_success_rate || 0.5;
     const defaultDnsTestDomain = this.config.dns_test_domain || "github.com";
     await Promise.all(wanIntfPlugins.map(async (wanIntfPlugin) => {
-      const failures = [];
-      let active = true;
-      const extraConf = wanIntfPlugin && wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.extra;
-      let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
-      let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
-      const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
-      const wanName = wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.name;
-      const wanUUID = wanIntfPlugin.networkConfig && wanIntfPlugin.networkConfig.meta && wanIntfPlugin.networkConfig.meta.uuid;
-      if (_.isString(pingTestIP))
-        pingTestIP = [pingTestIP];
-      if (pingTestIP.length > 3) {
-        this.log.warn(`Number of ping test target is greater than 3 on ${wanIntfPlugin.name}, will only use the first 3 for testing`);
-        pingTestIP = pingTestIP.slice(0, 3);
-      }
-      const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
-      const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
-      const forceState = (extraConf && extraConf.forceState) || undefined;
-      await Promise.all(pingTestIP.map(async (ip) => {
-        let cmd = `ping -n -q -I ${wanIntfPlugin.name} -c ${pingTestCount} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
-        return exec(cmd).then((result) => {
-          if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
-            this.log.error(`Failed to pass ping test to ${ip} on ${wanIntfPlugin.name}`);
-            failures.push({type: "ping", target: ip});
-            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,1,{
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
-            });
-            return false;
-          } else
-            era.addStateEvent("ping",wanIntfPlugin.name+"-"+ip,0,{
-              "wan_test_ip":ip,
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "ping_test_count":pingTestCount,
-              "success_rate":Number(result.stdout.trim())/pingTestCount
-            });
-            return true;
-        }).catch((err) => {
-          this.log.error(`Failed to do ping test to ${ip} on ${wanIntfPlugin.name}`, err.message);
-          failures.push({type: "ping", target: ip});
-          return false;
-        });
-      })).then(results => {
-        if (!results.some(result => result === true)) {
-          this.log.error(`Ping test failed to all ping test targets on ${wanIntfPlugin.name}`);
-          active = false;
-        }
+      const wasPendingTest = wanIntfPlugin.isPendingTest();
+      const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain, null, true);
+      this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
+        this.log.error("Got error when checking http, err:", err.message);
       });
-      if (active && dnsTestEnabled) {
-        const nameservers = await wanIntfPlugin.getDNSNameservers();
-        const ip4s = await wanIntfPlugin.getIPv4Addresses();
-        if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
-          const srcIP = ip4s[0].split('/')[0];
-          await Promise.all(nameservers.map(async (nameserver) => {
-            const cmd = `dig -4 -b ${srcIP} +short +time=3 +tries=2 @${nameserver} ${dnsTestDomain}`;
-            const result = await exec(cmd).then((result) => {
-              if (!result || !result.stdout || result.stdout.trim().length === 0)  {
-                this.log.error(`Failed to resolve ${dnsTestDomain} using ${nameserver} on ${wanIntfPlugin.name}`);
-                failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-                return false;
-              } else {
-                return true;
-              }
-            }).catch((err) => {
-              this.log.error(`Failed to do DNS test using ${nameserver} on ${wanIntfPlugin.name}`, err.message);
-              failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-              return false;
-            });
-            era.addStateEvent("dns", nameserver, result ? 0 : 1, {
-              "wan_intf_name":wanName,
-              "wan_intf_uuid":wanUUID,
-              "name_server":nameserver,
-              "dns_test_domain":dnsTestDomain
-            });
-            return result;
-          })).then(results => {
-            if (!results.some(result => result === true)) {
-              this.log.error(`DNS test failed on all nameservers on ${wanIntfPlugin.name}`);
-              active = false;
-            }
-          });
-        }
-      }
 
+      if (!result)
+        return;
+      if (pl.isApplyInProgress()) {
+        this.log.info("A network config is being applied, discard WAN connectivity test result");
+        return;
+      }
+      const lastAppliedTimestamp = pl.getLastAppliedTimestamp();
+      if (lastAppliedTimestamp > t1) {
+        this.log.info("A network config was just applied during the current WAN connectivity test, discard WAN connectivity test result");
+        return;
+      }
+      const pendingTest = wanIntfPlugin.isPendingTest();
+      if (!wasPendingTest && pendingTest) {
+        // this usually means WAN config/state is changed during the connectivity test
+        this.log.info(`"pendingTest" flag of ${wanIntfPlugin.name} is changed to true during the current WAN connectivity test, discard WAN connectivity test result`);
+        return;
+      }
+      const active = result.active;
+      const forceState = result.forceState;
+      const failures = result.failures;
       const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures});
       event.suppressLogging(e);
+      if (!active)
+        this.log.warn(`Wan connectivity test failed on ${wanIntfPlugin.name}, failures: ${JSON.stringify(failures)}`);
       wanIntfPlugin.propagateEvent(e);
     }));
+  }
+
+  // test until http status code is 2xx or test status is reset
+  async _checkHttpConnectivity(intfPlugin, options = {}) {
+    const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
+
+    const r2c = await intfPlugin.readyToConnect();
+    const lastWanStatus = intfPlugin.getWanStatus();
+    if(!r2c) {
+      this.log.debug("no need to check http as physically not ready to connect");
+      // reset http status if the interface is not ready to connect
+      if (_.isObject(lastWanStatus))
+        delete lastWanStatus.http;
+      return;
+    }
+
+    const lastHttpResult = lastWanStatus && lastWanStatus.http;
+    const recentDownTime = (lastWanStatus && lastWanStatus.recentDownTime) || 0;
+
+    const isLastHttpSuccess = lastHttpResult && (lastHttpResult.statusCode >= 200 && lastHttpResult.statusCode < 300);
+    const testAtLeastOnceAfterPingTestPass = lastHttpResult && (lastHttpResult.ts >  recentDownTime);
+
+    if(isLastHttpSuccess && testAtLeastOnceAfterPingTestPass) {
+      return;
+    }
+
+    // use firewalla-hosted captive check page to check status code as well as content
+    let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+    if (!httpResult) {
+      for(const site of sites) {
+        httpResult = await intfPlugin.checkHttpStatus(site);
+        if (httpResult) {
+          break;
+        }
+      }
+    }
   }
 }
 

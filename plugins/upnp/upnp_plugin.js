@@ -25,6 +25,8 @@ const fs = require('fs');
 const ip = require('ip');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+const PlatformLoader = require('../../platform/PlatformLoader.js');
+const platform = PlatformLoader.getPlatform();
 
 class UPnPPlugin extends Plugin {
   static async preparePlugin() {
@@ -32,10 +34,10 @@ class UPnPPlugin extends Plugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_upnpd@.service /etc/systemd/system/`);
     // redirect miniupnpd log to specific log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/10-miniupnpd.conf /etc/rsyslog.d/`);
-    await exec(`sudo systemctl daemon-reload`);
     pl.scheduleRestartRsyslog();
     // copy logrotate config for miniupnpd log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/miniupnpd /etc/logrotate.d/`);
+    await platform.installMiniupnpd();
   }
 
   _getConfigFilePath() {
@@ -46,13 +48,24 @@ class UPnPPlugin extends Plugin {
     return `UPNP_${this.name}`;
   }
 
+  _getNATPostroutingChain() {
+    return `UPNP_PR_${this.name}`;
+  }
+
+  _getFilterChain() {
+    return `UPNP_${this.name}`;
+  }
+
   async flush() {
     await exec(`sudo systemctl stop firerouter_upnpd@${this.name}`).catch((err) => {});
     await fs.unlinkAsync(this._getConfigFilePath()).catch((err) => {});
     await exec(`sudo iptables -w -t nat -F ${this._getNATChain()}`).catch((err) => {});
+    await exec(`sudo iptables -w -F ${this._getFilterChain()}`).catch((err) => {});
+    await exec(`sudo iptables -w -D FR_UPNP_ACCEPT -j ${this._getFilterChain()}`).catch((err) => {});
+    await exec(`sudo iptables -w -t nat -F ${this._getNATPostroutingChain()}`).catch((err) => {});
+    await exec(`sudo iptables -w -t nat -D FR_UPNP_POSTROUTING -j ${this._getNATPostroutingChain()}`).catch((err) => {});
     if (this._currentExtIp4)
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_UPNP -d ${this._currentExtIp4} -j ${this._getNATChain()}`)).catch((err) => {});
-    await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});
   }
 
   async generateConfig(uuid, extIntf, internalIPs, internalNetworks) {
@@ -66,6 +79,7 @@ class UPnPPlugin extends Plugin {
     content = content.replace(/%ENABLE_NATPMP%/g, natpmpEnabled ? "yes" : "no");
     content = content.replace(/%ENABLE_UPNP%/g, upnpEnabled ? "yes" : "no");
     content = content.replace(/%UUID%/g, uuid);
+    content = content.replace(/%MODEL_NAME%/g, platform.getModelName() || "Firewalla");
     const allowNetworks = internalNetworks.map(n => `allow 1024-65535 ${n} 1024-65535`);
     content = content.replace(/%ALLOW_NETWORK%/g, allowNetworks.join("\n"));
     await fs.writeFileAsync(this._getConfigFilePath(), content, {encoding: 'utf8'});
@@ -98,8 +112,10 @@ class UPnPPlugin extends Plugin {
       return;
     }
     const intfPlugin = pl.getPluginInstance("interface", this.name);
-    if (!intfPlugin)
-      this.fatal(`Internal interface plugin ${this.name} is not found on upnp ${this.name}`);
+    if (!intfPlugin) {
+      this.log.error(`Internal interface plugin ${this.name} is not found on upnp ${this.name}`);
+      return;
+    }
     this.subscribeChangeFrom(intfPlugin);
 
     const intState = await intfPlugin.state();
@@ -116,10 +132,14 @@ class UPnPPlugin extends Plugin {
 
     // initialize iptables chains
     await exec(`sudo iptables -w -t nat -N ${this._getNATChain()} &> /dev/null`).catch((err) => {});
-    await exec(`sudo ip6tables -w -t nat -N ${this._getNATChain()} &> /dev/null`).catch((err) => {});
     await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_UPNP -d ${externalIP} -j ${this._getNATChain()}`)).catch((err) => {
       this.log.error(`Failed to add UPnP chain for ${this.name}, external IP ${externalIP}`);
     });
+    await exec(`sudo iptables -w -t nat -N ${this._getNATPostroutingChain()} &> /dev/null`).catch((err) => {});
+    await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_UPNP_POSTROUTING -j ${this._getNATPostroutingChain()}`)).catch((err) => {});
+    await exec(`sudo iptables -w -N ${this._getFilterChain()} &> /dev/null`).catch((err) => {});
+    await exec(util.wrapIptables(`sudo iptables -w -A FR_UPNP_ACCEPT -j ${this._getFilterChain()}`)).catch((err) => {});
+
     this._currentExtIp4 = externalIP;
     // do not add IPv6 support for UPnP
     // await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A FR_UPNP -j ${this._getNATChain()}`)).catch((err) => {});

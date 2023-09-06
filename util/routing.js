@@ -239,8 +239,12 @@ async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type
   }
 }
 
-async function flushRoutingTable(tableName) {
-  const cmds = [`sudo ip route flush table ${tableName}`, `sudo ip -6 route flush table ${tableName}`];
+async function flushRoutingTable(tableName, af = null) {
+  const cmds = [];
+  if (!af || af == 4)
+    cmds.push(`sudo ip route flush table ${tableName}`);
+  if (!af || af == 6)
+    cmds.push(`sudo ip -6 route flush table ${tableName}`);
   for (const cmd of cmds) {
     await exec(cmd).catch((err) => {
       log.error(`Failed to flush routing table using command ${cmd}`, err.message);
@@ -268,15 +272,18 @@ async function initializeInterfaceRoutingTables(intf) {
   await flushRoutingTable(`${intf}_default`);
 }
 
-async function createInterfaceRoutingRules(intf) {
+async function createInterfaceRoutingRules(intf, noSelfRoute = false) {
+  // self route on specific types of WAN interface may be undesired and will cause infinite loop, e.g., docker network with VPN client containers
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
   await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
-  await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
+  if (!noSelfRoute)
+    await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
   await createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
   await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6);
   await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001, null, 6);
-  await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
+  if (!noSelfRoute)
+    await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
 }
 
 async function removeInterfaceRoutingRules(intf) {

@@ -56,7 +56,6 @@ class DNSPlugin extends Plugin {
     const targetFile = r.getTempFolder() + "/firerouter_dns.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   static async installDNSScript() {
@@ -107,10 +106,18 @@ class DNSPlugin extends Plugin {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
             // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
-            const primaryWanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
-            if (primaryWanIntfPlugin) {
-              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${primaryWanIntfPlugin.name}`);
-              await fs.symlinkAsync(r.getInterfaceResolvConfPath(primaryWanIntfPlugin.name), this._getResolvFilePath());
+            let intfPlugin = routingPlugin.getPrimaryWANPlugin();
+            const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
+            for (const wanIntfPlugin of allWanIntfPlugins) {
+              // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
+              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name))) {
+                intfPlugin = wanIntfPlugin;
+                break;
+              }
+            }
+            if (intfPlugin) {
+              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${intfPlugin.name}`);
+              await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
             } else {
               this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
             }
@@ -138,10 +145,18 @@ class DNSPlugin extends Plugin {
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
             // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
-            const primaryWanIntfPlugin = routingPlugin.getPrimaryWANPlugin();
-            if (primaryWanIntfPlugin) {
-              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${primaryWanIntfPlugin.name}`);
-              await fs.symlinkAsync(r.getInterfaceResolvConfPath(primaryWanIntfPlugin.name), this._getResolvFilePath());
+            let intfPlugin = routingPlugin.getPrimaryWANPlugin();
+            const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
+            for (const wanIntfPlugin of allWanIntfPlugins) {
+              // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
+              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name))) {
+                intfPlugin = wanIntfPlugin;
+                break;
+              }
+            }
+            if (intfPlugin) {
+              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
+              await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
             } else {
               this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
             }
@@ -172,8 +187,10 @@ class DNSPlugin extends Plugin {
     await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
     if (this.name !== "default") {
       const intfPlugin = pl.getPluginInstance("interface", this.name);
-      if (!intfPlugin)
-        this.fatal(`Cannot find interface plugin for ${this.name}`);
+      if (!intfPlugin) {
+        this.log.error(`Cannot find interface plugin for ${this.name}`);
+        return;
+      }
       this._intfUuid = intfPlugin.networkConfig && intfPlugin.networkConfig.meta && intfPlugin.networkConfig.meta.uuid;
       if (!this._intfUuid)
         this.fatal(`Cannot find interface uuid for ${this.name}`);
