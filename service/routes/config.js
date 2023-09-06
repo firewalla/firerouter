@@ -310,7 +310,7 @@ router.post('/set',
     let errors = await ncm.validateConfig(newConfig);
     if (errors && errors.length != 0) {
       log.error("Invalid network config", errors);
-      res.json({errors: errors});
+      res.status(400).json({errors: errors});
     } else {
       errors = await ncm.tryApplyConfigWithRWLock(newConfig);
       if (errors && errors.length != 0) {
@@ -361,7 +361,7 @@ router.post('/apply_current_config',
       let errors = await ncm.validateConfig(currentConfig);
       if (errors && errors.length != 0) {
         log.error("Invalid network config", errors);
-        res.json({errors: errors});
+        res.status(400).json({errors: errors});
       } else {
         errors = await ncm.tryApplyConfig(currentConfig);
         if (errors && errors.length != 0) {
