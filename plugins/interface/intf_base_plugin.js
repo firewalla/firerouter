@@ -95,7 +95,7 @@ class InterfaceBasePlugin extends Plugin {
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
 
       // remove cached router-advertisement ipv6 address file
-      await exec(`sudo rm /dev/shm/dhcpcd.ip6.${this.name}`).catch((err) => {});
+      await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
         
       // flush related routing tables
       await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
@@ -1147,6 +1147,67 @@ class InterfaceBasePlugin extends Plugin {
 
   async getLastDHCPLeaseInfo() {
     const info = await rclient.zrangeAsync(`dhclient_record:${this.name}`, -1, -1).then((data) => data && JSON.parse(data)).catch((err) => null);
+    return info;
+  }
+
+  async renewDHCP6Lease() {
+    const execSuccess = await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).then(() => true).catch((err) => false);
+    if (!execSuccess)
+      return null;
+    await util.delay(5000);
+    const info = await this.getLastDHCP6LeaseInfo();
+    return info;
+  }
+
+  async getLastDHCP6LeaseInfo() {
+    const info = {};
+    const paths = [`/dev/shm/dhcpcd.ra.${this.name}`, `/dev/shm/dhcpcd.lease6.${this.name}`];
+    for (const path of paths) {
+      const content = await fs.readFileAsync(path, {encoding: "utf8"}).catch((err) => null);
+      if (content) {
+        const lines = content.split("\n").filter(line => line.length > 0);
+        for (const line of lines) {
+          const [ key, value ] = line.split('=', 2);
+          switch (key) {
+            case "ip6": {
+              const ip6 = value && value.split(",").filter(ip => ip.length > 0);
+              info.ip6 = ip6;
+              break;
+            }
+            case "gw6": {
+              const gw6 = value;
+              if (gw6)
+                info.gw6 = gw6;
+              break;
+            }
+            case "ia_na_vltimes": {
+              const addresses = [];
+              info["ia_na"] = {addresses};
+              const ianas = value.split(",").filter(iana => iana.length > 0);
+              for (const iana of ianas) {
+                const [address, lifetime] = iana.split("@", 2);
+                addresses.push({address, lifetime: Number(lifetime)});
+              }
+              break;
+            }
+            case "ia_pd_vltimes": {
+              const addresses = [];
+              info["ia_pd"] = {addresses};
+              const ianas = value.split(",").filter(iana => iana.length > 0);
+              for (const iana of ianas) {
+                const [address, lifetime] = iana.split("@", 2);
+                addresses.push({address, lifetime: Number(lifetime)});
+              }
+              break;
+            }
+            case "ts": {
+              info.ts = value;
+              break;
+            }
+          }
+        }
+      }
+    }
     return info;
   }
 
