@@ -709,6 +709,26 @@ class NetworkConfigManager {
     return info;
   }
 
+  async renewDHCP6Lease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    if (!_.isObject(_.get(plugin, "networkConfig.dhcp6"))) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    const info = await plugin.renewDHCP6Lease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
+      return null;
+    });
+    return info;
+  }
+
   async getDHCPLease(intf) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const plugin = pluginLoader.getPluginInstance('interface', intf);
@@ -723,6 +743,23 @@ class NetworkConfigManager {
       throw new Error(`interface ${intf} is not enabled`);
     }
     const info = await plugin.getLastDHCPLeaseInfo();
+    return info;
+  }
+
+  async getDHCP6Lease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (!_.isObject(_.get(plugin, "networkConfig.dhcp6"))) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    const info = await plugin.getLastDHCP6LeaseInfo();
     return info;
   }
 }
