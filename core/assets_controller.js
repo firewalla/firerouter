@@ -126,7 +126,7 @@ class AssetsController {
     }
 
     if (mac) {
-      const assetsStatus = {ts: Date.now() / 1000, mac: mac, sysUptime: msg.uptime, procUptime: msg.process_uptime, version: msg.version, channelUtilization: msg.util};
+      const assetsStatus = {ts: Date.now() / 1000, mac: mac, sysUptime: msg.uptime, procUptime: msg.process_uptime, version: msg.version, channelUtilization: msg.util, wanMode: msg.wanMode, upstreamAPs: msg.upstreamAPs};
       await rclient.hsetAsync(KEY_ASSETS_STATUS, mac, JSON.stringify(assetsStatus));
     }
   }
