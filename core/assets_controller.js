@@ -27,10 +27,13 @@ const uuid = require('uuid');
 
 const ASSETS_EFFECTIVE_CONFIG_KEY = "assets:effective_config";
 const ASSETS_CONTROL_PORT = 8838;
+const ASSETS_AUTH_PORT = 8839;
 
 const MSG_PULL_CONFIG = "assets_msg::pull_config";
 const MSG_PUSH_CONFIG = "assets_msg::push_config";
 const MSG_AUTH_REGISTER = "assets_msg::auth_register";
+const MSG_RAW_AUTH_REGISTER = "assets_msg::raw_auth_register";
+const MSG_RAW_AUTH_GRANT = "assets_msg::raw_auth_grant";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
 const MSG_STATUS = "assets_msg::status";
 
@@ -55,6 +58,7 @@ const defaultTemplateMap = {
 class AssetsController {
   constructor () {
     this.controlSocket = null;
+    this.authSocket = null;
     this.uidPublicKeyMap = {};
     this.publicKeyUidMap = {};
     this.publicKeyIpMap = {};
@@ -277,6 +281,20 @@ class AssetsController {
         this.sendHeartbeat(uid);
       }
     }, 30000);
+    // socket for raw authentication
+    this.authSocket = dgram.createSocket({
+      type: "udp4",
+      reuseAddr: true
+    });
+    this.authSocket.on('message', this.processRawAuthMessage.bind(this));
+    this.authSocket.on('error', (err) => {
+      log.error(`Error occurred on auth socket, restarting ...`, err.message);
+      this.stopServer();
+      this.startServer(wgConf).catch((err) => {
+        log.error(`Failed to start assets controller server`, err.message);
+      });
+    });
+    this.authSocket.bind(ASSETS_AUTH_PORT);
   }
 
   async processControlMessage(message, info) {
@@ -351,6 +369,44 @@ class AssetsController {
       }
       await ncm.saveConfig(networkConfig);
     });
+  }
+
+  async processRawAuthMessage(message, info) {
+    message = message.toString();
+    try {
+      const msg = JSON.parse(message);
+      switch (msg.type) {
+        case MSG_RAW_AUTH_REGISTER: {
+          const publicKey = msg.publicKey;
+          if (!publicKey) {
+            log.error(`Public key is not found in raw auth message from ${info.address}`);
+            return;
+          }
+          const uid = msg.uid;
+          if (!uid) {
+            log.error(`uid is not found in raw auth message from ${info.address}`);
+            return;
+          }
+          await this.processAuthRegister(msg, publicKey);
+          if (this.publicKeyIpMap[publicKey]) {
+            log.info(`Public key ${publicKey} is already registered, send raw auth grant message to ${info.address}`);
+            this.sendRawAuthGrant(uid, info.address, info.port);
+          } else {
+            log.info(`Public key ${publicKey} is not registered, awaiting wireguard peer adoption`);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      log.error(`Failed to handle assets authentication message from ${info.address}`, message, err.message);
+    }
+  }
+
+  sendRawAuthGrant(uid, address, port) {
+    if (!this.selfPublicKey || !this.uidPublicKeyMap[uid] || !this.publicKeyIpMap[this.uidPublicKeyMap[uid]] || !this.authSocket)
+      return;
+    const msg = JSON.stringify({type: MSG_RAW_AUTH_GRANT, uid: uid, publicKey: this.selfPublicKey, vip: this.publicKeyIpMap[this.uidPublicKeyMap[uid]], cip: this.selfIP});
+    this.authSocket.send(msg, port, address);
   }
 
   stopServer() {
