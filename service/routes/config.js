@@ -402,6 +402,30 @@ router.post('/renew_dhcp_lease',
     });
   });
 
+router.post('/renew_dhcp6_lease',
+  jsonParser,
+  async (req, res, next) => {
+    const intf = req.body.intf;
+    if (!intf) {
+      res.status(400).json({errors: ['"intf" is not specified']});
+      return;
+    }
+    const prev = await ncm.getDHCP6Lease(intf).catch((err) => null);
+    if (prev && prev.ts && Date.now() / 1000 - prev.ts < 60) {
+      // directly return previous lease info if renew interval is less than 60 seconds
+      res.status(200).json({errors: [], info: prev});
+      return;
+    }
+    await ncm.renewDHCP6Lease(intf).then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to renew DHCPv6 lease on ${intf}`]});
+    }).catch((err) => {
+      res.status(400).json({errors: [err.message]});
+    });
+  });
+
 router.get('/dhcp_lease/:intf', async (req, res, next) => {
     const intf = req.params.intf;
     if (!intf) {
@@ -428,6 +452,22 @@ router.get('/dhcp_lease/:intf', async (req, res, next) => {
       res.status(500).json({errors: [err.message]});
     });
   });
+
+router.get('/dhcp6_lease/:intf', async (req, res, next) => {
+    const intf = req.params.intf;
+    if (!intf) {
+      res.status(400).json({errors: ['"intf" is not specified']});
+      return;
+    }
+    await ncm.getDHCP6Lease(intf).then((info) => {
+      if (info)
+        res.status(200).json({errors: [], info});
+      else
+        res.status(500).json({errors: [`Failed to get DHCPv6 lease on ${intf}`]});
+    }).catch((err) => {
+      res.status(400).json({errors: [err.message]});
+    });
+  })
 
   router.get('/assets_status', async (req, res, next) => {
     await assetsController.getAllAssetsStatus().then((info) => {
