@@ -194,7 +194,7 @@ class AssetsTemplatePlugin extends Plugin {
               case "6g":
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
                 break;
-              case "all":
+              case "2.4g+5g+6g":
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
