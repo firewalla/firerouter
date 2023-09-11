@@ -114,11 +114,12 @@ class AssetsController {
     return result;
   }
 
-  async processStatusMsg(msg) {
+  async processStatusMsg(msg, uid) {
     const mac = msg.mac;
     const devices = msg.devices;
     if (!_.isEmpty(devices)) {
       for (const device of devices) {
+        device.assetUID = uid;
         device.bssid = mac;
         device.ts = Math.floor(new Date()/ 1000);
         if (_.isString(device.mac_addr) && !_.isEmpty(device.mac_addr)) {
@@ -305,14 +306,19 @@ class AssetsController {
         case MSG_PULL_CONFIG: {
           const uid = this.ipPublicKeyMap[info.address] && this.publicKeyUidMap[this.ipPublicKeyMap[info.address]];
           if (!uid) {
-            log.error(`Cannot find uid of IP address ${info.address}`, message);
+            log.error(`Cannot find uid of IP address ${info.address}, discard message ${msg.type}`, message);
             return;
           }
           this.schedulePushEffectiveConfig(uid);
           break;
         }
         case MSG_STATUS: {
-          await this.processStatusMsg(msg);
+          const uid = this.ipPublicKeyMap[info.address] && this.publicKeyUidMap[this.ipPublicKeyMap[info.address]];
+          if (!uid) {
+            log.error(`Cannot find uid of IP address ${info.address}, discard message ${msg.type}`);
+            return;
+          }
+          await this.processStatusMsg(msg, uid);
           break;
         }
         case MSG_AUTH_REGISTER: {
