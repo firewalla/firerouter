@@ -40,11 +40,17 @@ const event = require('../../core/event.js');
 const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
+const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
+const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+
+const DHCP_RESTART_INTERVAL = 4;
+const ON_OFF_THRESHOLD = 2;
+const OFF_ON_THRESHOLD = 5;
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -356,10 +362,16 @@ class InterfaceBasePlugin extends Plugin {
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
       const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
+      const pdHints = this.networkConfig.dhcp6.pdHints || [];
+      const ianaOpts = this.networkConfig.dhcp6.iana === false ? "" : "ia_na"; // by default ia_na will be specified unless explicitly disabled
       const pdOpts = [];
       for (let i = 1; i <= numOfPDs; i++) {
-        pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
+        if (i <= pdHints.length)
+          pdOpts.push(`ia_pd ${i}/${pdHints[i - 1]} not_exist/1`);
+        else
+          pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
       }
+      content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
       content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
@@ -486,7 +498,7 @@ class InterfaceBasePlugin extends Plugin {
         const nameservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid()).map((nameserver) => `nameserver ${nameserver}`).join("\n");
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       } else {
-        await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name));
+        await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name)).catch((err) => {});
       }
     }
   }
@@ -634,7 +646,7 @@ class InterfaceBasePlugin extends Plugin {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
         await exec(wrapIptables(`sudo iptables -w -t mangle -D FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
+          this.log.error(`Failed to remove outgoing MARK rule for WAN interface ${this.name} ${ip4Addr}`, err.message);
         });
       }
     }
@@ -651,7 +663,7 @@ class InterfaceBasePlugin extends Plugin {
       for (const ip4 of ip4s) {
         const ip4Addr = ip4.split('/')[0];
         await exec(wrapIptables(`sudo iptables -w -t mangle -A FR_OUTPUT -s ${ip4Addr} -m conntrack --ctdir ORIGINAL -m mark --mark 0x0/0xffff -j MARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ipv4Addr}`, err.message);
+          this.log.error(`Failed to add outgoing MARK rule for WAN interface ${this.name} ${ip4Addr}`, err.message);
         });
         srcIPs.push(ip4Addr);
       }
@@ -738,6 +750,10 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       this._wanStatus = {};
+      this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
+      // the next wan conn check event will determine the 'ready' state
+      this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+      this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
 
       this.setPendingTest(true);
 
@@ -757,12 +773,17 @@ class InterfaceBasePlugin extends Plugin {
     });
   }
 
-  _getWANConnState() {
+  getWANConnState() {
+    const result = _.pick(Object.assign({}, this._wanConnState), "ready");
+    result.pendingTest = this._pendingTest || false;
+    result.active = false;
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
-      return routingPlugin.getWANConnState(this.name);
+      const state = routingPlugin.getWANConnState(this.name);
+      if (state)
+        result.active = state.active || false;
     }
-    return null;
+    return result;
   }
 
   async getDNSNameservers() {
@@ -773,6 +794,10 @@ class InterfaceBasePlugin extends Plugin {
   async getOrigDNSNameservers() {
     const dns = await fs.readFileAsync(this._getResolvConfFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
     return dns;
+  }
+
+  async getRoutableSubnets() {
+    return null;
   }
 
   async getIPv4Addresses() {
@@ -815,7 +840,7 @@ class InterfaceBasePlugin extends Plugin {
     return carrierState === "1";
   }
 
-  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204) {
+  async checkHttpStatus(defaultTestURL = "https://check.firewalla.com", defaultExpectedCode = 204, expectedContent = null) {
     if (!this.isWAN()) {
       this.log.error(`${this.name} is not a wan, checkHttpStatus is not supported`);
       return null;
@@ -850,7 +875,11 @@ class InterfaceBasePlugin extends Plugin {
     const extraConf = this.networkConfig && this.networkConfig.extra;
     const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
-    const cmd = `curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o /dev/null -w "%{http_code},%{redirect_url}" ${testURL}`;
+    let contentFile = "/dev/null";
+    if (expectedContent) {
+      contentFile = `/dev/shm/${uuid.v4()}`;
+    }
+    const cmd = `timeout 3 curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o ${contentFile} -w "%{http_code},%{redirect_url}" ${testURL}`;
     const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
@@ -858,8 +887,11 @@ class InterfaceBasePlugin extends Plugin {
 
     delete this.isHttpTesting[defaultTestURL];
 
-    if (!output)
+    if (!output) {
+      if (contentFile !== "/dev/null")
+        await fs.unlinkAsync(contentFile).catch((err) => {});
       return null;
+    }
     const [statusCode, redirectURL] = output.split(',', 2);
 
     const result = {
@@ -869,6 +901,16 @@ class InterfaceBasePlugin extends Plugin {
       expectedCode: !isNaN(expectedCode) ? Number(expectedCode) : expectedCode,
       ts: Math.floor(new Date() / 1000)
     };
+
+    if (expectedContent && contentFile !== "/dev/null") {
+      const content = await fs.readFileAsync(contentFile, { encoding: "utf8"}).catch((err) => null);
+      result.contentMismatch = (content !== expectedContent);
+      if (result.contentMismatch && !result.redirectURL) { // HTTP request is redirected without using HTTP redirect, maybe from IP layer redirection
+        result.statusCode = 302;
+        result.redirectURL = testURL;
+      }
+      await fs.unlinkAsync(contentFile).catch((err) => {});
+    }
 
     if(this._wanStatus) {
       this._wanStatus.http = result;
@@ -971,17 +1013,19 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     if (active && dnsTestEnabled) {
-      const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
-      if(!_dnsResult) {
-        const nameservers = await this.getDNSNameservers() || [];
-        // add all nameservers to failures array
-        for (const nameserver of nameservers)
-          failures.push({type: "dns", target: nameserver, domain: dnsTestDomain});
-        this.log.error(`DNS test failed on all nameservers on ${this.name}`);
-        active = false;
-        dnsResult = false;
-      } else {
-        dnsResult = true;
+      const nameservers = await this.getDNSNameservers() || [];
+      if (!_.isEmpty(nameservers)) {
+        const _dnsResult = await this.getDNSResult(dnsTestDomain, sendEvent);
+        if (!_dnsResult) {
+          // add all nameservers to failures array
+          for (const nameserver of nameservers)
+            failures.push({ type: "dns", target: nameserver, domain: dnsTestDomain });
+          this.log.error(`DNS test failed on all nameservers on ${this.name}`);
+          active = false;
+          dnsResult = false;
+        } else {
+          dnsResult = true;
+        }
       }
     }
 
@@ -994,7 +1038,7 @@ class InterfaceBasePlugin extends Plugin {
       dns: dnsResult,
       failures: failures,
       ts: Math.floor(new Date() / 1000),
-      wanConnState: this._getWANConnState() || {}
+      wanConnState: this.getWANConnState() || {}
     };
 
     if(!active) {
@@ -1014,6 +1058,8 @@ class InterfaceBasePlugin extends Plugin {
 
   setPendingTest(v = false) {
     this._pendingTest = v;
+    if (v)
+      this._pendingTestTimestamp = Date.now() / 1000;
   }
 
   isPendingTest() {
@@ -1078,8 +1124,29 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async renewDHCPLease() {
+    const ts = Math.floor(Date.now() / 1000);
+    const execSuccess = await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).then(() => true).catch((err) => false);
+    if (!execSuccess)
+      return null;
+    while (true) {
+      const info = await this.getLastDHCPLeaseInfo();
+      if (info && Number(info.ts) >= ts)
+        return info;
+      await util.delay(1000);
+      const curTs = Date.now() / 1000;
+      if (curTs - ts > 30)
+        return null;
+    }
+  }
+
+  async getLastDHCPLeaseInfo() {
+    const info = await rclient.zrangeAsync(`dhclient_record:${this.name}`, -1, -1).then((data) => data && JSON.parse(data)).catch((err) => null);
+    return info;
+  }
+
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1091,6 +1158,7 @@ class InterfaceBasePlugin extends Plugin {
       routing.createCustomizedRoutingTable(`${this.name}_default`),
       exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
       this.getIPv4Addresses(),
+      this.getRoutableSubnets(),
       exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
@@ -1105,10 +1173,10 @@ class InterfaceBasePlugin extends Plugin {
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
-      wanConnState = this._getWANConnState() || {};
+      wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
@@ -1120,9 +1188,12 @@ class InterfaceBasePlugin extends Plugin {
         if (this.isWAN()) {
           // although pending test flag will be set after apply() is scheduled later, still need to set it here to prevent inconsistency in intermediate state
           this.setPendingTest(true);
+          this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
+          this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+          this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
           // WAN interface plugged, need to reapply WAN interface config
           if (this.isDHCP()) {
-            this._reapplyNeeded = true;
+            this.propagateConfigChanged(true);
             pl.scheduleReapply();
           }
         }
@@ -1144,7 +1215,13 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).catch((err) => {
+          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+            // trigger downstream plugins to reapply, e.g., nat for ipv6
+            this.propagateConfigChanged(true);
+            this._reapplyNeeded = false;
+            pl.scheduleReapply();
+            return pl.publishIfaceChangeApplied();
+          }).catch((err) => {
             this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
           });
         }
@@ -1154,6 +1231,9 @@ class InterfaceBasePlugin extends Plugin {
         const payload = event.getEventPayload(e);
         const iface = payload.intf;
         if (iface === this.name && this.isWAN()) {
+          this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
+          this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
+          this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
           // update route for DNS from DHCP
           this.updateRouteForDNS().catch((err) => {
             this.log.error(`Failed to update route for DNS on ${this.name}`, err.message);
@@ -1168,13 +1248,68 @@ class InterfaceBasePlugin extends Plugin {
         const payload = event.getEventPayload(e);
         if (!payload)
           return;
-        const iface = payload.intf;
-        if (iface === this.name)
-          this.setPendingTest(false);
+        const intf = payload.intf;
+        if (intf !== this.name)
+          return;
+        const wasPendingTest = this.isPendingTest();
+        const active = payload.active || false;
+        const forceState = payload.forceState;
+        const failures = payload.failures;
+        this._wanConnState = this._wanConnState || {};
+        const currentStatus = this._wanConnState;
+        if (active) {
+          currentStatus.successCount++;
+          currentStatus.failureCount = 0;
+        } else {
+          currentStatus.successCount = 0;
+          currentStatus.failureCount++;
+          const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
+          if (currentStatus.failureCount % DHCP_RESTART_INTERVAL == 0 && // exponential-backoff
+            (failureMultipliers == 1 || failureMultipliers == 2 || failureMultipliers == 4 || failureMultipliers == 8 || failureMultipliers % 16 == 0)) {
+            if (this.networkConfig.dhcp) {
+              this.carrierState().then((result) => {
+                if (result === "1") {
+                  this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
+                  this.renewDHCPLease().catch((err) => {
+                    this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+                  });
+                }
+              });
+            }
+          }
+        }
+        this.setPendingTest(false);
+        let changeDesc = null;
+        if (currentStatus.ready && (forceState !== true && currentStatus.failureCount >= ON_OFF_THRESHOLD || forceState === false)) {
+          currentStatus.ready = false;
+          changeDesc = { intf, ready: false, failures };
+        }
+        if (!currentStatus.ready && (forceState !== false && (currentStatus.successCount >= OFF_ON_THRESHOLD) || forceState === true)) {
+          currentStatus.ready = true;
+          changeDesc = { intf, ready: true, failures };
+        }
+        if (wasPendingTest) {
+          const duration = this._pendingTestTimestamp ? (Math.floor(Date.now() / 1000) - this._pendingTestTimestamp) : 0;
+          this.log.info(`Finished 1st wan status test (took ${duration} seconds) after config change, ${this.name} final status: `, currentStatus);
+        }
+        if (!changeDesc && wasPendingTest) {
+          changeDesc = { intf, ready: currentStatus.ready, failures }
+        }
+        if (changeDesc)
+          this.publishWANStateChange(changeDesc);
         break;
       }
       default:
     }
+  }
+
+  isReady() {
+    return this._wanConnState && this._wanConnState.ready || false;
+  }
+
+  async publishWANStateChange(changeDesc) {
+    this.log.info("publish WAN state change", changeDesc);
+    await pclient.publishAsync(Message.MSG_FR_WAN_STATE_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
   }
 }
 

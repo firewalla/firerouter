@@ -35,6 +35,10 @@ const LOCK_REAPPLY = "LOCK_REAPPLY";
 let applyInProgress = false;
 let lastAppliedTimestamp = null;
 
+let CHANGE_FLAGS = 0;
+const FLAG_IFACE_CHANGE = 0x1;
+const FLAG_CHANGE = 0x2;
+
 async function initPlugins() {
   if(_.isEmpty(config.plugins)) {
     return;
@@ -109,14 +113,20 @@ function _isConfigEqual(c1, c2) {
   return _.isEqual(c1Copy, c2Copy);
 }
 
-async function _publishChangeApplied() {
+async function publishChangeApplied() {
   // publish to redis db used by Firewalla
-  await fwpclient.publishAsync(Message.MSG_FR_CHANGE_APPLIED, "");
+  if (!isApplyInProgress())
+    await fwpclient.publishAsync(Message.MSG_FR_CHANGE_APPLIED, "");
+  else
+    CHANGE_FLAGS |= FLAG_CHANGE;
 }
 
-async function _publishIfaceChangeApplied() {
+async function publishIfaceChangeApplied() {
   // publish to redis db used by Firewalla
-  await fwpclient.publishAsync(Message.MSG_FR_IFACE_CHANGE_APPLIED, "");
+  if (!isApplyInProgress())
+    await fwpclient.publishAsync(Message.MSG_FR_IFACE_CHANGE_APPLIED, "");
+  else
+    CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
 }
 
 function isApplyInProgress() {
@@ -134,8 +144,6 @@ async function reapply(config, dryRun = false) {
     applyInProgress = true;
     const errors = [];
     let newPluginCategoryMap = {};
-    let changeApplied = false;
-    let ifaceChangeApplied = false;
     const reversedPluginConfs = pluginConfs.reverse();
     // if config is not set, simply reapply effective config
     if (config) {
@@ -186,9 +194,9 @@ async function reapply(config, dryRun = false) {
             if (!dryRun) {
               log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
               await instance.flush();
-              changeApplied = true;
+              CHANGE_FLAGS |= FLAG_CHANGE;
               if (pluginConf.category === "interface")
-                ifaceChangeApplied = true;
+                CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
             }
             instance.propagateConfigChanged(true);
             instance.unsubscribeAllChanges();
@@ -213,9 +221,9 @@ async function reapply(config, dryRun = false) {
             if (!dryRun) {
               log.info("Flushing old config", pluginConf.category, instance.name);
               await instance.flush();
-              changeApplied = true;
+              CHANGE_FLAGS |= FLAG_CHANGE;
               if (pluginConf.category === "interface")
-                ifaceChangeApplied = true;
+                CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
             }
             instance.unsubscribeAllChanges();
           }
@@ -245,9 +253,9 @@ async function reapply(config, dryRun = false) {
               log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
               errors.push(err.message || err);
             });
-            changeApplied = true;
+            CHANGE_FLAGS |= FLAG_CHANGE;
             if (pluginConf.category === "interface")
-              ifaceChangeApplied = true;
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
           } else {
             log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
           }
@@ -256,18 +264,20 @@ async function reapply(config, dryRun = false) {
       }
     }
     pluginCategoryMap = newPluginCategoryMap;
-    if (changeApplied)
-      await _publishChangeApplied();
-    if (ifaceChangeApplied)
-      await _publishIfaceChangeApplied();
     applyInProgress = false;
+    // clear applyInProgress so that subsequent publish functions will send message to redis immediately
+    if (CHANGE_FLAGS & FLAG_CHANGE)
+      await publishChangeApplied();
+    if (CHANGE_FLAGS & FLAG_IFACE_CHANGE)
+      await publishIfaceChangeApplied();
+    CHANGE_FLAGS = 0;
     lastAppliedTimestamp = Date.now() / 1000;
     return errors;
   }).then((errors) => {
     applyInProgress = false;
     lastAppliedTimestamp = Date.now() / 1000;
     t2 = Date.now() / 1000;
-    log.info(`reapply is complete ${_.isEmpty(errors) == 0 ? "without" : "with"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
+    log.info(`reapply is complete ${_.isEmpty(errors) ? "without" : "with"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
     return errors;
   }).catch((err) => {
     applyInProgress = false;
@@ -304,5 +314,7 @@ module.exports = {
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,
   isApplyInProgress: isApplyInProgress,
-  getLastAppliedTimestamp: getLastAppliedTimestamp
+  getLastAppliedTimestamp: getLastAppliedTimestamp,
+  publishChangeApplied: publishChangeApplied,
+  publishIfaceChangeApplied: publishIfaceChangeApplied
 };

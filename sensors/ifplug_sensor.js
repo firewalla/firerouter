@@ -55,7 +55,8 @@ class IfPlugSensor extends Sensor {
   async startMonitoringInterface(iface) {
     const upDelay = this.config.up_delay || 5;
     const downDelay = this.config.down_delay || 5;
-    await exec(`sudo ifplugd -pq -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
+    // specify -a so that ifplugd will not automatically enable interface, otherwise may cause trouble while adding slave into bond
+    await exec(`sudo ifplugd -pq -a -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
       this.log.error(`Failed to start ifplugd on ${iface}`);
     });
   }
@@ -70,6 +71,12 @@ class IfPlugSensor extends Sensor {
       ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);
     }
     this.log.info("initial ifStates:",ifStates);
+
+    for(const iface in ifStates) {
+      // no need to await
+      platform.toggleEthernetLed(iface, ifStates[iface]);
+    }
+
     setTimeout(() => {
       this.toggleLedNormalVisible().catch((err) => {
         this.log.error("Failed to toggle led visible", err.message);
@@ -80,6 +87,7 @@ class IfPlugSensor extends Sensor {
       switch (channel) {
         case "ifup": {
           const iface = message;
+          platform.toggleEthernetLed(iface, 1);
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;
@@ -105,6 +113,7 @@ class IfPlugSensor extends Sensor {
         }
         case "ifdown": {
           const iface = message;
+          platform.toggleEthernetLed(iface, 0);
           const intfPlugin = pl.getPluginInstance("interface", iface);
           if (intfPlugin) {
             let e = null;

@@ -117,12 +117,15 @@ class WanConnCheckSensor extends Sensor {
     const sites = ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
     const r2c = await intfPlugin.readyToConnect();
+    const lastWanStatus = intfPlugin.getWanStatus();
     if(!r2c) {
       this.log.debug("no need to check http as physically not ready to connect");
+      // reset http status if the interface is not ready to connect
+      if (_.isObject(lastWanStatus))
+        delete lastWanStatus.http;
       return;
     }
 
-    const lastWanStatus = intfPlugin.getWanStatus();
     const lastHttpResult = lastWanStatus && lastWanStatus.http;
     const recentDownTime = (lastWanStatus && lastWanStatus.recentDownTime) || 0;
 
@@ -133,10 +136,14 @@ class WanConnCheckSensor extends Sensor {
       return;
     }
 
-    for(const site of sites) {
-      const httpResult = await intfPlugin.checkHttpStatus(site);
-      if (httpResult) {
-        break;
+    // use firewalla-hosted captive check page to check status code as well as content
+    let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+    if (!httpResult) {
+      for(const site of sites) {
+        httpResult = await intfPlugin.checkHttpStatus(site);
+        if (httpResult) {
+          break;
+        }
       }
     }
   }

@@ -68,6 +68,14 @@ case "$UNAME" in
         source $FW_PLATFORM_DIR/navy/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/navy
         ;;
+      gold-se)
+        source $FW_PLATFORM_DIR/gse/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/gse
+        ;;
+      purple-se)
+        source $FW_PLATFORM_DIR/pse/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/pse
+        ;;
       purple)
         source $FW_PLATFORM_DIR/purple/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/purple

@@ -34,6 +34,7 @@ const fsp = require('fs').promises;
 const util = require('../util/util.js');
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
+const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
 
 const Promise = require('bluebird');
 
@@ -232,17 +233,20 @@ class NetworkConfigManager {
     if(result.carrier) {
       const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
+      // use firewalla-hosted captive check page to check status code as well as content
+      let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+      if (!httpResult) {
+        httpResult = await Promise.any(sites.map(async (site) => {
+          const result = await intfPlugin.checkHttpStatus(site);
+          if(!result) {
+            throw new Error("http check failed on site " + site);
+          }
+          return result;
+        })).catch((err) => {
+          log.error("Failed to check http status on all sites, err:", err.message);
+        });
+      }
       // return if any of them succeeds
-      const httpResult = await Promise.any(sites.map(async (site) => {
-        const result = await intfPlugin.checkHttpStatus(site);
-        if(!result) {
-          throw new Error("http check failed on site " + site);
-        }
-        return result;
-      })).catch((err) => {
-        log.error("Failed to check http status on all sites, err:", err.message);
-      });
-
       if (httpResult) {
         result.http = httpResult;
       }
@@ -429,14 +433,19 @@ class NetworkConfigManager {
       deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '15s', `${wpaCliPath}`, '-p', ctlSocket, '-i', targetWlan.name])
+    const wpaCli = spawn('sudo', ['timeout', '15s', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
     wpaCli.on('exit', code => {
       // if the code is 255, wpa_supplicant is probably not initialized
-      if (code)
-        log.warn('wpa_cli exited with code', code)
+      switch(code) {
+        case 124: // timeout
+        case 255: // wpa_supplicant not initialized
+          deferred.reject(new Error(`wpa_cli exited with ${code}`))
+        default:
+          log.info('wpa_cli exited with code', code)
+      }
 
       deferred.resolve()
     })
@@ -457,6 +466,14 @@ class NetworkConfigManager {
 
         // wait for scan finish
         // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+        if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
+          wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+            log.verbose('quit written')
+          })
+          // reject immediately instead of waiting for timeout
+          deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
+          continue
+        }
         if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
           waitForScan = false
           log.info('scan done, getting result')
@@ -620,6 +637,24 @@ class NetworkConfigManager {
     return [];
   }
 
+  async acquireConfigRWLock(func) {
+    return lock.acquire(LOCK_CONFIG_RW, async () => {
+      log.info("Config RW Lock acquired");
+      return func();
+    }).finally(() => {
+      log.info("Config RW Lock released");
+    });
+  }
+
+  async tryApplyConfigWithRWLock(config, dryRun = false) {
+    return await lock.acquire(LOCK_CONFIG_RW, async () => {
+      const errors = await this.tryApplyConfig(config, dryRun);
+      return errors;
+    }).catch((err) => {
+      return [err.message];
+    });
+  }
+
   async tryApplyConfig(config, dryRun = false) {
     const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
 
@@ -649,6 +684,43 @@ class NetworkConfigManager {
         log.error("Redis background save returns error", err.message);
       });
     }, 3000);
+  }
+
+  async renewDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    const info = await plugin.renewDHCPLease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
+      return null;
+    });
+    return info;
+  }
+
+  async getDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    const info = await plugin.getLastDHCPLeaseInfo();
+    return info;
   }
 }
 
