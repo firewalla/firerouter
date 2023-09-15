@@ -85,6 +85,8 @@ class NetworkSetup {
     await routing.createCustomizedRoutingTable(routing.RT_STATIC);
     // prepare network environment
     await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
+    // booting finish
+    await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
   }
 
   async setup(config, dryRun = false) {
