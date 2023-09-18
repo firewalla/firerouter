@@ -110,7 +110,7 @@ class NetworkSetup {
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
     // no need to await
-    booting_finish();
+    this.booting_finish();
     return errors;
   }
 
