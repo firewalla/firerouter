@@ -98,12 +98,19 @@ class NetworkSetup {
     await routing.createCustomizedRoutingTable(routing.RT_STATIC);
     // prepare network environment
     await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
-    // booting finish
-    await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
+  }
+
+  async booting_finish() {
+    if(!this.runOnce) {
+      this.runOnce = true;
+      await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
+    }
   }
 
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
+    // no need to await
+    booting_finish();
     return errors;
   }
 
