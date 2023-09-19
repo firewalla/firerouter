@@ -36,6 +36,7 @@ const MSG_RAW_AUTH_REGISTER = "assets_msg::raw_auth_register";
 const MSG_RAW_AUTH_GRANT = "assets_msg::raw_auth_grant";
 const MSG_HEARTBEAT = "assets_msg::heartbeat";
 const MSG_STATUS = "assets_msg::status";
+const MSG_BSS_STEER = "assets_msg::steer";
 
 const KEY_STA_STATUS = "assets:ap_sta_status";
 const KEY_ASSETS_STATUS = "assets:status";
@@ -72,7 +73,20 @@ class AssetsController {
 
   }
 
-  async getAllSTAStatus() {
+  async getAPSTAStutus(staMAC) {
+    const result = await rclient.hgetAsync(KEY_STA_STATUS, staMAC);
+    if (result) {
+      try {
+        const obj = JSON.parse(result);
+        return obj;
+      } catch (err) {
+        log.error(`Failed to parse sta status of ${staMAC}`, err.message);
+      }
+    }
+    return null;
+  }
+
+  async getAllAPSTAStatus() {
     const result = await rclient.hgetallAsync(KEY_STA_STATUS) || {};
     const keysToDelete = [];
     for (const key of Object.keys(result)) {
@@ -93,7 +107,20 @@ class AssetsController {
     return result;
   }
 
-  async getAllAssetsStatus() {
+  async getAPAssetsStatus(uid) {
+    const result = await rclient.hgetAsync(KEY_ASSETS_STATUS, uid);
+    if (result) {
+      try {
+        const obj = JSON.parse(result);
+        return obj;
+      } catch (err) {
+        log.error(`Failed to parse assets status of ${uid}`, err.message);
+      }
+    }
+    return null;
+  }
+
+  async getAllAPAssetsStatus() {
     const result = await rclient.hgetallAsync(KEY_ASSETS_STATUS) || {};
     const keysToDelete = [];
     for (const key of Object.keys(result)) {
@@ -117,10 +144,27 @@ class AssetsController {
   async processStatusMsg(msg, uid) {
     const mac = msg.mac;
     const devices = msg.devices;
+    const aps = msg.aps || {};
+    const essChannelBssMap = {};
+    for (const essid of Object.keys(aps)) {
+      if (!_.isArray(aps[essid]))
+        continue;
+      const bssInfos = aps[essid];
+      for (const bssInfo of bssInfos) {
+        if (bssInfo.bssid && bssInfo.intf && bssInfo.band)
+          essChannelBssMap[`${essid}@${bssInfo.intf}`] = {bssid: bssInfo.bssid, band: bssInfo.band};
+      }
+    }
     if (!_.isEmpty(devices)) {
       for (const device of devices) {
         device.assetUID = uid;
-        device.bssid = mac;
+        if (device.ssid && device.intf) {
+          const key = `${device.ssid}@${device.intf}`;
+          if (essChannelBssMap[key]) {
+            device.bssid = essChannelBssMap[key].bssid;
+            device.band = essChannelBssMap[key].band;
+          }
+        }
         device.ts = Math.floor(new Date()/ 1000);
         if (_.isString(device.mac_addr) && !_.isEmpty(device.mac_addr)) {
           const deviceMac = device.mac_addr.toUpperCase();
@@ -131,7 +175,7 @@ class AssetsController {
     }
 
     if (mac) {
-      const assetsStatus = {ts: Date.now() / 1000, mac: mac, sysUptime: msg.uptime, procUptime: msg.process_uptime, version: msg.version, channelUtilization: msg.util, wanMode: msg.wanMode, upstreamAPs: msg.upstreamAPs};
+      const assetsStatus = {ts: Date.now() / 1000, mac: mac, sysUptime: msg.uptime, procUptime: msg.process_uptime, version: msg.version, channelUtilization: msg.util, wanMode: msg.wanMode, upstreamAPs: msg.upstreamAPs, aps: msg.aps};
       await rclient.hsetAsync(KEY_ASSETS_STATUS, mac, JSON.stringify(assetsStatus));
     }
   }
@@ -415,6 +459,18 @@ class AssetsController {
     this.authSocket.send(msg, port, address);
   }
 
+  sendSteerMessage(uid, staMAC, dstBSSID, dstChannel) {
+    if (!this.controlSocket)
+      return;
+    const assetIP = this.uidPublicKeyMap[uid] && this.publicKeyIpMap[this.uidPublicKeyMap[uid]];
+    if (!assetIP) {
+      log.error(`Cannot find IP of asset ${uid}`);
+      return;
+    }
+    const msg = JSON.stringify({type: MSG_BSS_STEER, staMac: staMAC, dstBSSID, dstChannel});
+    this.controlSocket.send(msg, ASSETS_CONTROL_PORT, assetIP);
+  }
+
   stopServer() {
     if (this.controlSocket) {
       this.controlSocket.close();
@@ -440,6 +496,32 @@ class AssetsController {
       this.controllerID = await rclient.getAsync(KEY_CONTROLLER_ID);
     }
     return this.controllerID;
+  }
+
+  async bssSteer(staMAC, targetAPUID, targetSSID = null, targetBand = null) {
+    const staStatus = await this.getAPSTAStutus(staMAC);
+    if (!staStatus)
+      return;
+    const currentAPUID = staStatus.assetUID;
+    const currentBand = staStatus.band;
+    if (!targetSSID)
+      targetSSID = staStatus.ssid;
+    if (!targetBand)
+      targetBand = currentBand;
+    const targetAPStatus = await this.getAPAssetsStatus(targetAPUID);
+    const targetBSSes = targetAPStatus.aps[targetSSID];
+    if (!_.isArray(targetBSSes) || _.isEmpty(targetBSSes)) {
+      log.warn(`ssid ${targetSSID} is not found on target AP ${targetAPUID}`);
+      return;
+    }
+    const targetBSS = targetBSSes.find(bss => bss.band === targetBand);
+    if (!targetBSS) {
+      log.warn(`ssid ${targetSSID} on band ${targetBand} is not found on target AP ${targetAPUID}`);
+      return;
+    }
+    const targetBSSID = targetBSS.bssid;
+    const targetChannel = targetBSS.channel;
+    this.sendSteerMessage(currentAPUID, staMAC, targetBSSID, targetChannel);
   }
 }
 
