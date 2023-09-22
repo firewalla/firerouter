@@ -4,12 +4,15 @@ case $reason in
   ROUTERADVERT)
     new_addrs="";
     gw6="";
+    vltime="";
     addr_id=1
     while [ $addr_id -lt 10 ]; do
       var_name="nd1_addr$addr_id"
       eval "addr=\$$var_name"
       if [ -n "$addr" ]; then
         new_addrs="$new_addrs$addr,"
+        var_name="nd1_prefix_information${addr_id}_vltime"
+        eval "vltime=\$$var_name"
       else
         break;
       fi
@@ -19,7 +22,7 @@ case $reason in
     if [ -n "$nd1_from" ]; then
       gw6="$nd1_from"
     fi
-    echo "ip6=$new_addrs\ngw6=$gw6" > /dev/shm/dhcpcd.ra.$interface
+    echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)" > /dev/shm/dhcpcd.ra.$interface
     ;;
   BOUND6|REBOOT6|RENEW6|REBIND6)
     pd_id=1
