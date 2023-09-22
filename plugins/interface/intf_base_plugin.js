@@ -1180,13 +1180,21 @@ class InterfaceBasePlugin extends Plugin {
                 info.gw6 = gw6;
               break;
             }
+            case "ra_ts": {
+              info.ra_ts = Number(value);
+              break;
+            }
+            case "ra_vltime": {
+              if (!isNaN(value))
+                info.ra_lifetime = Number(value);
+            }
             case "ia_na_vltimes": {
               const addresses = [];
               info["ia_na"] = {addresses};
               const ianas = value.split(",").filter(iana => iana.length > 0);
               for (const iana of ianas) {
                 const [address, lifetime] = iana.split("@", 2);
-                addresses.push({address, lifetime: Number(lifetime)});
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
               }
               break;
             }
@@ -1196,12 +1204,12 @@ class InterfaceBasePlugin extends Plugin {
               const ianas = value.split(",").filter(iana => iana.length > 0);
               for (const iana of ianas) {
                 const [address, lifetime] = iana.split("@", 2);
-                addresses.push({address, lifetime: Number(lifetime)});
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
               }
               break;
             }
             case "ts": {
-              info.ts = value;
+              info.ts = Number(value);
               break;
             }
           }
