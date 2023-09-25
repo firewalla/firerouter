@@ -1187,6 +1187,7 @@ class InterfaceBasePlugin extends Plugin {
             case "ra_vltime": {
               if (!isNaN(value))
                 info.ra_lifetime = Number(value);
+              break;
             }
             case "ia_na_vltimes": {
               const addresses = [];
