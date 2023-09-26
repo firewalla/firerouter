@@ -43,7 +43,7 @@ sudo iptables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNM
 
 sudo iptables -w -t mangle -N FR_MROUTE &>/dev/null
 sudo iptables -w -t mangle -F FR_MROUTE &>/dev/null
-sudo iptables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE &>/dev/null || sudo iptables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE
+sudo iptables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE &>/dev/null || sudo iptables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE
 
 sudo iptables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo iptables -w -t mangle -F FR_OUTPUT &> /dev/null
@@ -219,7 +219,7 @@ sudo ip6tables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONN
 
 sudo ip6tables -w -t mangle -N FR_MROUTE &>/dev/null
 sudo ip6tables -w -t mangle -F FR_MROUTE &>/dev/null
-sudo ip6tables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE &>/dev/null || sudo ip6tables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -j FR_MROUTE
+sudo ip6tables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE &>/dev/null || sudo ip6tables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE
 
 sudo ip6tables -w -t mangle -N FR_OUTPUT &> /dev/null
 sudo ip6tables -w -t mangle -F FR_OUTPUT &> /dev/null
