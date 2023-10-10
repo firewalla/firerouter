@@ -128,7 +128,7 @@ class AssetsTemplatePlugin extends Plugin {
             this.subscribeChangeFrom(profilePlugin);
             const profile = profilePlugin.networkConfig;
             const ssidCommonConfig = {};
-            Object.assign(ssidCommonConfig, _.pick(profile, ["ssid", "enterprise", "hidden", "isolate", "hints"]));
+            Object.assign(ssidCommonConfig, _.pick(profile, ["ssid", "enterprise", "hidden", "isolate", "hints", "radius"]));
 
             // refer to https://openwrt.org/docs/guide-user/network/wifi/basic#encryption_modes
             switch (profile.encryption) {
