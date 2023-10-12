@@ -163,8 +163,11 @@ class AssetsTemplatePlugin extends Plugin {
                 }
             }
 
+            // FIXME: do not generate PSK for radius network, due to AP config limitation
+            if (profile.radius) {
+              ssidCommonConfig.key = profile.key;
             // FIXME: do not generate PSK for wpa3 network, due to AP config limitation
-            if (profile.key && ! ["3", "2/3"].includes(profile.wpa)) {
+            } else if (profile.key && ! ["3", "2/3"].includes(profile.wpa)) {
               ssidCommonConfig.key = await util.generatePSK(profile.ssid, profile.key);
             } else {
               ssidCommonConfig.key = profile.key;
