@@ -95,7 +95,7 @@ class InterfaceBasePlugin extends Plugin {
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
 
       // remove cached router-advertisement ipv6 address file
-      await exec(`sudo rm /dev/shm/dhcpcd.ip6.${this.name}`).catch((err) => {});
+      await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
         
       // flush related routing tables
       await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
@@ -357,8 +357,8 @@ class InterfaceBasePlugin extends Plugin {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-      const pdSize = this.networkConfig.dhcp6.pdSize || 60;
-      if (pdSize > 64)
+      const pdSize = this.networkConfig.dhcp6.pdSize || null;
+      if (pdSize && pdSize > 64)
         this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
       const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
@@ -369,7 +369,7 @@ class InterfaceBasePlugin extends Plugin {
         if (i <= pdHints.length)
           pdOpts.push(`ia_pd ${i}/${pdHints[i - 1]} not_exist/1`);
         else
-          pdOpts.push(`ia_pd ${i}/::/${pdSize} not_exist/1`);
+          pdOpts.push(`ia_pd ${i}${pdSize ? `/::/${pdSize}` : ""} not_exist/1`);
       }
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
       content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
@@ -796,6 +796,11 @@ class InterfaceBasePlugin extends Plugin {
     return dns;
   }
 
+  async getPrefixDelegations() {
+    const pds = await fs.readFileAsync(r.getInterfaceDelegatedPrefixPath(this.name), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.length > 0)).catch((err) => null);
+    return pds;
+  }
+
   async getRoutableSubnets() {
     return null;
   }
@@ -1145,8 +1150,78 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async renewDHCP6Lease() {
+    const execSuccess = await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).then(() => true).catch((err) => false);
+    if (!execSuccess)
+      return null;
+    await util.delay(5000);
+    const info = await this.getLastDHCP6LeaseInfo();
+    return info;
+  }
+
+  async getLastDHCP6LeaseInfo() {
+    const info = {};
+    const paths = [`/dev/shm/dhcpcd.ra.${this.name}`, `/dev/shm/dhcpcd.lease6.${this.name}`];
+    for (const path of paths) {
+      const content = await fs.readFileAsync(path, {encoding: "utf8"}).catch((err) => null);
+      if (content) {
+        const lines = content.split("\n").filter(line => line.length > 0);
+        for (const line of lines) {
+          const [ key, value ] = line.split('=', 2);
+          switch (key) {
+            case "ip6": {
+              const ip6 = value && value.split(",").filter(ip => ip.length > 0);
+              info.ip6 = ip6;
+              break;
+            }
+            case "gw6": {
+              const gw6 = value;
+              if (gw6)
+                info.gw6 = gw6;
+              break;
+            }
+            case "ra_ts": {
+              info.ra_ts = Number(value);
+              break;
+            }
+            case "ra_vltime": {
+              if (!isNaN(value))
+                info.ra_lifetime = Number(value);
+              break;
+            }
+            case "ia_na_vltimes": {
+              const addresses = [];
+              info["ia_na"] = {addresses};
+              const ianas = value.split(",").filter(iana => iana.length > 0);
+              for (const iana of ianas) {
+                const [address, lifetime] = iana.split("@", 2);
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
+              }
+              break;
+            }
+            case "ia_pd_vltimes": {
+              const addresses = [];
+              info["ia_pd"] = {addresses};
+              const ianas = value.split(",").filter(iana => iana.length > 0);
+              for (const iana of ianas) {
+                const [address, lifetime] = iana.split("@", 2);
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
+              }
+              break;
+            }
+            case "ts": {
+              info.ts = Number(value);
+              break;
+            }
+          }
+        }
+      }
+    }
+    return info;
+  }
+
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, pds, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1164,6 +1239,7 @@ class InterfaceBasePlugin extends Plugin {
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDNSNameservers(),
       this.getOrigDNSNameservers(),
+      this.getPrefixDelegations(),
       this.isInterfacePresent()
     ]);
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -1176,7 +1252,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, pds, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
