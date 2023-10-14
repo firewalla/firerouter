@@ -45,7 +45,6 @@ const T_OP_REVERT = "revert";
 const validTransactionOps = [T_OP_APPEND, T_OP_COMMIT, T_OP_REVERT];
 const T_REVERT_TIMEOUT = 120 * 1000; // revert back to previous persisted config in 2 minutes
 
-const assetsController = require('../../core/assets_controller.js');
 
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig(inTransaction);
@@ -442,17 +441,6 @@ router.get('/dhcp_lease/:intf', async (req, res, next) => {
     });
   })
 
-  router.get('/sta_status', async (req, res, next) => {
-    await assetsController.getAllSTAStatus().then((info) => {
-      if (info)
-        res.status(200).json({errors: [], info});
-      else
-        res.status(500).json({errors: [`Failed to get STA status`]});
-    }).catch((err) => {
-      res.status(500).json({errors: [err.message]});
-    });
-  });
-
 router.get('/dhcp6_lease/:intf', async (req, res, next) => {
     const intf = req.params.intf;
     if (!intf) {
@@ -468,16 +456,5 @@ router.get('/dhcp6_lease/:intf', async (req, res, next) => {
       res.status(400).json({errors: [err.message]});
     });
   })
-
-  router.get('/assets_status', async (req, res, next) => {
-    await assetsController.getAllAssetsStatus().then((info) => {
-      if (info)
-        res.status(200).json({errors: [], info});
-      else
-        res.status(500).json({errors: [`Failed to get assets status`]});
-    }).catch((err) => {
-      res.status(500).json({errors: [err.message]});
-    });
-  });
   
 module.exports = router;
