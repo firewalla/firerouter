@@ -177,6 +177,9 @@ class AssetsTemplatePlugin extends Plugin {
               ssidCommonConfig.key = profile.key;
             }
 
+            const ssidCommonConfigWithClearPSK = JSON.parse(JSON.stringify(ssidCommonConfig));
+            ssidCommonConfigWithClearPSK.key = profile.key;
+
             // randomize options for fast roaming
             const ftSeed24 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "2.4g");
             const ftSeed5 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "5g");
@@ -199,12 +202,12 @@ class AssetsTemplatePlugin extends Plugin {
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
                 break;
               case "6g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfigWithClearPSK, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
                 break;
               case "2.4g+5g+6g":
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfigWithClearPSK, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
                 break;
               default:
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
