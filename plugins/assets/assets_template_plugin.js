@@ -151,6 +151,7 @@ class AssetsTemplatePlugin extends Plugin {
                 ssidCommonConfig.encryption = "owe";
                 break;
               default:
+                ssidCommonConfig.encryption = "psk2+ccmp"
               // FIXME: fix this to the right config once the right AP settings are figured out
               // before that comment this code out
               // default encryption on fwap code side is psk2+ccmp
