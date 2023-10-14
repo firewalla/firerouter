@@ -153,6 +153,7 @@ class AssetsTemplatePlugin extends Plugin {
               default:
               // FIXME: fix this to the right config once the right AP settings are figured out
               // before that comment this code out
+              // default encryption on fwap code side is psk2+ccmp
                 // switch (profile.wpa) {
                 //   case "3":
                 //     ssidCommonConfig.encryption = "sae";
