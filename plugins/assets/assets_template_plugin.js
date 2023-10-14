@@ -151,16 +151,19 @@ class AssetsTemplatePlugin extends Plugin {
                 ssidCommonConfig.encryption = "owe";
                 break;
               default:
-                switch (profile.wpa) {
-                  case "3":
-                    ssidCommonConfig.encryption = "sae";
-                    break;
-                  case "2/3":
-                    ssidCommonConfig.encryption = "sae-mixed";
-                    break;
-                  default:
-                    ssidCommonConfig.encryption = "psk2";
-                }
+              // FIXME: fix this to the right config once the right AP settings are figured out
+              // before that comment this code out
+              // default encryption on fwap code side is psk2+ccmp
+                // switch (profile.wpa) {
+                //   case "3":
+                //     ssidCommonConfig.encryption = "sae";
+                //     break;
+                //   case "2/3":
+                //     ssidCommonConfig.encryption = "sae-mixed";
+                //     break;
+                //   default:
+                //     ssidCommonConfig.encryption = "psk2";
+                // }
             }
 
             // FIXME: do not generate PSK for radius network, due to AP config limitation
