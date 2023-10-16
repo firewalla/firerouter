@@ -22,6 +22,12 @@ const { Address4 } = require('ip-address');
 const AssetsController = require('../../core/assets_controller.js');
 
 class AssetsPlugin extends AssetsTemplatePlugin {
+  async flush() {
+    await super.flush();
+    const uid = this.name;
+    await AssetsController.deleteEffectiveConfig(uid);
+  }
+
   async apply() {
     const uid = this.name;
     const config = this.networkConfig;
