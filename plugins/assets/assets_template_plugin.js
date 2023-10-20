@@ -22,6 +22,8 @@ const r = require('../../util/firerouter.js');
 const _ = require('lodash');
 const util = require('../../util/util.js');
 const crypto = require('crypto');
+const fsp = require('fs').promises;
+const SSHDPlugin = require('../sshd/sshd_plugin.js');
 
 const AssetsController = require('../../core/assets_controller.js');
 
@@ -64,6 +66,19 @@ class AssetsTemplatePlugin extends Plugin {
             effectiveConfig.channel5g = "auto";
           if (!effectiveConfig.channel24g)
             effectiveConfig.channel24g = "auto";
+          break;
+        }
+        case "sysConfig": {
+          // add box ssh pub key
+          let v = Object.assign({}, config[key]);
+          try {
+            const keyPath = SSHDPlugin.getKeyFilePath("rsa") + ".pub";
+            const sshPubKey = (await fsp.readFile(keyPath)).toString().trim();
+            v["sshPubKey"] = sshPubKey;
+          } catch (err) {
+            this.log.error("fail to get ssh pub key", err);
+          }
+          effectiveConfig[key] = v;
           break;
         }
         default:
