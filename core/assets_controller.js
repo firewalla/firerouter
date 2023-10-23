@@ -166,9 +166,9 @@ class AssetsController {
           }
         }
         device.ts = Math.floor(new Date()/ 1000);
-        if (_.isString(device.mac_addr) && !_.isEmpty(device.mac_addr)) {
-          const deviceMac = device.mac_addr.toUpperCase();
-          delete device.mac_addr;
+        if (_.isString(device.macAddr) && !_.isEmpty(device.macAddr)) {
+          const deviceMac = device.macAddr.toUpperCase();
+          delete device.macAddr;
           await rclient.hsetAsync(KEY_STA_STATUS, deviceMac, JSON.stringify(device));
         }
       }
