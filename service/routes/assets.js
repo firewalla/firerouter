@@ -51,7 +51,7 @@ router.get('/ap/sta_status/:mac', async (req, res, next) => {
     if (status)
       res.status(200).json({errors: [], status});
     else
-      res.status(500).json({errors: [`Failed to get STA status`]});
+      res.status(404).json({errors: [`Failed to get STA status`]});
   }).catch((err) => {
     res.status(500).json({errors: [err.message]});
   });
