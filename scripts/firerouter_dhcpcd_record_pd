@@ -48,11 +48,11 @@ case $reason in
       pd_id=$((pd_id + 1))
     done
     echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
-    prev_pd_self_addr=$(cat /dev/shm/pd_self_addr.$interface || "")
-    if [ -n "$prev_pd_self_addr" && "$prev_pd_self_addr" -ne "$pd_self_addr" ]; then
+    prev_pd_self_addr=$(cat /dev/shm/pd_self_addr.$interface || echo "")
+    if [ -n "$prev_pd_self_addr" ] && [ "$prev_pd_self_addr" != "$pd_self_addr" ]; then
       sudo ip -6 a del $prev_pd_self_addr dev $interface &> /dev/null
     fi
-    if [ -n "$pd_self_addr" && -z "$nd1_addr1" && -z "$new_dhcp6_ia_na1_ia_addr1" ]; then
+    if [ -n "$pd_self_addr" ] && [ -z "$nd1_addr1" ] && [ -z "$new_dhcp6_ia_na1_ia_addr1" ]; then
       echo $pd_self_addr > /dev/shm/pd_self_addr.$interface
       sudo ip -6 a add $pd_self_addr dev $interface &> /dev/null
     fi
@@ -86,11 +86,11 @@ case $reason in
       pd_id=$((pd_id + 1))
     done
     echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
-    prev_pd_self_addr=$(cat /dev/shm/pd_self_addr.$interface || "")
-    if [ -n "$prev_pd_self_addr" && "$prev_pd_self_addr" -ne "$pd_self_addr" ]; then
+    prev_pd_self_addr=$(cat /dev/shm/pd_self_addr.$interface || echo "")
+    if [ -n "$prev_pd_self_addr" ] && [ "$prev_pd_self_addr" != "$pd_self_addr" ]; then
       sudo ip -6 a del $prev_pd_self_addr dev $interface &> /dev/null
     fi
-    if [ -n "$pd_self_addr" && -z "$nd1_addr1" && -z "$new_dhcp6_ia_na1_ia_addr1" ]; then
+    if [ -n "$pd_self_addr" ] && [ -z "$nd1_addr1" ] && [ -z "$new_dhcp6_ia_na1_ia_addr1" ]; then
       echo $pd_self_addr > /dev/shm/pd_self_addr.$interface
       sudo ip -6 a add $pd_self_addr dev $interface &> /dev/null
     fi
