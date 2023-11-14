@@ -73,7 +73,7 @@ class AssetsController {
 
   }
 
-  async getAPSTAStutus(staMAC) {
+  async getAPSTAStatus(staMAC) {
     const result = await rclient.hgetAsync(KEY_STA_STATUS, staMAC);
     if (result) {
       try {
@@ -499,7 +499,7 @@ class AssetsController {
   }
 
   async bssSteer(staMAC, targetAPUID, targetSSID = null, targetBand = null) {
-    const staStatus = await this.getAPSTAStutus(staMAC);
+    const staStatus = await this.getAPSTAStatus(staMAC);
     if (!staStatus)
       return;
     const currentAPUID = staStatus.assetUID;
