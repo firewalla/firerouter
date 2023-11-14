@@ -47,9 +47,9 @@ router.get('/ap/sta_status', async (req, res, next) => {
 router.get('/ap/sta_status/:mac', async (req, res, next) => {
   const mac = req.params.mac;
 
-  await assetsController.getAPSTAStatus(mac).then((info) => {
-    if (info)
-      res.status(200).json({errors: [], info});
+  await assetsController.getAPSTAStatus(mac).then((status) => {
+    if (status)
+      res.status(200).json({errors: [], status});
     else
       res.status(500).json({errors: [`Failed to get STA status`]});
   }).catch((err) => {
