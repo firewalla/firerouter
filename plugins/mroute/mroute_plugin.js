@@ -74,6 +74,10 @@ class MRoutePlugin extends Plugin {
       const {cidr, oifs} = route;
       mroutes.push(`mgroup from ${this.name} group ${cidr}`);
       for (const oif of oifs) {
+        if (oif === this.name) {
+          this.log.warn(`Outgoing interface ${oif} is same as incoming interface, ignore`);
+          continue;
+        }
         const oifIntfPlugin = pl.getPluginInstance("interface", oif);
         if (!oifIntfPlugin)
           this.fatal(`Cannot find interface plugin ${oif}`);
