@@ -34,7 +34,9 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
   async flush() {
     await super.flush();
     await this._testAndStartDocker();
-    await exec(`sudo docker network rm ${this.name}`).catch((err) => {});
+    await exec(`sudo docker network rm ${this.name}`).catch((err) => {
+      this.log.error(`Failed to remove docker network ${this.name}: ${err.message}`);
+    });
   }
 
   async _testAndStartDocker() {
@@ -43,8 +45,23 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       await exec(`sudo systemctl start docker`).catch((err) => {});
   }
 
+  async _checkNetworkExists() {
+    const result = await exec(`sudo docker network ls -f name=${this.name} -q`).then((result) => result.stdout.trim()).catch((err) => "");
+    return result !== "";
+  }
+
   async createInterface() {
     await this._testAndStartDocker();
+    const exists = await this._checkNetworkExists();
+    if (exists) {
+      // do not recreate interface if it already exists
+      // this is because super.flush will fail to remove networks if there are containers attached to the network
+      // and this is very likely that there are running containers in production
+      // so we just skip the creation instead of breaking the apply process
+      this.log.info("Docker network already exists, skip creation");
+      return true;
+    }
+
     const driver = this.networkConfig.driver || "bridge";
     const intfName = this.name;
     const subnets = [];
