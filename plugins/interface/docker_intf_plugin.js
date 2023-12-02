@@ -49,7 +49,9 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
     const intfName = this.name;
     const subnets = [];
     const opts = this.networkConfig.options || [];
-    opts.push(`--driver=${driver}`);
+    // make opts immutable
+    const optsCopy = JSON.parse(JSON.stringify(opts));
+    optsCopy.push(`--driver=${driver}`);
     let ip4s = this.networkConfig.ipv4s || [];
     if (this.networkConfig.ipv4)
       ip4s.push(this.networkConfig.ipv4);
@@ -61,7 +63,7 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       const gateway = ip4Addr.addressMinusSuffix;
       if (!subnets.includes(subnet)) {
         subnets.push(subnet);
-        Array.prototype.push.apply(opts, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
+        Array.prototype.push.apply(optsCopy, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
       } else {
         this.log.error(`IPv4 address ${ip4} overlapped with another subnet on ${intfName} and will be skipped`);
       }
@@ -74,16 +76,19 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       const gateway = ip6Addr.addressMinusSuffix;
       if (!subnets.includes(subnet)) {
         subnets.push(subnet);
-        Array.prototype.push.apply(opts, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
+        Array.prototype.push.apply(optsCopy, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
       } else {
         this.log.error(`IPv6 address ${ip6} overlapped with another subnet on ${intfName} and will be skipped`);
       }
     }
     const driverOpts = this.networkConfig.driverOptions || [];
+    // make driverOpts immutable
+    const driverOptsCopy = JSON.parse(JSON.stringify(driverOpts));
+
     if (driver === "bridge") {
-      driverOpts.push(`"com.docker.network.bridge.name"="${intfName}"`);
+      driverOptsCopy.push(`"com.docker.network.bridge.name"="${intfName}"`);
     }
-    const args = opts.concat(driverOpts.map(opt => `-o ${opt}`));
+    const args = optsCopy.concat(driverOptsCopy.map(opt => `-o ${opt}`));
     await exec(`sudo docker network create ${args.join(" ")} ${intfName}`).catch((err) => {
       this.fatal(`Failed to create docker network ${this.name}`, err.message);
     });
