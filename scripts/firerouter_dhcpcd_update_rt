@@ -36,6 +36,11 @@ case $reason in
       for default_rt_table in $default_rt_tables; do
         sudo ip -6 r replace default via $nd1_from dev $interface mtu $mtu table $default_rt_table
       done
+      old_gw=`cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo ""`
+      if [ "$nd1_from" != "$old_gw" ]; then
+        echo $nd1_from > /dev/shm/dhcpcd.gw6.$interface
+        ip_changed="1"
+      fi
     fi
     old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
     if [ "$new_addrs" != "$old_addrs" ]; then
