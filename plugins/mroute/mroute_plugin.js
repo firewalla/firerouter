@@ -45,7 +45,10 @@ class MRoutePlugin extends Plugin {
     for (const route of this.networkConfig.routes) {
       const {cidr} = route;
       if (new Address4(cidr).isValid()) {
-        await exec(util.wrapIptables(`sudo iptables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -d ${cidr} -j TTL --ttl-inc 1`)).catch((err) => {});
+        if (!_.isEmpty(this._ip4s)) {
+          for (const ip4 of this._ip4s)
+            await exec(util.wrapIptables(`sudo iptables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -s ${ip4} -d ${cidr} -j TTL --ttl-inc 1`)).catch((err) => {});
+        }
       } else {
         if (new Address6(cidr).isValid()) {
           await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -d ${cidr} -j HL --hl-inc 1`)).catch((err) => {});
@@ -53,6 +56,13 @@ class MRoutePlugin extends Plugin {
           this.log.error(`Invalid cidr ${cidr}`);
       }
     }
+    if (!_.isEmpty(this._oifHWAddrs)) {
+      for (const hwAddr of this._oifHWAddrs) {
+        await exec(util.wrapIptables(`sudo iptables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+      }
+    }
+    this._oifHWAddrs = [];
     await exec(`sudo systemctl stop firerouter_smcrouted.service`).catch((err) => {});
     const files = await fsp.readdir(MRoutePlugin.getConfDir());
     if (!_.isEmpty(files))
@@ -70,9 +80,25 @@ class MRoutePlugin extends Plugin {
     }
     const phyints = [this.name];
     const mroutes = [];
+    const ip4s = await iifIntfPlugin.getIPv4Addresses();
+    this._ip4s = ip4s;
     for (const route of this.networkConfig.routes) {
       const {cidr, oifs} = route;
+      if (new Address4(cidr).isValid()) {
+        if (!_.isEmpty(this._ip4s)) {
+          // add source address check to filter some invalid packets due to loop
+          for (const ip4 of this._ip4s)
+            await exec(util.wrapIptables(`sudo iptables -w -t mangle -A FR_MROUTE -p udp -i ${this.name} -s ${ip4} -d ${cidr} -j TTL --ttl-inc 1`)).catch((err) => {});
+        }
+      } else {
+        if (new Address6(cidr).isValid()) {
+          // source address check on IPv6 is not implemented yet because most use cases are on IPv4
+          await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -A FR_MROUTE -p udp -i ${this.name} -d ${cidr} -j HL --hl-inc 1`)).catch((err) => {});
+        } else
+          this.log.error(`Invalid cidr ${cidr}`);
+      }
       mroutes.push(`mgroup from ${this.name} group ${cidr}`);
+      const oifHWAddrs = {};
       for (const oif of oifs) {
         if (oif === this.name) {
           this.log.warn(`Outgoing interface ${oif} is same as incoming interface, ignore`);
@@ -83,13 +109,19 @@ class MRoutePlugin extends Plugin {
           this.fatal(`Cannot find interface plugin ${oif}`);
         if (await oifIntfPlugin.isInterfacePresent() === false)
           continue;
+        const hwAddr = await oifIntfPlugin.getHardwareAddress();
+        if (hwAddr) {
+          oifHWAddrs[hwAddr] = 1;
+          // do not process incoming multicast packets that are transmitted from the oifs
+          await exec(util.wrapIptables(`sudo iptables -w -t mangle -I FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+          await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -I FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+        }
+        this._oifHWAddrs = Object.keys(oifHWAddrs);
         phyints.push(oif);
         if (new Address4(cidr).isValid()) {
-          await exec(util.wrapIptables(`sudo iptables -w -t mangle -A FR_MROUTE -p udp -i ${this.name} -d ${cidr} -j TTL --ttl-inc 1`)).catch((err) => {});
           mroutes.push(`mroute from ${this.name} group ${cidr} to ${oif}`);
         } else {
           if (new Address6(cidr).isValid()) {
-            await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -A FR_MROUTE -p udp -i ${this.name} -d ${cidr} -j HL --hl-inc 1`)).catch((err) => {});
             mroutes.push(`mroute from ${this.name} group ${cidr} to ${oif}`);
           } else
             this.log.error(`Invalid cidr ${cidr}`);
