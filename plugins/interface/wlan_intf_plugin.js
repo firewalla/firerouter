@@ -26,7 +26,7 @@ const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const event = require('../../core/event.js');
 const util = require('../../util/util.js');
-const rclientDB0 = require('../../util/redis_manager.js').getRedisClient(0);
+const rclientDB0 = require('../../util/redis_manager.js').getPrimaryDBRedisClient()
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const GoldPlatform = require('../../platform/gold/GoldPlatform')
