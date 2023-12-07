@@ -828,6 +828,11 @@ class InterfaceBasePlugin extends Plugin {
     return ip6s.filter((ip6) => !ip.isPrivate(ip6));
   }
 
+  async getHardwareAddress() {
+    const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => null);
+    return addr;
+  }
+
   // use a dedicated carrier state for fast processing
   async carrierState() {
     const state = await this._getSysFSClassNetValue("carrier");
