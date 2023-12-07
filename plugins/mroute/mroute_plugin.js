@@ -56,6 +56,13 @@ class MRoutePlugin extends Plugin {
           this.log.error(`Invalid cidr ${cidr}`);
       }
     }
+    if (!_.isEmpty(this._oifHWAddrs)) {
+      for (const hwAddr of this._oifHWAddrs) {
+        await exec(util.wrapIptables(`sudo iptables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -D FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+      }
+    }
+    this._oifHWAddrs = [];
     await exec(`sudo systemctl stop firerouter_smcrouted.service`).catch((err) => {});
     const files = await fsp.readdir(MRoutePlugin.getConfDir());
     if (!_.isEmpty(files))
@@ -91,6 +98,7 @@ class MRoutePlugin extends Plugin {
           this.log.error(`Invalid cidr ${cidr}`);
       }
       mroutes.push(`mgroup from ${this.name} group ${cidr}`);
+      const oifHWAddrs = {};
       for (const oif of oifs) {
         if (oif === this.name) {
           this.log.warn(`Outgoing interface ${oif} is same as incoming interface, ignore`);
@@ -101,6 +109,14 @@ class MRoutePlugin extends Plugin {
           this.fatal(`Cannot find interface plugin ${oif}`);
         if (await oifIntfPlugin.isInterfacePresent() === false)
           continue;
+        const hwAddr = await oifIntfPlugin.getHardwareAddress();
+        if (hwAddr) {
+          oifHWAddrs[hwAddr] = 1;
+          // do not process incoming multicast packets that are transmitted from the oifs
+          await exec(util.wrapIptables(`sudo iptables -w -t mangle -I FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+          await exec(util.wrapIptables(`sudo ip6tables -w -t mangle -I FR_MROUTE -p udp -i ${this.name} -m mac --mac-source ${hwAddr} -j RETURN`)).catch((err) => {});
+        }
+        this._oifHWAddrs = Object.keys(oifHWAddrs);
         phyints.push(oif);
         if (new Address4(cidr).isValid()) {
           mroutes.push(`mroute from ${this.name} group ${cidr} to ${oif}`);
