@@ -1,4 +1,4 @@
-/*    Copyright 2021-2022 Firewalla Inc.
+/*    Copyright 2021-2023 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -26,6 +26,7 @@ const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const event = require('../../core/event.js');
 const util = require('../../util/util.js');
+const rclientDB0 = require('../../util/redis_manager.js').getPrimaryDBRedisClient()
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const GoldPlatform = require('../../platform/gold/GoldPlatform')
@@ -322,6 +323,17 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
           this.log.error(`Failed to apply IP settings on ${this.name}`, err.message);
         });
       }
+    }
+  }
+
+  async setHardwareAddress() {
+    await super.setHardwareAddress()
+
+    if (platform.wifiSD) try {
+      const mac = await this._getSysFSClassNetValue("address")
+      await rclientDB0.saddAsync('sys:wifiSD:addresses', mac)
+    } catch(err) {
+      this.log.error('Failed to log wifiSD mac', err)
     }
   }
 }

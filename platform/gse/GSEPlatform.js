@@ -1,4 +1,4 @@
-/*    Copyright 2022 Firewalla Inc.
+/*    Copyright 2022-2023 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -148,7 +148,6 @@ class GSEPlatform extends Platform {
         return;
       }
 
-      log.info(`Resetting the hwaddr of ${iface} to :`, expectMac);
       await this._setHardwareAddress(iface, expectMac);
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already in place.`);
@@ -173,7 +172,6 @@ class GSEPlatform extends Platform {
     });
 
     // set mac address
-    log.info(`Set ${iface} MAC to ${hwAddr}`);
     await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
       log.error(`Failed to set MAC address of ${iface}`, err.message);
       errCounter++;
