@@ -671,7 +671,13 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  hasHardwareAddress() {
+    return true;
+  }
+
   async setHardwareAddress() {
+    if (!this.hasHardwareAddress())
+      return;
     if(!this.networkConfig.enabled) {
       await this.resetHardwareAddress();
       return;
@@ -687,6 +693,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async resetHardwareAddress() {
+    if (!this.hasHardwareAddress())
+      return;
     await platform.resetHardwareAddress(this.name);
   }
 
