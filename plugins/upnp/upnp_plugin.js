@@ -34,7 +34,6 @@ class UPnPPlugin extends Plugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_upnpd@.service /etc/systemd/system/`);
     // redirect miniupnpd log to specific log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/10-miniupnpd.conf /etc/rsyslog.d/`);
-    await exec(`sudo systemctl daemon-reload`);
     pl.scheduleRestartRsyslog();
     // copy logrotate config for miniupnpd log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/miniupnpd /etc/logrotate.d/`);
