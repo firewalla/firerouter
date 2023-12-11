@@ -725,7 +725,7 @@ class RoutingPlugin extends Plugin {
         break;
       }
       case event.EVENT_IP6_CHANGE: {
-        this.flush(6).then(() => this._applyActiveGlobalDefaultRouting(true, 6)).catch((err) => {
+        this.flush(6).then(() => this._applyActiveGlobalDefaultRouting(true, 6)).then(() => pl.publishChangeApplied()).catch((err) => {
           this.log.error(`Failed to apply active global default routes for IPv6 change event`, err.message);
         });
         break;
