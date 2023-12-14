@@ -671,7 +671,13 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  hasHardwareAddress() {
+    return true;
+  }
+
   async setHardwareAddress() {
+    if (!this.hasHardwareAddress())
+      return;
     if(!this.networkConfig.enabled) {
       await this.resetHardwareAddress();
       return;
@@ -687,6 +693,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async resetHardwareAddress() {
+    if (!this.hasHardwareAddress())
+      return;
     await platform.resetHardwareAddress(this.name);
   }
 
@@ -831,6 +839,21 @@ class InterfaceBasePlugin extends Plugin {
   async getHardwareAddress() {
     const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => null);
     return addr;
+  }
+
+  async gatewayReachable() {
+    const gw = await routing.getInterfaceGWIP(this.name);
+    if (!gw)
+      return false;
+    if (!this.hasHardwareAddress())
+      return false;
+    const lines = await fs.readFileAsync("/proc/net/arp", {encoding: "utf8"}).then((data) => data.trim().split("\n")).catch((err) => {return [];});
+    for (const line of lines) {
+      const [ ip, /* type */, flags, mac, /* mask */, intf ] = line.replace(/ [ ]*/g, ' ').split(' ');
+      if (ip === gw && intf === this.name && flags === "0x2" && mac !== "00:00:00:00:00:00")
+        return true;
+    }
+    return false;
   }
 
   // use a dedicated carrier state for fast processing
@@ -1350,10 +1373,14 @@ class InterfaceBasePlugin extends Plugin {
             if (this.networkConfig.dhcp) {
               this.carrierState().then((result) => {
                 if (result === "1") {
-                  this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
-                  this.renewDHCPLease().catch((err) => {
-                    this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
-                  });
+                  this.gatewayReachable().then((reachable) => {
+                    if (!reachable) {
+                      this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
+                      this.renewDHCPLease().catch((err) => {
+                        this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+                      });
+                    }
+                  }).catch((err) => {});
                 }
               });
             }
