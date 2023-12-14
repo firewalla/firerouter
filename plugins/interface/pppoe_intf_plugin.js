@@ -135,6 +135,10 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     return baseIntfState;
   }
 
+  hasHardwareAddress() {
+    return false;
+  }
+
   onEvent(e) {
     super.onEvent(e);
     const eventType = event.getEventType(e);
