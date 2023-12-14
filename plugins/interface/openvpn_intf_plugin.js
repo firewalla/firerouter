@@ -83,6 +83,10 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  hasHardwareAddress() {
+    return false;
+  }
+
   onEvent(e) {
     // stub implementation
     if (!event.isLoggingSuppressed(e))
