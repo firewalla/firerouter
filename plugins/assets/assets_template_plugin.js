@@ -49,7 +49,7 @@ class AssetsTemplatePlugin extends Plugin {
                 "intf": "br0",
                 "management": true,
                 "vlanUntag": false,
-                "ssidProfiles": ["ssid_2.4g", "ssid_5g"]
+                "ssidProfiles": ["ssid_2g", "ssid_5g"]
               }
             ]
           */
@@ -143,7 +143,7 @@ class AssetsTemplatePlugin extends Plugin {
             this.subscribeChangeFrom(profilePlugin);
             const profile = profilePlugin.networkConfig;
             const ssidCommonConfig = {};
-            Object.assign(ssidCommonConfig, _.pick(profile, ["ssid", "enterprise", "hidden", "isolate", "hints", "radius"]));
+            Object.assign(ssidCommonConfig, _.pick(profile, ["ssid", "enterprise", "hidden", "isolate", "hints", "radius", "mlo"]));
 
             // refer to https://openwrt.org/docs/guide-user/network/wifi/basic#encryption_modes
             switch (profile.encryption) {
@@ -196,7 +196,7 @@ class AssetsTemplatePlugin extends Plugin {
             ssidCommonConfigWithClearPSK.key = profile.key;
 
             // randomize options for fast roaming
-            const ftSeed24 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "2.4g");
+            const ftSeed24 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "2g");
             const ftSeed5 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "5g");
             const ftSeed6 = await this.calculateFTSeed(wifiNetworkConfig.intf || "", ssidProfile, "6g");
             const mdId24 = ftSeed24.substring(ftSeed24.length - 4);
@@ -210,8 +210,9 @@ class AssetsTemplatePlugin extends Plugin {
             const khKeyHex6 = ftSeed6.substring(16, 48);
             switch (profile.band) {
               // need an adaptive way to select channel
+              case "2g":
               case "2.4g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
                 break;
               case "5g":
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
@@ -219,13 +220,14 @@ class AssetsTemplatePlugin extends Plugin {
               case "6g":
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfigWithClearPSK, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
                 break;
+              case "2g+5g+6g":
               case "2.4g+5g+6g":
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfigWithClearPSK, {band: "6g", ft: {nasId: nasId6, mobilityDomain: mdId6, khKeyHex: khKeyHex6}}));
                 break;
               default:
-                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2.4g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
+                wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "2g", ft: {nasId: nasId24, mobilityDomain: mdId24, khKeyHex: khKeyHex24}}));
                 wifiConfig.ssids.push(Object.assign({}, ssidCommonConfig, {band: "5g", ft: {nasId: nasId5, mobilityDomain: mdId5, khKeyHex: khKeyHex5}}));
             }
           }
