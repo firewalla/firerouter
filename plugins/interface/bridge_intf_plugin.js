@@ -66,6 +66,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       }
     return true;
   }
+
+  getDefaultMTU() {
+    return 1500;
+  }
 }
 
 module.exports = BridgeInterfacePlugin;
