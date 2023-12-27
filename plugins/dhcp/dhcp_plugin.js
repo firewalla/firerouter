@@ -99,7 +99,8 @@ class DHCPPlugin extends Plugin {
 
     let useDhcpBoot = extraOptions.hasOwnProperty("66") && extraOptions.hasOwnProperty("67");
     if (useDhcpBoot) {
-      dhcpOptions.push(`dhcp-boot=tag:${iface},${extraTags}${extraOptions["67"]},${new Address4(extraOptions["66"]).isValid() ? `,${extraOptions["66"]}` : extraOptions["66"]}`)
+      dhcpOptions.push(`dhcp-boot=tag:${iface},${extraTags}${extraOptions["67"]},${new Address4(extraOptions["66"]).isValid() ? `,${extraOptions["66"]}` : extraOptions["66"]}`);
+      dhcpOptions.push(`dhcp-option=tag:${iface},${extraTags}66,${extraOptions["66"]}`);
     }
     if (Object.keys(extraOptions).length > 0) {
       for (const key of Object.keys(extraOptions)) {
