@@ -1,0 +1,60 @@
+#!/bin/bash
+
+case $reason in
+  ROUTERADVERT)
+    new_addrs="";
+    gw6="";
+    vltime="";
+    addr_id=1
+    while [ $addr_id -lt 10 ]; do
+      var_name="nd1_addr$addr_id"
+      eval "addr=\$$var_name"
+      if [ -n "$addr" ]; then
+        new_addrs="$new_addrs$addr,"
+        var_name="nd1_prefix_information${addr_id}_vltime"
+        eval "vltime=\$$var_name"
+      else
+        break;
+      fi
+      addr_id=$((addr_id + 1))
+    done
+
+    if [ -n "$nd1_from" ]; then
+      gw6="$nd1_from"
+    fi
+    echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)" > /dev/shm/dhcpcd.ra.$interface
+    ;;
+  BOUND6|REBOOT6|RENEW6|REBIND6)
+    pd_id=1
+    ia_pd_vltimes=""
+    while [ $pd_id -lt 10 ]; do
+      new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
+      eval "new_prefix=\$$new_prefix_name"
+      new_prefix_length_name="new_dhcp6_ia_pd1_prefix${pd_id}_length"
+      eval "new_prefix_length=\$$new_prefix_length_name"
+      new_prefix_val="$new_prefix/$new_prefix_length"
+      new_prefix_vltime_name="new_dhcp6_ia_pd1_prefix${pd_id}_vltime"
+      eval "new_prefix_vltime=\$$new_prefix_vltime_name"
+      if [ $new_prefix_val != "/" ]; then
+        ia_pd_vltimes="$ia_pd_vltimes$new_prefix_val@$new_prefix_vltime,"
+      fi
+      pd_id=$((pd_id + 1))
+    done
+    echo $ia_pd_vltimes > /dev/shm/dhcpcd.ia_pd_vltime.${interface}
+
+    addr_id=1
+    ia_na_vltimes=""
+    while [ $addr_id -lt 10 ]; do
+      new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
+      eval "new_addr=\$$new_var_name"
+      new_vltime_name="new_dhcp6_ia_na1_ia_addr${addr_id}_vltime"
+      eval "new_vltime=\$$new_vltime_name"
+      if [ -n "$new_addr" ]; then
+        ia_na_vltimes="$ia_na_vltimes$new_addr@$new_vltime,"
+      fi
+      addr_id=$((addr_id + 1))
+    done
+    echo $ia_na_vltimes > /dev/shm/dhcpcd.ia_na_vltime.${interface}
+    echo "ia_pd_vltimes=$ia_pd_vltimes\nia_na_vltimes=$ia_na_vltimes\nts=$(date +%s)" > /dev/shm/dhcpcd.lease6.${interface}
+  ;;
+esac

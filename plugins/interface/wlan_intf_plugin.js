@@ -85,7 +85,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const targetFile = r.getTempFolder() + "/firerouter_wpa_supplicant@.service";
     await fs.writeFileAsync(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   static async installWpaSupplicantScript() {
@@ -121,6 +120,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
       return exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${instance.name} ${paramString}`)
     }
+  }
+
+  getDefaultMTU() {
+    return 1500;
   }
 
   async readyToConnect() {
