@@ -188,6 +188,23 @@ class GSEPlatform extends Platform {
   async overrideWLANKernelModule() {
     // nothing to do, driver in os image now
   }
+
+  async setMTU(iface, mtu) {
+    if (iface === "eth1" || iface === "eth2") {
+      const ifplug = sensorLoader.getSensor("IfPlugSensor");
+      if (ifplug) {
+        await ifplug.stopMonitoringInterface(iface);
+      }
+      await exec(`sudo ip link set ${iface} down`);
+      await super.setMTU(iface, mtu);
+      await exec(`sudo ip link set ${iface} up`);
+      if (ifplug) {
+        await ifplug.startMonitoringInterface(iface);
+      }
+    } else {
+      await super.setMTU(iface, mtu);
+    }
+  }
 }
 
 module.exports = GSEPlatform;
