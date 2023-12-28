@@ -705,7 +705,9 @@ class InterfaceBasePlugin extends Plugin {
   async setMTU() {
     const mtu = this.networkConfig.mtu || this.getDefaultMTU();
     if (mtu)
-      await platform.setMTU(this.name, mtu);
+      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
+        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
+      });
   }
 
   async setSysOpts() {
