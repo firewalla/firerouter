@@ -58,10 +58,6 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
-  getDefaultMTU() {
-    return 1500;
-  }
-
 }
 
 module.exports = PhyInterfacePlugin;
