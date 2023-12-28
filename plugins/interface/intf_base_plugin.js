@@ -702,9 +702,17 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async getMTU() {
+    return fs.readFileAsync(`/sys/class/net/${this.name}/mtu`, {encoding: "utf8"}).then(result => Number(result.trim())).catch((err) => {
+      this.log.error(`Failed to get MTU of ${this.name}`, err.message);
+      return null;
+    });
+  }
+
   async setMTU() {
     const mtu = this.networkConfig.mtu || this.getDefaultMTU();
-    if (mtu)
+    const currentMTU = await this.getMTU();
+    if (mtu && mtu !== currentMTU)
       await platform.setMTU(this.name, mtu);
   }
 
