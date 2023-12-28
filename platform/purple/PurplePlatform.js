@@ -279,22 +279,6 @@ class PurplePlatform extends Platform {
       log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
   }
-
-  async setMTU(iface, mtu) {
-    if (iface === "eth0") {
-      const ifplug = sensorLoader.getSensor("IfPlugSensor");
-      if (ifplug) {
-        await ifplug.stopMonitoringInterface(iface);
-      }
-      await exec(`sudo ip link set ${iface} down`);
-      await super.setMTU(iface, mtu);
-      await exec(`sudo ip link set ${iface} up`);
-      if (ifplug) {
-        await ifplug.startMonitoringInterface(iface);
-      }
-    } else
-      await super.setMTU(iface, mtu);
-  }
 }
 
 module.exports = PurplePlatform;

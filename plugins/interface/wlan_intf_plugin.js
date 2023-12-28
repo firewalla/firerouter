@@ -122,10 +122,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
-  getDefaultMTU() {
-    return 1500;
-  }
-
   async readyToConnect() {
     const carrier = await this.carrierState();
     if (carrier !== "1") {
