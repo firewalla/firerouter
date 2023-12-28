@@ -218,11 +218,6 @@ class Platform {
 
   }
 
-  async setMTU(iface, mtu) {
-    await exec(`sudo ip link set ${iface} mtu ${mtu}`).catch((err) => {
-      log.error(`Failed to set MTU of ${iface} to ${mtu}`, err.message);
-    });
-  }
 }
 
 module.exports = Platform;
