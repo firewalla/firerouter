@@ -32,7 +32,6 @@ class DockerPlugin extends Plugin {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/docker`);
     await exec(`mkdir -p ${r.getUserConfigFolder()}/docker_compose`)
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_docker_compose@.service /etc/systemd/system/`);
-    await exec(`sudo systemctl daemon-reload`);
   }
 
   _getConvertedComposeFilePath() {
