@@ -58,7 +58,6 @@ class HostapdPlugin extends Plugin {
     const targetFile = r.getTempFolder() + "/firerouter_hostapd@.service";
     await fsp.writeFile(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   static async installHostapdScript() {

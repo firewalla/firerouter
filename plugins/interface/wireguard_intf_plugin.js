@@ -268,6 +268,10 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return state;
   }
 
+  hasHardwareAddress() {
+    return false;
+  }
+
   onEvent(e) {
     super.onEvent(e);
     const eventType = event.getEventType(e);

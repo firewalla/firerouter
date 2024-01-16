@@ -121,6 +121,12 @@
       "init_seq": 9
     },
     {
+      "file_path": "./mroute/mroute_plugin.js",
+      "config_path": "mroute",
+      "category": "mroute",
+      "init_seq": 9
+    },
+    {
       "file_path": "./icmp/icmp_plugin.js",
       "config_path": "icmp",
       "category": "icmp",
