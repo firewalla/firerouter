@@ -34,6 +34,9 @@ option ntp_servers
 # Respect the network MTU. This is applied to DHCP routes.
 option interface_mtu
 
+# 40712 is the private enterprise number (PEN) of DHCPCD Project, some DHCPv6 server won't respond if vendor class data is not specified
+vendclass 40712 "dhcpcd:Linux-Firewalla"
+
 # A ServerID is required by RFC2131.
 require dhcp_server_identifier
 
