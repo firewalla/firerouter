@@ -288,7 +288,8 @@ const CTRLMessages = {
   PEER_ENDPOINT_INFO: "msg:peer_endpoint_info",
   ROUTE_REQUEST: "msg:route_request",
   ROUTE_DECISION: "msg:route_decision",
-  PEER_INFO_REQUEST: "msg:info_request"
+  PEER_INFO_REQUEST: "msg:info_request",
+  PEER_INFO_RESPONSE: "msg:info_response"
 };
 const LOCK_PEER_INFO = "lock_peer_info";
 const AsyncLock = require('async-lock');
@@ -373,7 +374,7 @@ class WireguardMeshAutomata {
             }).catch((err) => {});
             break;
           }
-          case CTRLMessage.PEER_INFO_REQUEST: {
+          case CTRLMessages.PEER_INFO_REQUEST: {
             await lock.acquire(LOCK_PEER_INFO, async () => {
               await this.handleInfoRequestMsg(msg, info).catch((err) => {
                 this.log.error(`Failed to handle info request message`, err.message);
@@ -453,7 +454,8 @@ class WireguardMeshAutomata {
         // populate peer name for better readability at app side
         const name = await rclient.getAsync("groupName") || "";
         const model = await rclient.getAsync("model") || "";
-        const data = JSON.stringify({name, model});
+        const type = CTRLMessages.PEER_INFO_RESPONSE;
+        const data = JSON.stringify({name, model, type});
 
         this.socket.send(data, 6666, info.address);
       } else {
