@@ -671,7 +671,13 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  hasHardwareAddress() {
+    return true;
+  }
+
   async setHardwareAddress() {
+    if (!this.hasHardwareAddress())
+      return;
     if(!this.networkConfig.enabled) {
       await this.resetHardwareAddress();
       return;
@@ -687,6 +693,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async resetHardwareAddress() {
+    if (!this.hasHardwareAddress())
+      return;
     await platform.resetHardwareAddress(this.name);
   }
 
@@ -694,12 +702,18 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async getMTU() {
+    return fs.readFileAsync(`/sys/class/net/${this.name}/mtu`, {encoding: "utf8"}).then(result => Number(result.trim())).catch((err) => {
+      this.log.error(`Failed to get MTU of ${this.name}`, err.message);
+      return null;
+    });
+  }
+
   async setMTU() {
     const mtu = this.networkConfig.mtu || this.getDefaultMTU();
-    if (mtu)
-      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
-        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
-      });
+    const currentMTU = await this.getMTU();
+    if (mtu && mtu !== currentMTU)
+      await platform.setMTU(this.name, mtu);
   }
 
   async setSysOpts() {
@@ -826,6 +840,26 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+  }
+
+  async getHardwareAddress() {
+    const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => null);
+    return addr;
+  }
+
+  async gatewayReachable() {
+    const gw = await routing.getInterfaceGWIP(this.name);
+    if (!gw)
+      return false;
+    if (!this.hasHardwareAddress())
+      return false;
+    const lines = await fs.readFileAsync("/proc/net/arp", {encoding: "utf8"}).then((data) => data.trim().split("\n")).catch((err) => {return [];});
+    for (const line of lines) {
+      const [ ip, /* type */, flags, mac, /* mask */, intf ] = line.replace(/ [ ]*/g, ' ').split(' ');
+      if (ip === gw && intf === this.name && flags === "0x2" && mac !== "00:00:00:00:00:00")
+        return true;
+    }
+    return false;
   }
 
   // use a dedicated carrier state for fast processing
@@ -1180,13 +1214,22 @@ class InterfaceBasePlugin extends Plugin {
                 info.gw6 = gw6;
               break;
             }
+            case "ra_ts": {
+              info.ra_ts = Number(value);
+              break;
+            }
+            case "ra_vltime": {
+              if (!isNaN(value))
+                info.ra_lifetime = Number(value);
+              break;
+            }
             case "ia_na_vltimes": {
               const addresses = [];
               info["ia_na"] = {addresses};
               const ianas = value.split(",").filter(iana => iana.length > 0);
               for (const iana of ianas) {
                 const [address, lifetime] = iana.split("@", 2);
-                addresses.push({address, lifetime: Number(lifetime)});
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
               }
               break;
             }
@@ -1196,12 +1239,12 @@ class InterfaceBasePlugin extends Plugin {
               const ianas = value.split(",").filter(iana => iana.length > 0);
               for (const iana of ianas) {
                 const [address, lifetime] = iana.split("@", 2);
-                addresses.push({address, lifetime: Number(lifetime)});
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
               }
               break;
             }
             case "ts": {
-              info.ts = value;
+              info.ts = Number(value);
               break;
             }
           }
@@ -1336,10 +1379,14 @@ class InterfaceBasePlugin extends Plugin {
             if (this.networkConfig.dhcp) {
               this.carrierState().then((result) => {
                 if (result === "1") {
-                  this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
-                  this.renewDHCPLease().catch((err) => {
-                    this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
-                  });
+                  this.gatewayReachable().then((reachable) => {
+                    if (!reachable) {
+                      this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
+                      this.renewDHCPLease().catch((err) => {
+                        this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+                      });
+                    }
+                  }).catch((err) => {});
                 }
               });
             }

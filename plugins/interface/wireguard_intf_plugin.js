@@ -68,9 +68,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     if(bindIntf) {
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
-    } else {
-      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
-      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
     }
     this._bindIntf = null;
   }
@@ -174,8 +171,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
     await this._resetBindIntfRule().catch((err) => {});
     // add specific routing for wireguard outgoing packets
-    let bindIntf = this.networkConfig.bindIntf;
-    if (!bindIntf) {
+    let bindIntf = this.networkConfig.bindIntf || null;
+    // try to find active interface as bindIntf if it is unspecified in config
+    if (!_.has(this.networkConfig, "bindIntf")) {
       const routingPlugin = pl.getPluginInstance("routing", "global");
       if (routingPlugin) {
         this.subscribeChangeFrom(routingPlugin);
@@ -194,8 +192,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
       this._bindIntf = bindIntf;
     } else {
-      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
-      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
+      // if bindIntf is null, no need to bind it to any wan interface
       this._bindIntf = null;
     }
 
@@ -267,6 +264,10 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       };
     }
     return state;
+  }
+
+  hasHardwareAddress() {
+    return false;
   }
 
   onEvent(e) {
