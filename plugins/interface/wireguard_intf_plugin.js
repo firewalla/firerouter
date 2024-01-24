@@ -26,6 +26,7 @@ const util = require('../../util/util.js');
 const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
+const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 const bindIntfRulePriority = 5999;
 
@@ -286,7 +287,9 @@ const dgram = require('dgram');
 const CTRLMessages = {
   PEER_ENDPOINT_INFO: "msg:peer_endpoint_info",
   ROUTE_REQUEST: "msg:route_request",
-  ROUTE_DECISION: "msg:route_decision"
+  ROUTE_DECISION: "msg:route_decision",
+  PEER_INFO_REQUEST: "msg:info_request",
+  PEER_INFO_RESPONSE: "msg:info_response"
 };
 const LOCK_PEER_INFO = "lock_peer_info";
 const AsyncLock = require('async-lock');
@@ -371,6 +374,14 @@ class WireguardMeshAutomata {
             }).catch((err) => {});
             break;
           }
+          case CTRLMessages.PEER_INFO_REQUEST: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handleInfoRequestMsg(msg, info).catch((err) => {
+                this.log.error(`Failed to handle info request message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
           default:
             this.log.error(`Unknown message type ${msg.type} from peer ${from}, ignore`);
         }
@@ -419,6 +430,40 @@ class WireguardMeshAutomata {
 
   getPeerInfo() {
     return this.peerInfo;
+  }
+
+  isAnyPeerVPNIP(ip) {
+    for (const pubKey of Object.keys(this.peerInfo)) {
+      const info = this.peerInfo[pubKey];
+      const peerIP = info.peerIP;
+      if (peerIP) {
+        const pip = peerIP.split('/')[0];
+        if (ip === pip) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  async handleInfoRequestMsg(msg, info) {
+    try {
+      const address = info.address;
+      if (this.isAnyPeerVPNIP(address)) {
+        // populate peer name for better readability at app side
+        const name = await rclient.getAsync("groupName") || "";
+        const model = await rclient.getAsync("model") || "";
+        const type = CTRLMessages.PEER_INFO_RESPONSE;
+        const data = JSON.stringify({name, model, type});
+
+        this.socket.send(data, 6666, info.address);
+      } else {
+        this.log.warn("Not a valid vpn ip:", address, "ignore");
+      }
+    } catch (err) {
+      this.log.error("Failed to handle info request message", err.message);
+    }
   }
 
   async sendPeerEndpointInfoMsg() {
