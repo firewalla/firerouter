@@ -478,10 +478,19 @@ class WireguardMeshAutomata {
 
   async handlePeerInfoRequestMsg(msg, info) {
     try {
-      const publicKey = info.key;
-      const info = this.peerInfo[publicKey];
-      if(info) {
-        this.log.info("XXX", info);
+      const addr = info.address;
+      const publicKey = msg.key;
+      const peer = this.peerInfo[publicKey];
+      if(peer) {
+        const peerCopy = JSON.parse(JSON.stringify(peer));
+        delete peerCopy.router;
+        delete peerCopy.connected;
+        delete peerCopy.asRouter;
+        delete peerCopy.useOrigEndpoint;
+        peerCopy.type = CTRLMessages.PEER_INFO_RESPONSE;
+        peerCopy.from = this.pubKey;
+        const payload = JSON.stringify(peerCopy);
+        this.socket.send(payload, 6666, addr);
       }
     } catch (err) {
       this.log.error("Failed to handle peer info request message", err.message);
