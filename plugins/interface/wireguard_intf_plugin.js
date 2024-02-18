@@ -288,8 +288,10 @@ const CTRLMessages = {
   PEER_ENDPOINT_INFO: "msg:peer_endpoint_info",
   ROUTE_REQUEST: "msg:route_request",
   ROUTE_DECISION: "msg:route_decision",
-  PEER_INFO_REQUEST: "msg:info_request",
-  PEER_INFO_RESPONSE: "msg:info_response"
+  INFO_REQUEST: "msg:info_request",
+  INFO_RESPONSE: "msg:info_response",
+  PEER_INFO_REQUEST: "msg:peer_info_request",
+  PEER_INFO_RESPONSE: "msg:peer_info_response"
 };
 const LOCK_PEER_INFO = "lock_peer_info";
 const AsyncLock = require('async-lock');
@@ -374,10 +376,18 @@ class WireguardMeshAutomata {
             }).catch((err) => {});
             break;
           }
-          case CTRLMessages.PEER_INFO_REQUEST: {
+          case CTRLMessages.INFO_REQUEST: {
             await lock.acquire(LOCK_PEER_INFO, async () => {
               await this.handleInfoRequestMsg(msg, info).catch((err) => {
                 this.log.error(`Failed to handle info request message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
+          case CTRLMessages.PEER_INFO_REQUEST: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handlePeerInfoRequestMsg(msg, info).catch((err) => {
+                this.log.error(`Failed to handle peer info request message`, err.message);
               });
             }).catch((err) => {});
             break;
@@ -454,7 +464,7 @@ class WireguardMeshAutomata {
         // populate peer name for better readability at app side
         const name = await rclient.getAsync("groupName") || "";
         const model = await rclient.getAsync("model") || "";
-        const type = CTRLMessages.PEER_INFO_RESPONSE;
+        const type = CTRLMessages.INFO_RESPONSE;
         const data = JSON.stringify({name, model, type});
 
         this.socket.send(data, 6666, info.address);
@@ -463,6 +473,18 @@ class WireguardMeshAutomata {
       }
     } catch (err) {
       this.log.error("Failed to handle info request message", err.message);
+    }
+  }
+
+  async handlePeerInfoRequestMsg(msg, info) {
+    try {
+      const publicKey = info.key;
+      const info = this.peerInfo[publicKey];
+      if(info) {
+        this.log.info("XXX", info);
+      }
+    } catch (err) {
+      this.log.error("Failed to handle peer info request message", err.message);
     }
   }
 
