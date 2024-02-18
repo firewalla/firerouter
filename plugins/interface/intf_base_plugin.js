@@ -1301,10 +1301,18 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
-          // WAN interface plugged, need to reapply WAN interface config
+          // WAN interface plugged, need to restart dhcp client if applicable
           if (this.isDHCP()) {
-            this.propagateConfigChanged(true);
-            pl.scheduleReapply();
+            if (this.networkConfig.dhcp) {
+              this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
+                this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+              });
+            }
+            if (this.networkConfig.dhcp6) {
+              this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
+                this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
+              });
+            }
           }
         }
         break;
