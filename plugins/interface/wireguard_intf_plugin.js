@@ -489,6 +489,7 @@ class WireguardMeshAutomata {
         delete peerCopy.useOrigEndpoint;
         peerCopy.type = CTRLMessages.PEER_INFO_RESPONSE;
         peerCopy.from = this.pubKey;
+        peerCopy.key = publicKey;
         const payload = JSON.stringify(peerCopy);
         this.socket.send(payload, 6666, addr);
       }
