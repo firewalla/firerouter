@@ -52,6 +52,10 @@ function get_wpa_cli_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
 }
 
+function get_smcrouted_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
+}
+
 case "$UNAME" in
   "x86_64")
     source $FW_PLATFORM_DIR/gold/platform.sh

@@ -39,11 +39,11 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo rm -r /lib/dhcpcd/dhcpcd-hooks/firerouter_*`).catch((err) => {});
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_update_rt /lib/dhcpcd/dhcpcd-hooks/`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_pd /lib/dhcpcd/dhcpcd-hooks/`);
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_lease /lib/dhcpcd/dhcpcd-hooks/`);
     // copy firerouter_dhclient@.service
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient@.service /etc/systemd/system/`);
     // copy firerouter_dhcpcd6@.service
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd6@.service /etc/systemd/system/`);
-    await exec("sudo systemctl daemon-reload");
   }
 
   async prepareEnvironment() {
