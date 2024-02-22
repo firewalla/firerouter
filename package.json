@@ -27,7 +27,7 @@
     "child-process-promise": "^2.2.1",
     "express": "^4.17.1",
     "glob": "^7.1.6",
-    "ip": "^1.1.5",
+    "ip": "^1.1.9",
     "lodash": "^4.17.15",
     "moment": "^2.24.0",
     "morgan": "^1.9.1",
