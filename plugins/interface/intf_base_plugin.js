@@ -454,6 +454,19 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  _overrideNTPoverDHCP(dhclientConf){
+    // replace with ntp options
+    if (this.networkConfig.allowNTPviaDHCP === true){
+      dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, ", ntp-servers");
+      dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, " dhcp6.sntp-servers,");
+    } else {
+      // replace with empty string
+      dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, "");
+      dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, "");
+    }
+    return dhclientConf
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
       const dhcpOptions = [];
@@ -463,6 +476,7 @@ class InterfaceBasePlugin extends Plugin {
         }
       }
       let dhclientConf = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhclient.conf.template`, {encoding: "utf8"});
+      dhclientConf=this._overrideNTPoverDHCP(dhclientConf);
       dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
       await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
       await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
