@@ -100,8 +100,17 @@ class NetworkSetup {
     await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
   }
 
+  async booting_finish() {
+    if(!this.runOnce) {
+      this.runOnce = true;
+      await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
+    }
+  }
+
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
+    // no need to await
+    this.booting_finish();
     return errors;
   }
 
