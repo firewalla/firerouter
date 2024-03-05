@@ -162,7 +162,7 @@
     {
       "file_path": "./kern_netdev_sensor.js",
       "config": {
-        "kern_netdev_enable_reboot": true
+        "kern_netdev_enable_reboot": false
       }
     },
     {

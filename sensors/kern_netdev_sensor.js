@@ -53,7 +53,7 @@ class KernNetDeviceSensor extends Sensor {
         this.log.warn(`kernel unregister_netdevice detected (${this.errorCount}): ${line}`);
         if (this.errorCount >= this.kernNetThreshold) {
             await rclient.setAsync(this.kernNetdevRkey, new Date().getTime()/1000);
-            if (this.config.kern_netdev_enable_reboot) {
+            if (this.config.kern_netdev_enable_reboot === true) {
               this.log.error('kernel unregister_netdevice hit threshold, system reboot!');
               await this.reboot()
             } else {
