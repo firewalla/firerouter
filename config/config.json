@@ -160,6 +160,12 @@
       }
     },
     {
+      "file_path": "./kern_netdev_sensor.js",
+      "config": {
+        "kern_netdev_enable_reboot": false
+      }
+    },
+    {
       "file_path": "./wan_conn_check_sensor.js",
       "config": {
         "ping_test_ip": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],

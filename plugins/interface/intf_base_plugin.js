@@ -454,6 +454,19 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  _overrideNTPoverDHCP(dhclientConf){
+    // replace with ntp options
+    if (this.networkConfig.allowNTPviaDHCP === true){
+      dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, ", ntp-servers");
+      dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, " dhcp6.sntp-servers,");
+    } else {
+      // replace with empty string
+      dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, "");
+      dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, "");
+    }
+    return dhclientConf
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
       const dhcpOptions = [];
@@ -463,6 +476,7 @@ class InterfaceBasePlugin extends Plugin {
         }
       }
       let dhclientConf = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhclient.conf.template`, {encoding: "utf8"});
+      dhclientConf=this._overrideNTPoverDHCP(dhclientConf);
       dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
       await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
       await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
@@ -702,12 +716,18 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async getMTU() {
+    return fs.readFileAsync(`/sys/class/net/${this.name}/mtu`, {encoding: "utf8"}).then(result => Number(result.trim())).catch((err) => {
+      this.log.error(`Failed to get MTU of ${this.name}`, err.message);
+      return null;
+    });
+  }
+
   async setMTU() {
     const mtu = this.networkConfig.mtu || this.getDefaultMTU();
-    if (mtu)
-      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
-        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
-      });
+    const currentMTU = await this.getMTU();
+    if (mtu && mtu !== currentMTU)
+      await platform.setMTU(this.name, mtu);
   }
 
   async setSysOpts() {
@@ -1295,10 +1315,18 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
-          // WAN interface plugged, need to reapply WAN interface config
+          // WAN interface plugged, need to restart dhcp client if applicable
           if (this.isDHCP()) {
-            this.propagateConfigChanged(true);
-            pl.scheduleReapply();
+            if (this.networkConfig.dhcp) {
+              this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
+                this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+              });
+            }
+            if (this.networkConfig.dhcp6) {
+              this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
+                this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
+              });
+            }
           }
         }
         break;
