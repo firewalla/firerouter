@@ -1334,11 +1334,13 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
         if (this.networkConfig && this.networkConfig.allowHotplug === true) {
-          platform.clearMacCache(this.name);
-          this._reapplyNeeded = true;
-          // trigger downstream plugins to reapply config
-          this.propagateConfigChanged(true);
-          pl.scheduleReapply();
+          pl.acquireApplyLock(async () => {
+            platform.clearMacCache(this.name);
+            this._reapplyNeeded = true;
+            // trigger downstream plugins to reapply config
+            this.propagateConfigChanged(true);
+            pl.scheduleReapply();
+          });
         }
         break;
       }
@@ -1347,14 +1349,16 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
-            // trigger downstream plugins to reapply, e.g., nat for ipv6
-            this.propagateConfigChanged(true);
-            this._reapplyNeeded = false;
-            pl.scheduleReapply();
-            return pl.publishIfaceChangeApplied();
-          }).catch((err) => {
-            this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+          pl.acquireApplyLock(async () => {
+            this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+              // trigger downstream plugins to reapply, e.g., nat for ipv6
+              this.propagateConfigChanged(true);
+              this._reapplyNeeded = false;
+              pl.scheduleReapply();
+              return pl.publishIfaceChangeApplied();
+            }).catch((err) => {
+              this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+            });
           });
         }
         break;
