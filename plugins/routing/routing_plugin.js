@@ -743,9 +743,11 @@ class RoutingPlugin extends Plugin {
             (_.isArray(intfPlugin.networkConfig.intf) && intfPlugin.networkConfig.intf.includes(intf)) || 
             (_.isString(intfPlugin.networkConfig.intf) && intfPlugin.networkConfig.intf === intf)
           ) && intfPlugin.isStaticIP()) {
-            this._reapplyNeeded = true;
-            this.propagateConfigChanged(true);
-            pl.scheduleReapply();
+            pl.acquireApplyLock(async () => {
+              this._reapplyNeeded = true;
+              this.propagateConfigChanged(true);
+              pl.scheduleReapply();
+            }).catch((err) => {});
           }
         }
         break;

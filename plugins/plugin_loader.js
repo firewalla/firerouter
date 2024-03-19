@@ -140,6 +140,14 @@ function getLastAppliedTimestamp() {
   return lastAppliedTimestamp;
 }
 
+async function acquireApplyLock(func) {
+  return lock.acquire(LOCK_REAPPLY, async () => {
+    await func()
+  }).catch((err) => {
+    log.error(`Failed to run async function with apply lock`, err.message);
+  });
+}
+
 async function reapply(config, dryRun = false) {
   let t1, t2;
   return await lock.acquire(LOCK_REAPPLY, async () => {
@@ -313,6 +321,7 @@ module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
   getPluginInstances: getPluginInstances,
+  acquireApplyLock: acquireApplyLock,
   reapply: reapply,
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,
