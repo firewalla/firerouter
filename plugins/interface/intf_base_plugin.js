@@ -1350,7 +1350,7 @@ class InterfaceBasePlugin extends Plugin {
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
           pl.acquireApplyLock(async () => {
-            this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+            await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
               // trigger downstream plugins to reapply, e.g., nat for ipv6
               this.propagateConfigChanged(true);
               this._reapplyNeeded = false;
