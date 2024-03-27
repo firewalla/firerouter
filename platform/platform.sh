@@ -58,8 +58,21 @@ function get_smcrouted_path {
 
 case "$UNAME" in
   "x86_64")
-    source $FW_PLATFORM_DIR/gold/platform.sh
-    FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/gold
+    if [[ -e /etc/firewalla-release ]]; then
+      BOARD=$( . /etc/firewalla-release 2>/dev/null && echo $BOARD || cat /etc/firewalla-release )
+    else
+      BOARD='unknown'
+    fi
+    case $BOARD in
+      gold-pro)
+        source $FW_PLATFORM_DIR/goldpro/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldpro
+        ;;
+      *)
+        source $FW_PLATFORM_DIR/goldpro/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/gold
+        ;;
+    esac
     ;;
   "aarch64")
     if [[ -e /etc/firewalla-release ]]; then
