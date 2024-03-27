@@ -56,8 +56,18 @@ class PlatformLoader {
 
     switch (uname) {
     case "x86_64": {
-      const GoldPlatform = require('./gold/GoldPlatform.js');
-      this.platform = new GoldPlatform();
+      const boardName = this.getBoardName();
+      switch (boardName) {
+        case "gold-pro": {
+          const GoldProPlatform = require('./goldpro/GoldProPlatform.js');
+          this.platform = new GoldProPlatform();
+          break;
+        }
+        default: {
+          const GoldPlatform = require('./gold/GoldPlatform.js');
+          this.platform = new GoldPlatform();
+        }
+      }
       break;
     }
     case "aarch64": {
