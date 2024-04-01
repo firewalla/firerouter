@@ -1315,18 +1315,24 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
-          // WAN interface plugged, need to restart dhcp client if applicable
-          if (this.isDHCP()) {
-            if (this.networkConfig.dhcp) {
-              this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
-                this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
-              });
+          if (this.hasHardwareAddress()) {
+            // WAN interface plugged, need to restart dhcp client if applicable
+            if (this.isDHCP()) {
+              if (this.networkConfig.dhcp) {
+                this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
+                  this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+                });
+              }
+              if (this.networkConfig.dhcp6) {
+                this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
+                  this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
+                });
+              }
             }
-            if (this.networkConfig.dhcp6) {
-              this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
-                this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
-              });
-            }
+          } else {
+            // for interface that does not have L2, e.g., pppoe, simply reapply config on it
+            this.propagateConfigChanged(true);
+            pl.scheduleReapply();
           }
         }
         break;
@@ -1334,11 +1340,13 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
         if (this.networkConfig && this.networkConfig.allowHotplug === true) {
-          platform.clearMacCache(this.name);
-          this._reapplyNeeded = true;
-          // trigger downstream plugins to reapply config
-          this.propagateConfigChanged(true);
-          pl.scheduleReapply();
+          pl.acquireApplyLock(async () => {
+            platform.clearMacCache(this.name);
+            this._reapplyNeeded = true;
+            // trigger downstream plugins to reapply config
+            this.propagateConfigChanged(true);
+            pl.scheduleReapply();
+          });
         }
         break;
       }
@@ -1347,14 +1355,16 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
-            // trigger downstream plugins to reapply, e.g., nat for ipv6
-            this.propagateConfigChanged(true);
-            this._reapplyNeeded = false;
-            pl.scheduleReapply();
-            return pl.publishIfaceChangeApplied();
-          }).catch((err) => {
-            this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+          pl.acquireApplyLock(async () => {
+            await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+              // trigger downstream plugins to reapply, e.g., nat for ipv6
+              this.propagateConfigChanged(true);
+              this._reapplyNeeded = false;
+              pl.scheduleReapply();
+              return pl.publishIfaceChangeApplied();
+            }).catch((err) => {
+              this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+            });
           });
         }
         break;
