@@ -69,7 +69,7 @@ case "$UNAME" in
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldpro
         ;;
       *)
-        source $FW_PLATFORM_DIR/goldpro/platform.sh
+        source $FW_PLATFORM_DIR/gold/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/gold
         ;;
     esac
