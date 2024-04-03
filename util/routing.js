@@ -16,6 +16,7 @@
 'use strict';
 
 const log = require('./logger.js')(__filename);
+const net = require('net');
 
 const exec = require('child-process-promise').exec;
 const _ = require('lodash');
@@ -36,6 +37,84 @@ const MASK_ALL = "0xffff";
 
 const LOCK_RT_TABLES = "LOCK_RT_TABLES";
 const LOCK_FILE = "/tmp/rt_tables.lock";
+
+
+class RouteRule {
+  constructor(rule) {
+    Object.assign(this, rule);
+  }
+
+  parse(rulestr) {
+    const keywords = rulestr.split(" ");
+    let i = 0;
+    if (keywords.length > 0) {
+      if (keywords[0] !== 'default'  && !net.isIP(keywords[0].split('/')[0])){
+        this.type = keywords[0];
+        i++
+      }
+      // TODO: roughly match cidr, replace with standard check
+      if (isValidDest(keywords[i])){
+        this.dest = keywords[i];
+        i++
+      } else {
+        log.error("[route] unknown route rule format:", rulestr);
+        return;
+      }
+
+      for (; i < keywords.length; i++) {
+        switch (keywords[i]){
+          case 'dev': {
+            if (i+1 < keywords.length) {
+              this.interface = keywords[i+1];
+              i++;
+            }
+            break;
+          }
+          case 'via': {
+            if (i+1 < keywords.length) {
+              this.gateway = keywords[i+1];
+              i++;
+            }
+            break;
+          }
+          case 'metric': {
+            if (i+1 < keywords.length) {
+              this.metric = Number(keywords[i+1]);
+              i++;
+            }
+            break;
+          }
+          case 'proto': {
+            if (i+1 < keywords.length) {
+              this.proto = keywords[i+1];
+              i++;
+            }
+            break;
+          }
+          case 'scope': {
+            if (i+1 < keywords.length) {
+              this.scope = keywords[i+1];
+              i++;
+            }
+            break;
+          }
+          case 'src': {
+            if (i+1 < keywords.length) {
+              this.src = keywords[i+1];
+              i++;
+            }
+            break;
+          }
+        }
+      }
+      this.parsed = true;
+    }
+  }
+}
+
+function isValidDest(dest) {
+  return dest === 'default' || net.isIPv4(dest.split('/')[0]) || net.isIPv6(dest.split('/')[0]);
+}
 
 async function removeCustomizedRoutingTable(tableName) {
   let cmd = `sudo bash -c 'flock ${LOCK_FILE} -c "sed -i -e \\"s/^[[:digit:]]\\+\\s\\+${tableName}$//g\\" /etc/iproute2/rt_tables"'`;
@@ -66,7 +145,7 @@ async function createCustomizedRoutingTable(tableName, type = RT_TYPE_REG) {
             log.info(`Previous table id of ${tableName} is out of range ${tid}, removing old entry for ${tableName} ...`);
             await removeCustomizedRoutingTable(tableName);
           } else {
-            log.info("Table with same name already exists: " + tid);
+            log.debug("Table with same name already exists: " + tid);
             done(null, Number(tid));
             return;
           }
@@ -190,9 +269,60 @@ async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 
   cmd = `${cmd} table ${tableName}`;
   if (preference)
     cmd = `${cmd} preference ${preference}`;
+
+  log.debug('[routing] add route to table:', cmd);
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to add route to table.", result.stderr);
+    throw result.stderr;
+  }
+}
+
+function formatGetRouteCommand(dest, gateway, intf, tableName, metric, af=4) {
+  let cmd=`ip -${af} route show`;
+  if (tableName) {
+    cmd += ` table ${tableName}`
+  }
+  if (dest) {
+    cmd += ` ${dest}`
+  }
+  if (intf) {
+    cmd += ` dev ${intf}`
+  }
+  if (gateway) {
+    cmd += ` via ${gateway}`
+  }
+  if (metric) {
+    cmd += ` metric ${metric}`
+  }
+  return cmd;
+}
+
+async function searchRouteRules(dest, gateway, intf, tableName, metric=null, af=4) {
+  tableName = tableName || "main";
+  const cmd = formatGetRouteCommand(dest, gateway, intf, tableName, metric, af);
+  const result = await exec(cmd).then(r => r.stdout.trim()).catch((err) => {log.info(`Failed to get route using cmmand ${cmd}`, err.stderr); return "";});
+
+  return result.split("\n").filter(r => r.length > 0).map(r => r.trim());
+}
+
+
+async function getParsedRouteRules(dest, gateway, intf, tableName, af = 4) {
+  const results = await searchRouteRules(dest, gateway, intf, tableName, null, af)
+  return results.map((r) => {
+    const rule = new RouteRule({tableName: tableName, dest: dest, gateway: gateway, interface: intf, af: af})
+    rule.parse(r);
+    return rule;
+  });
+}
+
+
+async function removeDeviceRouteRule(intf, tableName, af = 4) {
+  const cmd=`sudo ip -${af} route flush table ${tableName} dev ${intf}`;
+  log.debug('[routing] flush device route rule:', cmd);
+  const result = await exec(cmd);
+  if (result.stderr !== "") {
+    log.error(`Failed to exec ${cmd}, err`, result.stderr);
     throw result.stderr;
   }
 }
@@ -221,7 +351,7 @@ async function addMultiPathRouteToTable(dest, tableName, af = 4, ...multipathDes
   }
 }
 
-async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type = "unicast") {
+async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type = "unicast", metric = null) {
   dest = dest || "default";
   tableName = tableName || "main";
   let cmd = `sudo ip -${af} route del ${type} ${dest}`;
@@ -231,7 +361,12 @@ async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type
   if (intf) {
     cmd = `${cmd} dev ${intf}`;
   }
+  if (metric) {
+    cmd = `${cmd} metric ${metric}`;
+  }
   cmd = `${cmd} table ${tableName}`;
+
+  log.debug(`[routing] remove route from table: ${cmd}`);
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to remove route from table.", result.stderr);
@@ -246,6 +381,7 @@ async function flushRoutingTable(tableName, af = null) {
   if (!af || af == 6)
     cmds.push(`sudo ip -6 route flush table ${tableName}`);
   for (const cmd of cmds) {
+    log.debug(`[routing] flush route table: ${cmd}`);
     await exec(cmd).catch((err) => {
       log.error(`Failed to flush routing table using command ${cmd}`, err.message);
     });
@@ -322,7 +458,13 @@ async function getInterfaceGWIP(intf, af = 4) {
   return nextHop;
 }
 
+async function getInterfaceByAddr(addr, af = 4) {
+  const dev = await exec(`ip -${af} -br a | grep ${addr} | awk '{print $1}'`).then((result) => result.stdout.trim()).catch((err) => {return null;});
+  return dev.split('@')[0]
+}
+
 module.exports = {
+  RouteRule: RouteRule,
   createCustomizedRoutingTable: createCustomizedRoutingTable,
   removeCustomizedRoutingTable: removeCustomizedRoutingTable,
   createPolicyRoutingRule: createPolicyRoutingRule,
@@ -340,6 +482,11 @@ module.exports = {
   createInterfaceGlobalLocalRoutingRules: createInterfaceGlobalLocalRoutingRules,
   removeInterfaceGlobalLocalRoutingRules: removeInterfaceGlobalLocalRoutingRules,
   getInterfaceGWIP: getInterfaceGWIP,
+  searchRouteRules: searchRouteRules,
+  getParsedRouteRules: getParsedRouteRules,
+  formatGetRouteCommand: formatGetRouteCommand, // only for testing
+  removeDeviceRouteRule: removeDeviceRouteRule,
+  getInterfaceByAddr: getInterfaceByAddr,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
   RT_WAN_ROUTABLE: RT_WAN_ROUTABLE,

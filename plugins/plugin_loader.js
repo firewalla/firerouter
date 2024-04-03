@@ -23,6 +23,7 @@ let pluginConfs = [];
 
 let pluginCategoryMap = {};
 
+let reapplyTriggeres = [];
 let scheduledReapplyTask = null;
 let restartRsyslogTask = null;
 
@@ -69,7 +70,7 @@ async function initPlugins() {
   log.info("Plugin initialized", pluginConfs);
 }
 
-function createPluginInstance(category, name, constructor) {
+function createPluginInstance(category, name, constructor, config=null) {
   let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
   if (instance)
     return instance;
@@ -83,6 +84,9 @@ function createPluginInstance(category, name, constructor) {
   instance = new constructor(name);
   instance.name = name;
   pluginCategoryMap[category][name] = instance;
+  if (config) {
+    instance.init(config);
+  }
   log.info("Instance created", instance.name);
   return instance;
 }
@@ -148,7 +152,7 @@ async function acquireApplyLock(func) {
   });
 }
 
-async function reapply(config, dryRun = false) {
+async function reapply(config, dryRun = false, eventType = null) {
   let t1, t2;
   return await lock.acquire(LOCK_REAPPLY, async () => {
     t1 = Date.now() / 1000;
@@ -179,7 +183,7 @@ async function reapply(config, dryRun = false) {
         }
         if (value) {
           for (let name in value) {
-            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
+            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c, pluginConf.config);
             if (!instance)
               continue;
             instance._mark = 1;
@@ -230,7 +234,7 @@ async function reapply(config, dryRun = false) {
             instance.configure(instance._nextConfig);
           if (instance.isReapplyNeeded()) {
             if (!dryRun) {
-              log.info("Flushing old config", pluginConf.category, instance.name);
+              log.info("Flushing old config", pluginConf.category, instance.name, "triggered by", eventType);
               await instance.flush();
               CHANGE_FLAGS |= FLAG_CHANGE;
               if (pluginConf.category === "interface")
@@ -297,10 +301,14 @@ async function reapply(config, dryRun = false) {
   });
 }
 
-function scheduleReapply() {
+function scheduleReapply(eventType) {
+  reapplyTriggeres.push(eventType);
+  log.debug('reapply triggers added', reapplyTriggeres);
   if (!scheduledReapplyTask) {
     scheduledReapplyTask = setTimeout(() => {
-      reapply(null, false);
+      let event = reapplyTriggeres.shift();
+      log.debug(`reapply triggered ${event}, ${reapplyTriggeres} remain waiting`);
+      reapply(null, false, event);
     }, 4000);
   } else {
     scheduledReapplyTask.refresh();
