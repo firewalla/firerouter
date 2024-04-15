@@ -41,6 +41,7 @@ const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
+const validator = require('validator');
 
 Promise.promisifyAll(fs);
 
@@ -993,7 +994,12 @@ class InterfaceBasePlugin extends Plugin {
     let pingResult = null;
     let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
-    let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+    let pingTestIP = defaultPingTestIP;
+    if (extraConf && _.isArray(extraConf.pingTestIP)) {
+      const ips = extraConf.pingTestIP.filter(ip => new Address4(ip).isValid());
+      if (!_.isEmpty(ips))
+        pingTestIP = ips;
+    }
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
     let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
@@ -1007,7 +1013,7 @@ class InterfaceBasePlugin extends Plugin {
       pingTestIP = pingTestIP.slice(0, 3);
     }
     const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
-    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
+    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain && validator.isFQDN(extraConf.dnsTestDomain)) ? extraConf.dnsTestDomain : defaultDnsTestDomain;
     const forceState = (extraConf && extraConf.forceState) || undefined;
 
     const carrierState = await this.carrierState();
