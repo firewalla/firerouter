@@ -27,17 +27,23 @@ self_mac=$(cat /sys/class/net/eth0/address)
 case $reason in
 
   BOUND6|REBOOT6)
-    pd_changed="1"
     pd_id=1
     pds=""
     pd_self_addr=""
     while [ $pd_id -lt 10 ]; do
+      status_code_name="new_dhcp6_ia_pd1_prefix${pd_id}_status_code"
+      eval "status_code=\$$status_code_name"
+      if [ "$status_code" = "6" ]; then
+        pd_id=$((pd_id + 1))
+        continue
+      fi
       new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
       eval "new_prefix=\$$new_prefix_name"
       new_prefix_length_name="new_dhcp6_ia_pd1_prefix${pd_id}_length"
       eval "new_prefix_length=\$$new_prefix_length_name"
       new_prefix_val="$new_prefix/$new_prefix_length"
       if [ $new_prefix_val != "/" ]; then
+        pd_changed="1"
         pds="$pds$new_prefix_val\n"
         prefix=$(echo $new_prefix_val | cut -d "/" -f 1)
         pd_self_addr=$(prefix_and_mac_to_ipv6 $prefix $self_mac)
