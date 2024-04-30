@@ -275,7 +275,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     const eventType = event.getEventType(e);
     if (eventType === event.EVENT_WAN_SWITCHED) {
       this._reapplyNeeded = true;
-      pl.scheduleReapply();
+      pl.scheduleReapply(eventType);
     }
   }
 }

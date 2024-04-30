@@ -1332,7 +1332,7 @@ class InterfaceBasePlugin extends Plugin {
           } else {
             // for interface that does not have L2, e.g., pppoe, simply reapply config on it
             this.propagateConfigChanged(true);
-            pl.scheduleReapply();
+            pl.scheduleReapply(eventType);
           }
         }
         break;
@@ -1345,7 +1345,7 @@ class InterfaceBasePlugin extends Plugin {
             this._reapplyNeeded = true;
             // trigger downstream plugins to reapply config
             this.propagateConfigChanged(true);
-            pl.scheduleReapply();
+            pl.scheduleReapply(eventType);
           });
         }
         break;
@@ -1360,7 +1360,7 @@ class InterfaceBasePlugin extends Plugin {
               // trigger downstream plugins to reapply, e.g., nat for ipv6
               this.propagateConfigChanged(true);
               this._reapplyNeeded = false;
-              pl.scheduleReapply();
+              pl.scheduleReapply(eventType);
               return pl.publishIfaceChangeApplied();
             }).catch((err) => {
               this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);

@@ -230,23 +230,54 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  async updateIntfRouteTable(intf, tableName, af = null, type = 'unicast') {
+  async refreshGlobalIntfRoutes(intf, af = null) {
+    // update global routes
+    const intfPlugin = this._wanStatus[intf].plugin;
+    const state = await intfPlugin.state();
+    if (!intfPlugin || !state) {
+      return
+    }
+
     if ( !af || af == 4 ) {
-      const ip4rules = await routing.searchRouteRules(null, null, intf, tableName, null, 4);
-      this.log.debug(`[update-route] ip4 rules (dev ${intf} table ${tableName}) to update ${JSON.stringify(ip4rules)}`);
+      if (state && state.ip4s) {
+        for (const ip4 of state.ip4s) {
+          const addr = new Address4(ip4);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await this.upsertRouteToTable(cidr, null, intf, routing.RT_GLOBAL_LOCAL, null, 4).catch((err) => { });
+          await this.upsertRouteToTable(cidr, null, intf, routing.RT_GLOBAL_DEFAULT, null, 4).catch((err) => { });
+        }
+      }
     }
 
     if ( !af || af == 6 ) {
-      const ip6rules = await routing.searchRouteRules(null, null, intf, tableName, null, 6);
-      this.log.debug(`[update-route] ip6 rules (dev ${intf} table ${tableName}) to update ${JSON.stringify(ip6rules)}`);
+      if (state && state.ip6) {
+        for (const ip6 of state.ip6) {
+          const addr = new Address6(ip6);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await this.upsertRouteToTable(cidr, null, intf, routing.RT_GLOBAL_LOCAL, null, 6).catch((err) => { });
+          await this.upsertRouteToTable(cidr, null, intf, routing.RT_GLOBAL_DEFAULT, null, 6).catch((err) => { });
+        }
+      }
     }
-  }
 
-  async updateGlobalRoutes(intf, af = null, type = 'unicast') {
-    await this.updateIntfRouteTable(intf, routing.RT_GLOBAL_DEFAULT, af, type);
-    await this.updateIntfRouteTable(intf, routing.RT_GLOBAL_LOCAL, af, type);
-    await this.updateIntfRouteTable(intf, routing.RT_STATIC, af, type);
-    await this.updateIntfRouteTable(intf, 'main', af, type);
+    // update default routes
+    if ( !af || af == 4 ) {
+      const gw = await routing.getInterfaceGWIP(intf, 4);
+      if (gw) {
+        await this.upsertRouteToTable("default", gw, intf, routing.RT_GLOBAL_DEFAULT, null, 4).catch((err) => { });
+        await this.upsertRouteToTable("default", gw, intf, "main", null, 4).catch((err) => { });
+      }
+    }
+
+    if ( !af || af == 6 ) {
+      const gw6 = await routing.getInterfaceGWIP(intf, 6);
+      if (gw6) {
+        await this.upsertRouteToTable("default", gw6, intf, routing.RT_GLOBAL_DEFAULT, null, 6).catch((err) => { });
+        await this.upsertRouteToTable("default", gw6, intf, "main", null, 6).catch((err) => { });
+      }
+    }
   }
 
   async upsertRouteToTable(dest, gateway, intf, tableName, metric, af = 4, type = "unicast") {
@@ -864,13 +895,19 @@ class RoutingPlugin extends Plugin {
       case event.EVENT_IP_CHANGE: {
         const payload = event.getEventPayload(e);
         const intf = payload && payload.intf;
-        if (intf && this.name == 'global') {
+        const intfPlugin = this._wanStatus[intf] && this._wanStatus[intf].plugin
+        const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || "single";
+     
+        if (this.pluginConfig && this.pluginConfig.smooth_failover) {
           // update global default routes related to the interface
-          this.updateGlobalRoutes(intf);
+          if (intfPlugin && type == 'primary_standby' && this.name == 'global') {
+            this.refreshGlobalIntfRoutes(intf);
+            break;
+          }
         }
         
         this._reapplyNeeded = true;
-        pl.scheduleReapply();
+        pl.scheduleReapply(eventType);
 
         break;
       }
@@ -896,7 +933,7 @@ class RoutingPlugin extends Plugin {
             pl.acquireApplyLock(async () => {
               this._reapplyNeeded = true;
               this.propagateConfigChanged(true);
-              pl.scheduleReapply();
+              pl.scheduleReapply(eventType);
             }).catch((err) => {});
           }
         }

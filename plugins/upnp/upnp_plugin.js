@@ -160,7 +160,7 @@ class UPnPPlugin extends Plugin {
       case event.EVENT_WAN_SWITCHED:
       case event.EVENT_IP_CHANGE: {
         this._reapplyNeeded = true;
-        pl.scheduleReapply();
+        pl.scheduleReapply(eventType);
         break;
       }
       default:

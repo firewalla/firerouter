@@ -95,7 +95,7 @@ class MDNSReflectorPlugin extends Plugin {
     switch (eventType) {
       case event.EVENT_IP_CHANGE: {
         this._reapplyNeeded = true;
-        pl.scheduleReapply();
+        pl.scheduleReapply(eventType);
         break;
       }
       default:

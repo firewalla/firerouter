@@ -97,7 +97,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
       case event.EVENT_IF_DOWN: {
         this._reapplyNeeded = true;
         this.propagateConfigChanged(true);
-        pl.scheduleReapply();
+        pl.scheduleReapply(eventType);
         break;
       }
       default:
