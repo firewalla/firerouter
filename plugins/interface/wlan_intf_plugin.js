@@ -148,6 +148,14 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async apply() {
+    if (!await r.verifyPermanentMAC(this.name)) {
+      this.log.error(`Permanent MAC address of ${this.name} is not valid, ignore it`);
+      return;
+    }
+    await super.apply();
+  }
+
   async flush() {
     await super.flush();
 
