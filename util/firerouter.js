@@ -229,7 +229,7 @@ async function verifyPermanentMAC(iface) {
     log.error(`Failed to get permanent MAC address of ${iface}`, err.message);
     return null;
   });
-  if (pmac && pmac.toUpperCase().startsWith("20:6D:31:"))
+  if (pmac && (pmac.toUpperCase().startsWith("20:6D:31:") || pmac.toUpperCase().startsWith("22:6D:31:"))) // Wi-Fi SD may have a private permanent MAC address on wlan1
     return true;
   return false;
 }
