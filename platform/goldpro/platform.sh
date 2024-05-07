@@ -1,4 +1,5 @@
 NETWORK_SETUP=yes
+NEED_FIRESTATUS=true
 
 function run_horse_light {
   flash_interval=${1:-2}
