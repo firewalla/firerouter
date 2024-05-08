@@ -201,8 +201,8 @@ class RoutingPlugin extends Plugin {
 
       if ( !af || af == 4 ) {
         if (state && state.ip4s) {
-          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 4);
-          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 4);
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 4).catch((err) => {this.log.warn(err.message)});
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 4).catch((err) => {this.log.warn(err.message)});
           for (const ip4 of state.ip4s) {
             const addr = new Address4(ip4);
             const networkAddr = addr.startAddress();
@@ -217,8 +217,8 @@ class RoutingPlugin extends Plugin {
 
       if ( !af || af == 6 ) {
         if (state && state.ip6) {
-          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 6);
-          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 6);
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 6).catch((err) => {this.log.warn(err.message)});
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 6).catch((err) => {this.log.warn(err.message)});
           for (const ip6 of state.ip6) {
             const addr = new Address6(ip6);
             const networkAddr = addr.startAddress();
