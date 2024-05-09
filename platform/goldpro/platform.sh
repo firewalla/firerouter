@@ -1,5 +1,6 @@
 NETWORK_SETUP=yes
 NEED_FIRESTATUS=true
+BLUETOOTH_TIMEOUT=3600
 
 function run_horse_light {
   flash_interval=${1:-2}
