@@ -20,8 +20,11 @@ case $reason in
     addr_id=1
     while [ $addr_id -lt 10 ]; do
       var_name="nd1_addr$addr_id"
+      prefix_length_var_name="nd1_prefix_information${addr_id}_length"
+      eval "prefix_length=\$$prefix_length_var_name"
+      echo "haha $prefix_length"
       eval "addr=\$$var_name"
-      if [ -n "$addr" ]; then
+      if [ -n "$addr" && $prefix_length -ge 64 ]; then
         new_addrs="$new_addrs$addr,"
         for rt_table in $rt_tables; do
           sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table
