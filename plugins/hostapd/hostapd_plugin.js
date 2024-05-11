@@ -75,10 +75,6 @@ class HostapdPlugin extends Plugin {
   }
 
   async apply() {
-    if (platform.wifiSD && !await r.verifyPermanentMAC(this.name)) {
-      this.log.error(`Permanent MAC address of ${this.name} is not valid, ignore it`);
-      return;
-    }
     const parameters = pluginConfig.default ? JSON.parse(JSON.stringify(pluginConfig.default)) : {};
     const params = this.networkConfig.params || {};
     parameters.interface = this.name;
@@ -100,6 +96,10 @@ class HostapdPlugin extends Plugin {
         return;
       }
       parameters.bridge = this.networkConfig.bridge;
+    }
+    if (platform.wifiSD && !await r.verifyPermanentMAC(this.name)) {
+      this.log.error(`Permanent MAC address of ${this.name} is not valid, ignore it`);
+      return;
     }
 
     if (params.ht_capab && !Array.isArray(params.ht_capab)) delete params.ht_capab
