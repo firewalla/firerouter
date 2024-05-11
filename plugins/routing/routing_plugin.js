@@ -166,13 +166,12 @@ class RoutingPlugin extends Plugin {
   }
 
   // should be protected by a lock when invoke
-  async _removeDeadRouting(tableName, af = null) {
+  async _removeDeviceRouting(intfPlugins, tableName, af = null) {
     // remove dead wan device from route table
-    const deadWANIntfs = this.getUnreadyWANPlugins();
-    if (!deadWANIntfs) {
+    if (!intfPlugins) {
       return;
     }
-    for (const intf of deadWANIntfs) {
+    for (const intf of intfPlugins) {
       // ignore gateway arg
       if (!af || af == 4) {
         await routing.removeDeviceRouteRule(intf.name, tableName).then(() => {
@@ -184,6 +183,41 @@ class RoutingPlugin extends Plugin {
         await routing.removeDeviceRouteRule(intf.name, tableName, 6).then(() => {
         }).catch((err) => {
           this.log.warn(err.message);
+        });
+      }
+    }
+  }
+
+  async _removeDeviceDnsRouting(intfPlugins, tableName, af = null) {
+    if (!intfPlugins) {
+      return;
+    }
+    if (!af || af == 4) {
+      for (const intf of intfPlugins) {
+        const dns = await intf.getDNSNameservers();
+        if (_.isArray(dns) && dns.length > 0) {
+          for (const dnsIP of dns) {
+            await routing.removeRouteFromTable(dnsIP, null, intf.name, tableName, 4).catch((err) => {
+              this.log.warn(`fail to remove route -4 ${dnsIP} dev ${intf.name} table ${tableName}, err:`, err.message)});
+          }
+        }
+      }
+    }
+  }
+
+  async _removeDeviceDefaultRouting(intfPlugins, tableName, af = null) {
+    if (!intfPlugins) {
+      return;
+    }
+    for (const intf of intfPlugins) {
+      if (!af || af == 4) {
+        await routing.removeRouteFromTable("default", null, intf.name, tableName).catch((err) => {
+            this.log.warn(`fail to remove route -4 default dev ${intf.name} table ${tableName}, err:`, err.message);
+        });
+      }
+      if (!af || af == 6) {
+        await routing.removeRouteFromTable("default", null, intf.name, tableName, 6).catch((err) => {
+          this.log.warn(`fail to remove route -6 default dev ${intf.name} table ${tableName}, err:`, err.message);
         });
       }
     }
@@ -365,9 +399,11 @@ class RoutingPlugin extends Plugin {
     await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
       // flush global default routing table, no need to touch global static routing table here
       if (this.pluginConfig && this.pluginConfig.smooth_failover) {
-        await this._removeDeadRouting(routing.RT_GLOBAL_DEFAULT, af);
-        await this._removeDeadRouting(routing.RT_GLOBAL_LOCAL, af);
-        await this._removeDeadRouting('main', af);
+        const deadWANIntfs = this.getUnreadyWANPlugins();
+        await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_DEFAULT, af);
+        await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_LOCAL, af);
+        await this._removeDeviceDnsRouting(deadWANIntfs, "main", af);
+        await this._removeDeviceDefaultRouting(deadWANIntfs, "main", af);
       } else {
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
         await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL, af);

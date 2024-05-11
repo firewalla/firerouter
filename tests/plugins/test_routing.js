@@ -25,7 +25,6 @@ let routing = require('../../util/routing.js');
 let RoutingPlugin = require('../../plugins/routing/routing_plugin.js');
 let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js');
 
-
 // path=routing {'routing': {...}} {"default":{"viaIntf":"eth0.204","type":"primary_standby","viaIntf2":"eth0","failback":true}}
 const routingConfig =  {
   "default":
@@ -77,6 +76,10 @@ describe('Test Routing WAN', function(){
         this.plugin._wanStatus["eth0"] = {seq:1, ready: true, active: false, plugin: new InterfaceBasePlugin('eth0')};
         this.plugin._wanStatus["eth0.204"] = {seq:0, ready: true, active: true, plugin: new InterfaceBasePlugin('eth0.204')};
         this.plugin._wanStatus["eth0.288"] = {ready: false, active: false, plugin: new InterfaceBasePlugin('eth0.288')};
+
+        await exec("echo 'nameserver 10.8.8.8'  >> /home/pi/.router/run/eth0.288.resolv.conf").catch((err) => {log.error("add eth0.288 resolvconf err,", err.stderr)});
+        await exec("echo 'nameserver 8.8.8.8'  >> /home/pi/.router/run/eth0.288.resolv.conf").catch((err) => {log.error("add eth0.288 resolvconf err,", err.stderr)});
+
         done();
     })()
   );
@@ -88,6 +91,7 @@ describe('Test Routing WAN', function(){
             await exec("sudo ip link set dev eth0.288 down").catch((err) => {});
             await exec("sudo ip addr del 10.88.8.1/32 dev eth0.288").catch((err) => {});
             await exec("sudo ip link del eth0.288").catch((err) => {});
+            await exec("rm /home/pi/.router/run/eth0.288.resolv.conf").catch((err) => {log.error("rm eth0.288 resolvconf err,", err.stderr)});
         }
         done();
     })()
@@ -99,17 +103,44 @@ describe('Test Routing WAN', function(){
     expect(deadWANs[0].name).to.be.equal('eth0.288');
   });
 
-  it('should remove dead route rules', async() => {
+  it('should remove dead device route rules', async() => {
+    const deadWANs = this.plugin.getUnreadyWANPlugins();
+
     let results = await routing.searchRouteRules(null, null, 'eth0.288', 'eth0.288_default');
     expect(results.length).to.be.equal(4);
 
-    await this.plugin._removeDeadRouting("eth0.288_default");
+    await this.plugin._removeDeviceRouting(deadWANs, "eth0.288_default");
 
+    results = await routing.searchRouteRules(null, null, 'eth0.288', 'eth0.288_default');
+    expect(results.length).to.be.equal(0);
+  });
+
+  it('should remove dead target route rules', async() => {
+    await exec("sudo ip route flush table eth0.288_default dev eth0.288").catch((err) => {});
+    await exec("sudo ip route add table eth0.288_default default via 10.88.8.1").catch((err) => {log.error("add route", err.message)});
+    await exec("sudo ip route add table eth0.288_default 8.8.8.8 dev eth0.288").catch((err) => {log.error("add route", err.message)});
+    await exec("sudo ip route add table eth0.288_default 10.8.8.8 dev eth0.288").catch((err) => {log.error("add route", err.message)});
+
+    const deadWANs = this.plugin.getUnreadyWANPlugins();
+    expect(deadWANs[0].name).to.be.equal('eth0.288');
+    expect(await deadWANs[0].getDNSNameservers()).to.be.eql(['10.8.8.8', '8.8.8.8']);
+
+    let results = await routing.searchRouteRules(null, null, 'eth0.288', 'eth0.288_default');
+    expect(results.length).to.be.equal(3);
+
+    // remote default route of dev eth0.288
+    await this.plugin._removeDeviceDefaultRouting(deadWANs, "eth0.288_default");
+    results = await routing.searchRouteRules(null, null, 'eth0.288', 'eth0.288_default');
+    expect(results.length).to.be.equal(2);
+
+    // remove dns routes
+    await this.plugin._removeDeviceDnsRouting(deadWANs, "eth0.288_default");
     results = await routing.searchRouteRules(null, null, 'eth0.288', 'eth0.288_default');
     expect(results.length).to.be.equal(0);
   });
   
   it('should upsert route', async() => {
+    await exec("sudo ip route flush table eth0.288_default dev eth0.288").catch((err) => {});
     await exec("sudo ip route add table eth0.288_default default via 10.88.8.1").catch((err) => {log.error("add route", err.message)});
     await exec("sudo ip route add table eth0.288_default 10.88.8.0/30 dev eth0.288").catch((err) => {log.error("add route", err.message)});
     await exec("sudo ip route add table eth0.288_default 10.88.8.3/32 via 10.88.8.1").catch((err) => {log.error("add route", err.message)});
@@ -187,6 +218,9 @@ describe('Test Routing WAN', function(){
     expect(results.includes('default via 192.168.10.254 dev eth0.204 metric 101')).to.be.true;
     expect(results.includes('default via 192.168.203.1 dev eth0 metric 2')).to.be.true;
 
+    results = await routing.searchRouteRules(null, null, 'eth0.204', 'main');
+    expect(results.includes('192.168.10.0/24 proto kernel scope link src 192.168.10.135')).to.be.true;
+
     this.plugin.networkConfig = routingConfig;
     this.plugin._wanStatus['eth0.204'].ready = true;
     await this.plugin._applyActiveGlobalDefaultRouting(false, 4);
@@ -195,13 +229,13 @@ describe('Test Routing WAN', function(){
     expect(results.includes('default via 192.168.203.1 dev eth0 metric 2')).to.be.true;
   });
 
-  it ('should get rule metric', () => {
+  it('should get rule metric', () => {
     expect(this.plugin._getRouteRuleMetric('table eth0.288_default 10.88.8.0/30 dev eth0.288')).to.be.null;
     expect(this.plugin._getRouteRuleMetric('table eth0.288_default 10.88.8.0/30 dev eth0.288 metric 1')).to.be.equal('1');
     expect(this.plugin._getRouteRuleMetric('fe80::/64 dev eth0.204  via fe80::226d:31ff:fe01:2b43 metric 1024 pref medium')).to.be.equal('1024');
   });
 
-  it ('should get rule gateway', () => {
+  it('should get rule gateway', () => {
     expect(this.plugin._getRouteRuleGateway('table eth0.288_default 10.88.8.0/30 dev eth0.288')).to.be.null;
     expect(this.plugin._getRouteRuleGateway('table eth0.288_default via 10.88.8.1 10.88.8.0/30 dev eth0.288 metric 1')).to.be.equal('10.88.8.1');
     expect(this.plugin._getRouteRuleGateway('fe80::/64 dev eth0.204 via fe80::226d:31ff:fe01:2b43 metric 1024 pref medium')).to.be.equal('fe80::226d:31ff:fe01:2b43');
