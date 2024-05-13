@@ -118,9 +118,13 @@ describe('Test Routing WAN', function(){
   it('should remove dead target route rules', async() => {
     await exec("sudo ip route flush table eth0.288_default dev eth0.288").catch((err) => {});
     await exec("sudo ip route add table eth0.288_default default via 10.88.8.1").catch((err) => {log.error("add route", err.message)});
-    await exec("sudo ip route add table eth0.288_default 8.8.8.8 dev eth0.288").catch((err) => {log.error("add route", err.message)});
-    await exec("sudo ip route add table eth0.288_default 10.8.8.8 dev eth0.288").catch((err) => {log.error("add route", err.message)});
+    await exec("sudo ip route add table eth0.288_default 8.8.8.8 via 10.88.8.1 dev eth0.288 metric 101").catch((err) => {log.error("add route", err.message)});
+    await exec("sudo ip route add table eth0.288_default 10.8.8.8  via 10.88.8.1 dev eth0.288 metric 101").catch((err) => {log.error("add route", err.message)});
 
+    this.plugin._dnsRoutes = {"eth0.288":[
+      {dest: '8.8.8.8', viaIntf: 'eth0.288', gw: '10.88.8.1', metric: 101, tableName: 'eth0.288_default'},
+      {dest: '10.8.8.8', viaIntf: 'eth0.288', gw: '10.88.8.1', metric: 101, tableName: 'eth0.288_default'},
+    ]};
     const deadWANs = this.plugin.getUnreadyWANPlugins();
     expect(deadWANs[0].name).to.be.equal('eth0.288');
     expect(await deadWANs[0].getDNSNameservers()).to.be.eql(['10.8.8.8', '8.8.8.8']);
@@ -134,7 +138,7 @@ describe('Test Routing WAN', function(){
     expect(results.length).to.be.equal(2);
 
     // remove dns routes
-    await this.plugin._removeDeviceDnsRouting(deadWANs, "eth0.288_default");
+    await this.plugin._removeDeviceDnsRouting(deadWANs);
     results = await routing.searchRouteRules(null, null, 'eth0.288', 'eth0.288_default');
     expect(results.length).to.be.equal(0);
   });

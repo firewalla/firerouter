@@ -79,11 +79,11 @@ class RoutingPlugin extends Plugin {
           }
           if (!af || af == 4) {
             // remove DNS specific routes
-            if (_.isArray(this._dnsRoutes)) {
-              for (const dnsRoute of this._dnsRoutes)
-                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, "main", 4).catch((err) => { });
+            if (_.isObject(this._dnsRoutes)) {
+              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]))
+                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", 4).catch((err) => { });
             }
-            this._dnsRoutes = [];
+            this._dnsRoutes = {};
           }
           break;
         }
@@ -188,18 +188,19 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  async _removeDeviceDnsRouting(intfPlugins, tableName, af = null) {
+  async _removeDeviceDnsRouting(intfPlugins, af = null) {
     if (!intfPlugins) {
       return;
     }
     if (!af || af == 4) {
       for (const intf of intfPlugins) {
-        const dns = await intf.getDNSNameservers();
-        if (_.isArray(dns) && dns.length > 0) {
-          for (const dnsIP of dns) {
-            await routing.removeRouteFromTable(dnsIP, null, intf.name, tableName, 4).catch((err) => {
-              this.log.warn(`fail to remove route -4 ${dnsIP} dev ${intf.name} table ${tableName}, err:`, err.message)});
+        if (this._dnsRoutes && _.isArray(this._dnsRoutes[intf.name])) {
+          for (const dnsRoute of this._dnsRoutes[intf.name]){
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: "main", 4).catch((err) => {
+              this.log.warn('fail to remove dns route from table main, err:', err.message)
+            })
           }
+          delete (this._dnsRoutes, intf.name);
         }
       }
     }
@@ -221,6 +222,22 @@ class RoutingPlugin extends Plugin {
         });
       }
     }
+  }
+
+  _updateDnsRouteCache(dnsIP, gw, viaIntf, metric, tableName="main") {
+    if (!this._dnsRoutes){
+      this._dnsRoutes = {}
+    }
+    if (!this._dnsRoutes[viaIntf]) {
+      this._dnsRoutes[viaIntf] = [];
+    }
+    for (const dns of this._dnsRoutes[viaIntf]) {
+      if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.metric == metric && dns.tableName == tableName) {
+        // ensure no duplicates
+        return;
+      }
+    }
+    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: tableName});
   }
 
   async refreshGlobalIntfRoutes(intf, af = null) {
@@ -277,7 +294,6 @@ class RoutingPlugin extends Plugin {
           if (_.isArray(mainRules) && mainRules.length > 0) {
             for (const rule of mainRules) {
               if (rule.includes('default') || !rule.includes('via')) { // skip default
-                this.log.debug('[skip] del table main', rule);
                 continue
               }
               const cmd = `sudo ip -${af} route del ${rule} dev ${intf} table main`;
@@ -291,7 +307,9 @@ class RoutingPlugin extends Plugin {
             for (const dnsIP of dns) {
               await routing.addRouteToTable(dnsIP, gw, intf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
                 this.log.warn(`fail to add route -4 ${dnsIP} via ${gw} dev ${intf} table ${routing.RT_GLOBAL_DEFAULT}, err:`, err.message)});
-              await routing.addRouteToTable(dnsIP, gw, intf, "main", metric, 4).catch((err) => {
+              await routing.addRouteToTable(dnsIP, gw, intf, "main", metric, 4).then(() => {
+                this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, "main");
+              }).catch((err) => {
                 this.log.warn(`fail to add route -4 ${dnsIP} via ${gw} dev ${intf} table main, err:`, err.message)});
             }
           }
@@ -383,13 +401,14 @@ class RoutingPlugin extends Plugin {
       }
       if (!af || af == 4) {
         // remove DNS specific routes
-        if (_.isArray(this._dnsRoutes)) {
-          for (const dnsRoute of this._dnsRoutes)
-            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, "main", 4).catch((err) => {
+        if (_.isObject(this._dnsRoutes)) {
+          for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key])) {
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName : "main", 4).catch((err) => {
               this.log.warn('fail to remove dns route from table main, err:', err.message)
             });
+          }
         }
-        this._dnsRoutes = [];
+        this._dnsRoutes = {};
       }
   }
 
@@ -402,7 +421,7 @@ class RoutingPlugin extends Plugin {
         const deadWANIntfs = this.getUnreadyWANPlugins();
         await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_DEFAULT, af);
         await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_LOCAL, af);
-        await this._removeDeviceDnsRouting(deadWANIntfs, "main", af);
+        await this._removeDeviceDnsRouting(deadWANIntfs, af, "main");
         await this._removeDeviceDefaultRouting(deadWANIntfs, "main", af);
       } else {
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
@@ -411,8 +430,6 @@ class RoutingPlugin extends Plugin {
 
       if (!this.pluginConfig || !this.pluginConfig.smooth_failover) {
         await this._removeMainRoutes(af);
-      } else if (!af || af == 4) {
-        this._dnsRoutes = [];
       }
 
       const type = this.networkConfig.default.type || "single";
@@ -469,10 +486,11 @@ class RoutingPlugin extends Plugin {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
                     // update all dns routes via the same interface but with new metrics in main table
-                    await this.upsertRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4).catch((err) => {
+                    await this.upsertRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4).then(() => {
+                      this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, "main");
+                    }).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    this._dnsRoutes.push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric});
                   }
                 }
               } else {
@@ -558,7 +576,14 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    this._dnsRoutes.push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric});
+                    if (!this._dnsRoutes){
+                      log.warn("should init _dnsRoutes in load_balance mode");
+                      this._dnsRoutes = {}
+                    }
+                    if (!this._dnsRoutes[viaIntf]) {
+                      this._dnsRoutes[viaIntf] = [];
+                    }
+                    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: "main"});
                   }
                 }
               } else {
