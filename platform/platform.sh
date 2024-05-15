@@ -4,7 +4,7 @@ FW_PLATFORM_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
 UNAME=$(uname -m)
 NETWORK_SETUP=yes
-BLUETOOTH_TIMEOUT=0
+BLUETOOTH_TIMEOUT=3600
 
 function run_horse_light {
   return
