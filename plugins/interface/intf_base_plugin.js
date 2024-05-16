@@ -921,7 +921,7 @@ class InterfaceBasePlugin extends Plugin {
 
     const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
     if(!dnsResult) {
-      this.log.error("failed to resolve dns on domain", u.hostname);
+      this.log.error("failed to resolve dns on domain", u.hostname, 'on', this.name);
       delete this.isHttpTesting[defaultTestURL];
       return null;
     }
@@ -1174,7 +1174,7 @@ class InterfaceBasePlugin extends Plugin {
       }
 
       const result = await Promise.any(promises).catch((err) => {
-        this.log.error("no valid dns from any nameservers", err.message);
+        this.log.error("no valid dns from any nameservers on", this.name, err.message);
         return null;
       });
       return result;
