@@ -308,7 +308,7 @@ class RoutingPlugin extends Plugin {
               await routing.addRouteToTable(dnsIP, gw, intf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
                 this.log.warn(`fail to add route -4 ${dnsIP} via ${gw} dev ${intf} table ${routing.RT_GLOBAL_DEFAULT}, err:`, err.message)});
               await routing.addRouteToTable(dnsIP, gw, intf, "main", metric, 4).then(() => {
-                this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, "main");
+                this._updateDnsRouteCache(dnsIP, gw, intf, metric, "main");
               }).catch((err) => {
                 this.log.warn(`fail to add route -4 ${dnsIP} via ${gw} dev ${intf} table main, err:`, err.message)});
             }
