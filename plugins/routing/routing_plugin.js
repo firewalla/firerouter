@@ -417,7 +417,8 @@ class RoutingPlugin extends Plugin {
     // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
     await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
       // flush global default routing table, no need to touch global static routing table here
-      if (this.pluginConfig && this.pluginConfig.smooth_failover) {
+      const type = this.networkConfig.default.type || "single";
+      if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
         const deadWANIntfs = this.getUnreadyWANPlugins();
         await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_DEFAULT, af);
         await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_LOCAL, af);
@@ -428,11 +429,10 @@ class RoutingPlugin extends Plugin {
         await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL, af);
       }
 
-      if (!this.pluginConfig || !this.pluginConfig.smooth_failover) {
+      if (type !== 'primary_standby' || !this.pluginConfig || !this.pluginConfig.smooth_failover) {
         await this._removeMainRoutes(af);
       }
 
-      const type = this.networkConfig.default.type || "single";
       switch (type) {
         case "single":
         case "primary_standby": {
@@ -966,9 +966,9 @@ class RoutingPlugin extends Plugin {
         const intfPlugin = this._wanStatus[intf] && this._wanStatus[intf].plugin
         const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || "single";
      
-        if (this.pluginConfig && this.pluginConfig.smooth_failover) {
+        if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
           // update global default routes related to the interface
-          if (intfPlugin && type == 'primary_standby' && this.name == 'global') {
+          if (intfPlugin && this.name == 'global') {
             this.refreshGlobalIntfRoutes(intf, 4);
             break;
           }
