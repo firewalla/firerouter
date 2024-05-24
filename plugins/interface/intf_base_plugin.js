@@ -41,6 +41,7 @@ const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
+const validator = require('validator');
 
 Promise.promisifyAll(fs);
 
@@ -920,7 +921,7 @@ class InterfaceBasePlugin extends Plugin {
 
     const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
     if(!dnsResult) {
-      this.log.error("failed to resolve dns on domain", u.hostname);
+      this.log.error("failed to resolve dns on domain", u.hostname, 'on', this.name);
       delete this.isHttpTesting[defaultTestURL];
       return null;
     }
@@ -993,7 +994,12 @@ class InterfaceBasePlugin extends Plugin {
     let pingResult = null;
     let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
-    let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+    let pingTestIP = defaultPingTestIP;
+    if (extraConf && _.isArray(extraConf.pingTestIP)) {
+      const ips = extraConf.pingTestIP.filter(ip => new Address4(ip).isValid());
+      if (!_.isEmpty(ips))
+        pingTestIP = ips;
+    }
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
     let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
@@ -1007,7 +1013,7 @@ class InterfaceBasePlugin extends Plugin {
       pingTestIP = pingTestIP.slice(0, 3);
     }
     const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
-    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
+    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain && validator.isFQDN(extraConf.dnsTestDomain)) ? extraConf.dnsTestDomain : defaultDnsTestDomain;
     const forceState = (extraConf && extraConf.forceState) || undefined;
 
     const carrierState = await this.carrierState();
@@ -1168,7 +1174,7 @@ class InterfaceBasePlugin extends Plugin {
       }
 
       const result = await Promise.any(promises).catch((err) => {
-        this.log.error("no valid dns from any nameservers", err.message);
+        this.log.error("no valid dns from any nameservers on", this.name, err.message);
         return null;
       });
       return result;
@@ -1315,18 +1321,24 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
-          // WAN interface plugged, need to restart dhcp client if applicable
-          if (this.isDHCP()) {
-            if (this.networkConfig.dhcp) {
-              this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
-                this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
-              });
+          if (this.hasHardwareAddress()) {
+            // WAN interface plugged, need to restart dhcp client if applicable
+            if (this.isDHCP()) {
+              if (this.networkConfig.dhcp) {
+                this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
+                  this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+                });
+              }
+              if (this.networkConfig.dhcp6) {
+                this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
+                  this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
+                });
+              }
             }
-            if (this.networkConfig.dhcp6) {
-              this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
-                this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
-              });
-            }
+          } else {
+            // for interface that does not have L2, e.g., pppoe, simply reapply config on it
+            this.propagateConfigChanged(true);
+            pl.scheduleReapply();
           }
         }
         break;
