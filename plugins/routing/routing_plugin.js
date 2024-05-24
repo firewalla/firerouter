@@ -79,11 +79,11 @@ class RoutingPlugin extends Plugin {
           }
           if (!af || af == 4) {
             // remove DNS specific routes
-            if (_.isArray(this._dnsRoutes)) {
-              for (const dnsRoute of this._dnsRoutes)
-                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, "main", 4).catch((err) => { });
+            if (_.isObject(this._dnsRoutes)) {
+              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]))
+                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", 4).catch((err) => { });
             }
-            this._dnsRoutes = [];
+            this._dnsRoutes = {};
           }
           break;
         }
@@ -165,13 +165,217 @@ class RoutingPlugin extends Plugin {
     this.lastApplyTimestamp = now;
   }
 
-  async _applyActiveGlobalDefaultRouting(inAsyncContext = false, af = null) {
-    this.meterApplyActiveGlobalDefaultRouting();
-    // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
-    await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
-      // flush global default routing table, no need to touch global static routing table here
-      await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
-      await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL, af);
+  // should be protected by a lock when invoke
+  async _removeDeviceRouting(intfPlugins, tableName, af = null) {
+    // remove dead wan device from route table
+    if (!intfPlugins) {
+      return;
+    }
+    for (const intf of intfPlugins) {
+      // ignore gateway arg
+      if (!af || af == 4) {
+        await routing.removeDeviceRouteRule(intf.name, tableName).then(() => {
+        }).catch((err) => {
+          this.log.warn(err.message);
+        });
+      }
+      if (!af || af == 6) {
+        await routing.removeDeviceRouteRule(intf.name, tableName, 6).then(() => {
+        }).catch((err) => {
+          this.log.warn(err.message);
+        });
+      }
+    }
+  }
+
+  async _removeDeviceDnsRouting(intfPlugins, af = null) {
+    if (!intfPlugins) {
+      return;
+    }
+    if (!af || af == 4) {
+      for (const intf of intfPlugins) {
+        if (this._dnsRoutes && _.isArray(this._dnsRoutes[intf.name])) {
+          for (const dnsRoute of this._dnsRoutes[intf.name]){
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: "main", 4).catch((err) => {
+              this.log.warn('fail to remove dns route from table main, err:', err.message)
+            })
+          }
+          delete (this._dnsRoutes, intf.name);
+        }
+      }
+    }
+  }
+
+  async _removeDeviceDefaultRouting(intfPlugins, tableName, af = null) {
+    if (!intfPlugins) {
+      return;
+    }
+    for (const intf of intfPlugins) {
+      if (!af || af == 4) {
+        await routing.removeRouteFromTable("default", null, intf.name, tableName).catch((err) => {
+            this.log.warn(`fail to remove route -4 default dev ${intf.name} table ${tableName}, err:`, err.message);
+        });
+      }
+      if (!af || af == 6) {
+        await routing.removeRouteFromTable("default", null, intf.name, tableName, 6).catch((err) => {
+          this.log.warn(`fail to remove route -6 default dev ${intf.name} table ${tableName}, err:`, err.message);
+        });
+      }
+    }
+  }
+
+  _updateDnsRouteCache(dnsIP, gw, viaIntf, metric, tableName="main") {
+    if (!this._dnsRoutes){
+      this._dnsRoutes = {}
+    }
+    if (!this._dnsRoutes[viaIntf]) {
+      this._dnsRoutes[viaIntf] = [];
+    }
+    for (const dns of this._dnsRoutes[viaIntf]) {
+      if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.metric == metric && dns.tableName == tableName) {
+        // ensure no duplicates
+        return;
+      }
+    }
+    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: tableName});
+  }
+
+  async refreshGlobalIntfRoutes(intf, af = null) {
+    await lock.acquire(LOCK_SHARED, async () => {
+      // update global routes
+      const intfPlugin = this._wanStatus[intf] && this._wanStatus[intf].plugin;
+      if (!intfPlugin) {
+        return
+      }
+      const state = await intfPlugin.state();
+      const metric = this._wanStatus[intf].seq + 1 + (this._wanStatus[intf].ready ? 0 : 100);
+
+      if ( !af || af == 4 ) {
+        if (state && state.ip4s) {
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 4).catch((err) => {this.log.warn(err.message)});
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 4).catch((err) => {this.log.warn(err.message)});
+          for (const ip4 of state.ip4s) {
+            const addr = new Address4(ip4);
+            const networkAddr = addr.startAddress();
+            const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+            await routing.addRouteToTable(cidr, null, intf, routing.RT_GLOBAL_LOCAL, metric, 4).catch((err) => {
+              this.log.warn(`fail to add route ${cidr} dev ${intf} table ${routing.RT_GLOBAL_LOCAL}, err:`, err.message)});
+            await routing.addRouteToTable(cidr, null, intf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
+              this.log.warn(`fail to add route ${cidr} dev ${intf} table ${routing.RT_GLOBAL_DEFAULT}, err:`, err.message)});
+          }
+        }
+      }
+
+      if ( !af || af == 6 ) {
+        if (state && state.ip6) {
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 6).catch((err) => {this.log.warn(err.message)});
+          await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 6).catch((err) => {this.log.warn(err.message)});
+          for (const ip6 of state.ip6) {
+            const addr = new Address6(ip6);
+            const networkAddr = addr.startAddress();
+            const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+            await routing.addRouteToTable(cidr, null, intf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => {
+              this.log.warn(`fail to add route -6 ${cidr} dev ${intf} table ${routing.RT_GLOBAL_LOCAL}, err:`, err.message)});
+            await routing.addRouteToTable(cidr, null, intf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => {
+              this.log.warn(`fail to add route -6 ${cidr} dev ${intf} table ${routing.RT_GLOBAL_DEFAULT}, err:`, err.message)});
+          }
+        }
+      }
+
+      // update default routes
+      if ( !af || af == 4 ) {
+        const gw = await routing.getInterfaceGWIP(intf, 4);
+        if (gw) {
+          await this.upsertRouteToTable("default", gw, intf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { this.log.warn('fail to upsert route', err.message)});
+          await this.upsertRouteToTable("default", gw, intf, "main", metric, 4).catch((err) => { this.log.warn('fail to upsert route', err.message)});
+
+          // remove routes in table main except for default
+          const mainRules = await routing.searchRouteRules(null, null, intf, 'main');
+          if (_.isArray(mainRules) && mainRules.length > 0) {
+            for (const rule of mainRules) {
+              if (rule.includes('default') || !rule.includes('via')) { // skip default
+                continue
+              }
+              const cmd = `sudo ip -${af} route del ${rule} dev ${intf} table main`;
+              this.log.debug(`[routing] remove route from table main: ${cmd}`);
+              await exec(cmd).catch((err) => {this.log.warn(`fail to delete route ${cmd}`, err.message)});
+            }
+          }
+
+          const dns = await intfPlugin.getDNSNameservers();
+          if (_.isArray(dns) && dns.length > 0) {
+            for (const dnsIP of dns) {
+              await routing.addRouteToTable(dnsIP, gw, intf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
+                this.log.warn(`fail to add route -4 ${dnsIP} via ${gw} dev ${intf} table ${routing.RT_GLOBAL_DEFAULT}, err:`, err.message)});
+              await routing.addRouteToTable(dnsIP, gw, intf, "main", metric, 4).then(() => {
+                this._updateDnsRouteCache(dnsIP, gw, intf, metric, "main");
+              }).catch((err) => {
+                this.log.warn(`fail to add route -4 ${dnsIP} via ${gw} dev ${intf} table main, err:`, err.message)});
+            }
+          }
+        }
+      }
+
+      if ( !af || af == 6 ) {
+        const gw6 = await routing.getInterfaceGWIP(intf, 6);
+        if (gw6) {
+          await this.upsertRouteToTable("default", gw6, intf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
+          await this.upsertRouteToTable("default", gw6, intf, "main", metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
+        }
+      }
+    });
+  }
+
+  async upsertRouteToTable(dest, gateway, intf, tableName, metric, af = 4, type = "unicast") {
+    let replace = false;
+    // check if exists (dest, gateway, int, tableName, metric=null, af)
+    const currentRules = await routing.searchRouteRules(dest, null, intf, tableName, null, af);
+    this.log.debug(`[upsertRoute] search routes found (-${af} ${dest} dev ${intf} table ${tableName}): ${JSON.stringify(currentRules)}`);
+    if (currentRules && currentRules.length > 0) {
+      replace = true;
+    }
+    await routing.addRouteToTable(dest, gateway, intf, tableName, metric, af, replace, type).catch((err) => {
+      this.log.warn(`fail to ${replace?'replace':'add' } route (${dest} via ${gateway} dev ${intf} table ${tableName}), err:`, err.message);
+    });
+
+    // remove but keep the newly added rule
+    if (currentRules && currentRules.length > 0) {
+      for (const rule of currentRules) {
+        const rulemetric = this._getRouteRuleMetric(rule);
+        const rulegateway = this._getRouteRuleGateway(rule);
+        if ( ((!metric && !rulemetric) || rulemetric == metric) && ((!rulegateway && !gateway) || rulegateway == gateway) ){
+          continue;
+        }
+        const cmd = `sudo ip -${af} route del ${rule} dev ${intf} table ${tableName}`;
+        this.log.debug(`[upsertRoute] remove route from table ${tableName}: ${cmd}`);
+        await exec(cmd).catch((err) => {this.log.warn(`fail to delete route`, err.message)});
+      }
+    }
+  }
+
+  _getRouteRuleMetric(rule) {
+    const matches = rule.match(/metric\s(\d+)/);
+    if (matches && matches.length >= 1){
+      return matches[1];
+    }
+    const preferences = rule.match(/preference\s(\d+)/);
+    if (preferences && preferences.length >= 1){
+      return preferences[1];
+    }
+
+    return null;
+  }
+
+  _getRouteRuleGateway(rule) {
+    const matches = rule.match(/via\s([\w:.]+)/);
+    if (matches && matches.length >= 1){
+      return matches[1];
+    }
+
+    return null;
+  }
+
+  async _removeMainRoutes(af=null) {
       // remove all default route in main table
       let routeRemoved = false;
       if (!af || af == 4) {
@@ -180,6 +384,7 @@ class RoutingPlugin extends Plugin {
             routeRemoved = true;
           }).catch((err) => {
             routeRemoved = false;
+            this.log.warn('fail to remove route default from table main, err:', err.message)
           });
         } while (routeRemoved)
       }
@@ -190,18 +395,44 @@ class RoutingPlugin extends Plugin {
             routeRemoved = true;
           }).catch((err) => {
             routeRemoved = false;
+            this.log.warn('fail to remove route default from table main, err:', err.message)
           });
         } while (routeRemoved)
       }
       if (!af || af == 4) {
         // remove DNS specific routes
-        if (_.isArray(this._dnsRoutes)) {
-          for (const dnsRoute of this._dnsRoutes)
-            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, "main", 4).catch((err) => { });
+        if (_.isObject(this._dnsRoutes)) {
+          for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key])) {
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName : "main", 4).catch((err) => {
+              this.log.warn('fail to remove dns route from table main, err:', err.message)
+            });
+          }
         }
-        this._dnsRoutes = [];
+        this._dnsRoutes = {};
       }
+  }
+
+  async _applyActiveGlobalDefaultRouting(inAsyncContext = false, af = null) {
+    this.meterApplyActiveGlobalDefaultRouting();
+    // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
+    await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
+      // flush global default routing table, no need to touch global static routing table here
       const type = this.networkConfig.default.type || "single";
+      if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
+        const deadWANIntfs = this.getUnreadyWANPlugins();
+        await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_DEFAULT, af);
+        await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_LOCAL, af);
+        await this._removeDeviceDnsRouting(deadWANIntfs, af, "main");
+        await this._removeDeviceDefaultRouting(deadWANIntfs, "main", af);
+      } else {
+        await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
+        await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL, af);
+      }
+
+      if (type !== 'primary_standby' || !this.pluginConfig || !this.pluginConfig.smooth_failover) {
+        await this._removeMainRoutes(af);
+      }
+
       switch (type) {
         case "single":
         case "primary_standby": {
@@ -221,8 +452,8 @@ class RoutingPlugin extends Plugin {
                   const addr = new Address4(ip4);
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric).catch((err) => { });
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric).catch((err) => { });
+                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric).catch((err) => { });
+                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric).catch((err) => { });
                 }
               } else {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
@@ -234,8 +465,8 @@ class RoutingPlugin extends Plugin {
                   const addr = new Address6(ip6Addr);
                   const networkAddr = addr.startAddress();
                   const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => { });
-                  await routing.addRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
+                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => { });
+                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 }
               } else {
                 this.log.info("No ip6 found on global default interface " + viaIntf);
@@ -245,39 +476,33 @@ class RoutingPlugin extends Plugin {
             const gw = await routing.getInterfaceGWIP(viaIntf);
             if (!af || af == 4) {
               if (gw) { // IPv4 default route for inactive WAN is still required for WAN connectivity check
-                await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
-                await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
+                await this.upsertRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
+                await this.upsertRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 // add route for DNS nameserver IP in global_default table
                 const dns = await viaIntfPlugin.getDNSNameservers();
                 if (_.isArray(dns) && dns.length !== 0) {
                   for (const dnsIP of dns) {
-                    await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
+                    await this.upsertRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    let dnsRouteRemoved = false;
-                    // remove all dns routes via the same interface but with different metrics in main table
-                    do {
-                      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, "main").then(() => {
-                        dnsRouteRemoved = true;
-                      }).catch((err) => {
-                        dnsRouteRemoved = false;
-                      })
-                    } while (dnsRouteRemoved)
-                    await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
+                    // update all dns routes via the same interface but with new metrics in main table
+                    await this.upsertRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4).then(() => {
+                      this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, "main");
+                    }).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    this._dnsRoutes.push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric});
                   }
                 }
               } else {
                 this.log.error("Failed to get gateway IP of global default interface " + viaIntf);
               }
             }
+
             const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
             if (!af || af == 6) {
               if (gw6 && (ready || type === "single")) { // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
-                await routing.addRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
-                await routing.addRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
+                await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
+                await this.upsertRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
               } else {
                 this.log.info("IPv6 gateway is not defined on global default interface " + viaIntf);
               }
@@ -351,7 +576,14 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, "main", metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    this._dnsRoutes.push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric});
+                    if (!this._dnsRoutes){
+                      log.warn("should init _dnsRoutes in load_balance mode");
+                      this._dnsRoutes = {}
+                    }
+                    if (!this._dnsRoutes[viaIntf]) {
+                      this._dnsRoutes[viaIntf] = [];
+                    }
+                    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: "main"});
                   }
                 }
               } else {
@@ -398,6 +630,7 @@ class RoutingPlugin extends Plugin {
       this.fatal(`Network config for ${this.name} is not set`);
       return;
     }
+
     await lock.acquire(LOCK_SHARED, async () => {
       const lastWanStatus = this._wanStatus || {};
       if (!this._wanStatus)
@@ -418,7 +651,7 @@ class RoutingPlugin extends Plugin {
                     const viaIntf2 = settings.viaIntf2;
                     const viaIntf2Plugin = pl.getPluginInstance("interface", viaIntf2);
                     if (!viaIntf2Plugin)
-                      this.fatal(`Cannot find global defautl interface plugin ${viaIntf2}`);
+                      this.fatal(`Cannot find global default interface plugin ${viaIntf2}`);
                     this.subscribeChangeFrom(viaIntf2Plugin);
                     wanStatus[viaIntf2] = {
                       active: false,
@@ -674,6 +907,14 @@ class RoutingPlugin extends Plugin {
       return null;
   }
 
+  getUnreadyWANPlugins() {
+    if (this._wanStatus){
+      return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].ready == false).map(i => this._wanStatus[i].plugin);
+    }
+    else
+      return null;
+  }
+
   getAllWANPlugins() {
     if (this._wanStatus)
       return Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
@@ -720,6 +961,18 @@ class RoutingPlugin extends Plugin {
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_IP_CHANGE: {
+        const payload = event.getEventPayload(e);
+        const intf = payload && payload.intf;
+        const intfPlugin = this._wanStatus[intf] && this._wanStatus[intf].plugin
+        const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || "single";
+     
+        if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
+          // update global default routes related to the interface
+          if (intfPlugin && this.name == 'global') {
+            this.refreshGlobalIntfRoutes(intf, 4);
+            break;
+          }
+        }
         this._reapplyNeeded = true;
         pl.scheduleReapply();
         break;
