@@ -224,6 +224,7 @@ function scheduleRestartFireBoot(delay = 10) {
   }, delay * 1000);
 }
 
+// return true if it has valid MAC address, false otherwise. Or return null if permanent MAC cannot be obtained via ethtool -P
 async function verifyPermanentMAC(iface) {
   const pmac = await exec(`sudo ethtool -P ${iface}`).then(result => result.stdout.substring("Permanent address:".length).trim()).catch((err) => {
     log.error(`Failed to get permanent MAC address of ${iface}`, err.message);
