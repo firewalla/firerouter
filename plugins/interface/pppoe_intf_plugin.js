@@ -39,9 +39,12 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
   }
 
-  async flushIP() {
-    await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
-    await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
+  async flushIP(af = null) {
+    if (!af) {
+      await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
+      await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
+    } else
+      await super.flushIP(af);
   }
 
   isWAN() {
