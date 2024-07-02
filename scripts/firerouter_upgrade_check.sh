@@ -19,6 +19,15 @@ echo $$ > $LOCK_FILE
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
+[ -s $FIREROUTER_HOME/scripts/firelog ] && FIRELOG=$FIREROUTER_HOME/scripts/firelog || FIRELOG=/usr/bin/logger
+
+FRFLAG="/home/pi/.router/config/.no_upgrade_check"
+if [[ -e $FRFLAG ]]; then
+  $FIRELOG -t debug -m "FIREROUTER.UPGRADE.CHECK NO UPGRADE"
+  echo "======= SKIP UPGRADING CHECK BECAUSE OF FLAG $FRFLAG ======="
+  exit 0
+fi
+
 source ${FIREROUTER_HOME}/bin/common
 source ${FIREROUTER_HOME}/platform/platform.sh
 
