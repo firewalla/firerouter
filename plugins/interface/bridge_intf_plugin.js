@@ -47,6 +47,11 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       }
     }
 
+    if (presentInterfaces.length == 0 && this.networkConfig.intf.length == 1 && this.networkConfig.intf[0] == "wlan1") {
+      this.log.warn(`skip creating bridge ${this.name} without interfaces`)
+      return;
+    }
+
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
     });
