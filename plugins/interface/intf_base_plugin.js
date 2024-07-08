@@ -41,6 +41,7 @@ const era = require('../../event/EventRequestApi.js');
 const EventConstants = require('../../event/EventConstants.js');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
+const validator = require('validator');
 
 Promise.promisifyAll(fs);
 
@@ -454,6 +455,19 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  _overrideNTPoverDHCP(dhclientConf){
+    // replace with ntp options
+    if (this.networkConfig.allowNTPviaDHCP === true){
+      dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, ", ntp-servers");
+      dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, " dhcp6.sntp-servers,");
+    } else {
+      // replace with empty string
+      dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, "");
+      dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, "");
+    }
+    return dhclientConf
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
       const dhcpOptions = [];
@@ -463,6 +477,7 @@ class InterfaceBasePlugin extends Plugin {
         }
       }
       let dhclientConf = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhclient.conf.template`, {encoding: "utf8"});
+      dhclientConf=this._overrideNTPoverDHCP(dhclientConf);
       dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
       await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
       await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
@@ -702,12 +717,18 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async getMTU() {
+    return fs.readFileAsync(`/sys/class/net/${this.name}/mtu`, {encoding: "utf8"}).then(result => Number(result.trim())).catch((err) => {
+      this.log.error(`Failed to get MTU of ${this.name}`, err.message);
+      return null;
+    });
+  }
+
   async setMTU() {
     const mtu = this.networkConfig.mtu || this.getDefaultMTU();
-    if (mtu)
-      await exec(`sudo ip link set ${this.name} mtu ${mtu}`).catch((err) => {
-        this.log.error(`Failed to set MTU of ${this.name} to ${mtu}`, err.message);
-      });
+    const currentMTU = await this.getMTU();
+    if (mtu && mtu !== currentMTU)
+      await platform.setMTU(this.name, mtu);
   }
 
   async setSysOpts() {
@@ -900,7 +921,7 @@ class InterfaceBasePlugin extends Plugin {
 
     const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
     if(!dnsResult) {
-      this.log.error("failed to resolve dns on domain", u.hostname);
+      this.log.error("failed to resolve dns on domain", u.hostname, 'on', this.name);
       delete this.isHttpTesting[defaultTestURL];
       return null;
     }
@@ -973,7 +994,12 @@ class InterfaceBasePlugin extends Plugin {
     let pingResult = null;
     let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
-    let pingTestIP = (extraConf && extraConf.pingTestIP) || defaultPingTestIP;
+    let pingTestIP = defaultPingTestIP;
+    if (extraConf && _.isArray(extraConf.pingTestIP)) {
+      const ips = extraConf.pingTestIP.filter(ip => new Address4(ip).isValid());
+      if (!_.isEmpty(ips))
+        pingTestIP = ips;
+    }
     let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
     let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
@@ -987,7 +1013,7 @@ class InterfaceBasePlugin extends Plugin {
       pingTestIP = pingTestIP.slice(0, 3);
     }
     const pingSuccessRate = (extraConf && extraConf.pingSuccessRate) || defaultPingSuccessRate;
-    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain) || defaultDnsTestDomain;
+    const dnsTestDomain = (extraConf && extraConf.dnsTestDomain && validator.isFQDN(extraConf.dnsTestDomain)) ? extraConf.dnsTestDomain : defaultDnsTestDomain;
     const forceState = (extraConf && extraConf.forceState) || undefined;
 
     const carrierState = await this.carrierState();
@@ -1148,7 +1174,7 @@ class InterfaceBasePlugin extends Plugin {
       }
 
       const result = await Promise.any(promises).catch((err) => {
-        this.log.error("no valid dns from any nameservers", err.message);
+        this.log.error("no valid dns from any nameservers on", this.name, err.message);
         return null;
       });
       return result;
@@ -1295,8 +1321,22 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState = this._wanConnState || { ready: true, successCount: OFF_ON_THRESHOLD - 1, failureCount: 0 };
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
-          // WAN interface plugged, need to reapply WAN interface config
-          if (this.isDHCP()) {
+          if (this.hasHardwareAddress()) {
+            // WAN interface plugged, need to restart dhcp client if applicable
+            if (this.isDHCP()) {
+              if (this.networkConfig.dhcp) {
+                this.flushIP(4).then(() => this.renewDHCPLease()).catch((err) => {
+                  this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
+                });
+              }
+              if (this.networkConfig.dhcp6) {
+                this.flushIP(6).then(() => this.renewDHCP6Lease()).catch((err) => {
+                  this.log.error(`Failed to renew DHCPv6 lease on interface ${this.name}`, err.message);
+                });
+              }
+            }
+          } else {
+            // for interface that does not have L2, e.g., pppoe, simply reapply config on it
             this.propagateConfigChanged(true);
             pl.scheduleReapply();
           }
@@ -1306,11 +1346,13 @@ class InterfaceBasePlugin extends Plugin {
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
         if (this.networkConfig && this.networkConfig.allowHotplug === true) {
-          platform.clearMacCache(this.name);
-          this._reapplyNeeded = true;
-          // trigger downstream plugins to reapply config
-          this.propagateConfigChanged(true);
-          pl.scheduleReapply();
+          pl.acquireApplyLock(async () => {
+            platform.clearMacCache(this.name);
+            this._reapplyNeeded = true;
+            // trigger downstream plugins to reapply config
+            this.propagateConfigChanged(true);
+            pl.scheduleReapply();
+          });
         }
         break;
       }
@@ -1319,14 +1361,16 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
-            // trigger downstream plugins to reapply, e.g., nat for ipv6
-            this.propagateConfigChanged(true);
-            this._reapplyNeeded = false;
-            pl.scheduleReapply();
-            return pl.publishIfaceChangeApplied();
-          }).catch((err) => {
-            this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+          pl.acquireApplyLock(async () => {
+            await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+              // trigger downstream plugins to reapply, e.g., nat for ipv6
+              this.propagateConfigChanged(true);
+              this._reapplyNeeded = false;
+              pl.scheduleReapply();
+              return pl.publishIfaceChangeApplied();
+            }).catch((err) => {
+              this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
+            });
           });
         }
         break;
