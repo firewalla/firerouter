@@ -69,7 +69,7 @@ async function initPlugins() {
   log.info("Plugin initialized", pluginConfs);
 }
 
-function createPluginInstance(category, name, constructor) {
+function createPluginInstance(category, name, constructor, config=null) {
   let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
   if (instance)
     return instance;
@@ -83,6 +83,9 @@ function createPluginInstance(category, name, constructor) {
   instance = new constructor(name);
   instance.name = name;
   pluginCategoryMap[category][name] = instance;
+  if (config) {
+    instance.init(config);
+  }
   log.info("Instance created", instance.name);
   return instance;
 }
@@ -140,6 +143,14 @@ function getLastAppliedTimestamp() {
   return lastAppliedTimestamp;
 }
 
+async function acquireApplyLock(func) {
+  return lock.acquire(LOCK_REAPPLY, async () => {
+    await func()
+  }).catch((err) => {
+    log.error(`Failed to run async function with apply lock`, err.message);
+  });
+}
+
 async function reapply(config, dryRun = false) {
   let t1, t2;
   return await lock.acquire(LOCK_REAPPLY, async () => {
@@ -171,7 +182,7 @@ async function reapply(config, dryRun = false) {
         }
         if (value) {
           for (let name in value) {
-            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
+            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c, pluginConf.config);
             if (!instance)
               continue;
             instance._mark = 1;
@@ -313,6 +324,7 @@ module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
   getPluginInstances: getPluginInstances,
+  acquireApplyLock: acquireApplyLock,
   reapply: reapply,
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,
