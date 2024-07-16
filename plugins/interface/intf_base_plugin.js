@@ -52,6 +52,7 @@ const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const DHCP_RESTART_INTERVAL = 4;
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 5;
+const DUID_RECORD_MAX = 10;
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -377,6 +378,12 @@ class InterfaceBasePlugin extends Plugin {
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
       content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
+      // customize duid type
+      if (this.networkConfig.dhcp6.duidType) {
+        await this._genDuid(this.networkConfig.dhcp6.duidType);
+      } else {
+        await this._unsetDuid();
+      }
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
@@ -440,8 +447,114 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  // just for readability
+  _formatDuid(segment) {
+    return segment.replace(/-/g,"").match(/.{1,2}/g).join(":")
+  }
+
   _getDHClientConfigPath() {
     return `${r.getUserConfigFolder()}/dhclient/${this.name}.conf`;
+  }
+
+  _getDuidType(duid) {
+    const prefix = duid.slice(0,5);
+    let duidType = '';
+    switch (prefix) {
+      case '00:01':
+        duidType = 'DUID-LLT';
+        break;
+      case '00:02':
+        duidType = 'DUID-EN';
+        break;
+      case '00:03':
+        duidType = 'DUID-LL';
+        break;
+      case '00:04':
+        duidType = 'DUID-UUID';
+        break;
+      default:
+        break;
+    }
+    return duidType;
+  }
+
+  async _getDuid() {
+    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => null);
+  }
+
+  async _unsetDuid() {
+    const lastDuid = await this.getLastDuid();
+    if (!lastDuid) {
+      return;
+    }
+    const currentDuid = await this._getDuid();
+    this.log.info("unset duid", this.name, currentDuid);
+    await rclient.delAsync(`duid_record`);
+    await exec(`cat /dev/null | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+  }
+
+  // Generate DHCP Unique Identifier (DUID), see RFC8415
+  async _genDuid(duidType, force=false) {
+    let origDuid = await this._getDuid();
+    const origDuidType = this._getDuidType(origDuid);
+    if (origDuidType == duidType && !force) {
+      this.log.info('duid already generated as', origDuid);
+      return;
+    }
+    let duid, eth0Mac;
+    switch (duidType) {
+      case 'DUID-LLT':
+        // 00:01 DUID-Type (DUID-LLT), 00:01 hardware type (Ethernet)
+        eth0Mac = await fs.readFileAsync("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        if (eth0Mac) {
+          const ts = this._formatDuid(Math.floor(Date.now()/1000).toString(16));
+          duid = `00:01:00:01:${ts}:${eth0Mac}`;
+        }
+        break;
+      case 'DUID-EN':
+        // TODO 00:02 DUID-Type (DUID-EN)
+        break;
+      case 'DUID-LL':
+        // 00:03 DUID-Type (DUID-LL), 00:01 hardware type (Ethernet)
+        eth0Mac = await fs.readFileAsync("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        if (eth0Mac) {
+          duid = `00:03:00:01:${eth0Mac}`;
+        }
+        break;
+      case 'DUID-UUID':
+        // 00:04 DUID-Type (DUID-UUID), DUID Based on UUID, see rfc6355
+        const uuid = await fs.readFileAsync("/var/lib/dbus/machine-id", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        if (uuid) {
+          duid = '00:04:' + this._formatDuid(uuid);
+        }
+        break;
+      default:
+    }
+    if (!duid) {
+      this.log.warn("cannot generate duid of type %s", duidType);
+      return;
+    }
+    // save previous duid in redis
+    await this.saveDuidRecord(`${origDuid}#${duidType}:${duid}`);
+    await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+    return duid;
+  }
+
+  async getLastDuid(){
+    const results = await rclient.zrevrangeAsync(`duid_record`, 0, 0);
+    if (results.length > 0) {
+      return results[0];
+    }
+    return null;
+  }
+
+  async saveDuidRecord(record){
+    await rclient.zaddAsync('duid_record', Math.floor(new Date() / 1000), record);
+    // keep latest records
+    const count = await rclient.zcardAsync('duid_record');
+    if (count > DUID_RECORD_MAX) {
+      await rclient.zremrangebyrankAsync('duid_record', 0, count-DUID_RECORD_MAX-1);
+    }
   }
 
   isStaticIP() {
