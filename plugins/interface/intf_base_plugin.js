@@ -364,6 +364,7 @@ class InterfaceBasePlugin extends Plugin {
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
       const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
       const pdHints = this.networkConfig.dhcp6.pdHints || [];
+      const rapidCommitOpts = this.networkConfig.dhcp6.rapidCommit === false ? "#option rapid_commit" : "option rapid_commit";
       const ianaOpts = this.networkConfig.dhcp6.iana === false ? "" : "ia_na"; // by default ia_na will be specified unless explicitly disabled
       const pdOpts = [];
       for (let i = 1; i <= numOfPDs; i++) {
@@ -372,6 +373,7 @@ class InterfaceBasePlugin extends Plugin {
         else
           pdOpts.push(`ia_pd ${i}${pdSize ? `/::/${pdSize}` : ""} not_exist/1`);
       }
+      content = content.replace(/%RAPID_COMMIT_OPTS%/g, rapidCommitOpts);
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
       content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
