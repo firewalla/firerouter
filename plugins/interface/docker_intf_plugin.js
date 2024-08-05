@@ -34,7 +34,9 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
   async flush() {
     await super.flush();
     await this._testAndStartDocker();
-    await exec(`sudo docker network rm ${this.name}`).catch((err) => {});
+    await exec(`sudo docker network rm ${this.name}`).catch((err) => {
+      this.log.error(`Failed to remove docker network ${this.name}: ${err.message}`);
+    });
   }
 
   async _testAndStartDocker() {
@@ -43,13 +45,30 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       await exec(`sudo systemctl start docker`).catch((err) => {});
   }
 
+  async _checkNetworkExists() {
+    const result = await exec(`sudo docker network ls -f name=${this.name} -q`).then((result) => result.stdout.trim()).catch((err) => "");
+    return result !== "";
+  }
+
   async createInterface() {
     await this._testAndStartDocker();
+    const exists = await this._checkNetworkExists();
+    if (exists) {
+      // do not recreate interface if it already exists
+      // this is because super.flush will fail to remove networks if there are containers attached to the network
+      // and this is very likely that there are running containers in production
+      // so we just skip the creation instead of breaking the apply process
+      this.log.info("Docker network already exists, skip creation");
+      return true;
+    }
+
     const driver = this.networkConfig.driver || "bridge";
     const intfName = this.name;
     const subnets = [];
     const opts = this.networkConfig.options || [];
-    opts.push(`--driver=${driver}`);
+    // make opts immutable
+    const optsCopy = JSON.parse(JSON.stringify(opts));
+    optsCopy.push(`--driver=${driver}`);
     let ip4s = this.networkConfig.ipv4s || [];
     if (this.networkConfig.ipv4)
       ip4s.push(this.networkConfig.ipv4);
@@ -61,7 +80,7 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       const gateway = ip4Addr.addressMinusSuffix;
       if (!subnets.includes(subnet)) {
         subnets.push(subnet);
-        Array.prototype.push.apply(opts, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
+        Array.prototype.push.apply(optsCopy, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
       } else {
         this.log.error(`IPv4 address ${ip4} overlapped with another subnet on ${intfName} and will be skipped`);
       }
@@ -74,16 +93,19 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       const gateway = ip6Addr.addressMinusSuffix;
       if (!subnets.includes(subnet)) {
         subnets.push(subnet);
-        Array.prototype.push.apply(opts, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
+        Array.prototype.push.apply(optsCopy, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
       } else {
         this.log.error(`IPv6 address ${ip6} overlapped with another subnet on ${intfName} and will be skipped`);
       }
     }
     const driverOpts = this.networkConfig.driverOptions || [];
+    // make driverOpts immutable
+    const driverOptsCopy = JSON.parse(JSON.stringify(driverOpts));
+
     if (driver === "bridge") {
-      driverOpts.push(`"com.docker.network.bridge.name"="${intfName}"`);
+      driverOptsCopy.push(`"com.docker.network.bridge.name"="${intfName}"`);
     }
-    const args = opts.concat(driverOpts.map(opt => `-o ${opt}`));
+    const args = optsCopy.concat(driverOptsCopy.map(opt => `-o ${opt}`));
     await exec(`sudo docker network create ${args.join(" ")} ${intfName}`).catch((err) => {
       this.fatal(`Failed to create docker network ${this.name}`, err.message);
     });
