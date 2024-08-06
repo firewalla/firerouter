@@ -580,8 +580,8 @@ class NetworkConfigManager {
     return result
   }
 
-  async getActiveConfig() {
-    const configString = await rclient.getAsync("sysdb:networkConfig");
+  async getActiveConfig(transaction = false) {
+    const configString = await rclient.getAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig");
     if(configString) {
       try {
         const config = JSON.parse(configString);
