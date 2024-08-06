@@ -1,4 +1,4 @@
-/*    Copyright 2021-2023 Firewalla Inc.
+/*    Copyright 2021-2024 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -46,6 +46,7 @@ const defaultGlobalConfig = {
 
   // sets freq_list globally limits the frequencies being scaned
   freq_list: APSafeFreqs,
+  pmf: 1,
 }
 
 const defaultNetworkConfig = {
@@ -149,7 +150,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async apply() {
-    if (platform.wifiSD && !await r.verifyPermanentMAC(this.name)) {
+    if (platform.wifiSD && await this.isInterfacePresent() && !await r.verifyPermanentMAC(this.name)) {
       this.log.error(`Permanent MAC address of ${this.name} is not valid, ignore it`);
       return;
     }
