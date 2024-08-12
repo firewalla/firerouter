@@ -47,6 +47,10 @@ class WlanConfUpdateSensor extends Sensor {
   }
 
   async checkAndUpdateNetworkConfig(iface) {
+    if (!await r.verifyPermanentMAC(iface)) {
+      this.log.error(`Permanent MAC address of ${iface} is not valid, ignore it`);
+      return;
+    }
     await ncm.acquireConfigRWLock(async () => {
       const currentConfig = await ncm.getActiveConfig();
       if (currentConfig && currentConfig.interface) { // assume "interface" exists under root

@@ -29,5 +29,6 @@ fi
 
 # adjust receive packet steering on pppoe interface
 sudo bash -c "echo ${RPS_CPUS} > /sys/class/net/${INTF}/queues/rx-0/rps_cpus" || true
+sudo ethtool -K ${INTF} rx-udp-gro-forwarding on || true
 
 redis-cli -n 1 publish "pppoe.ip_change" "$INTF"
