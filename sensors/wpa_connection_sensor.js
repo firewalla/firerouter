@@ -1,4 +1,4 @@
-!/*    Copyright 2021-2022 Firewalla Inc.
+!/*    Copyright 2021-2023 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -18,7 +18,7 @@ const Sensor = require("./sensor.js");
 const r = require('../util/firerouter.js');
 const event = require('../core/event.js');
 const pl = require('../plugins/plugin_loader.js');
-const rclientDB0 = require('../util/redis_manager.js').getRedisClient(0);
+const rclientDB0 = require('../util/redis_manager.js').getPrimaryDBRedisClient()
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const exec = require('child-process-promise').exec;
 const platformLoader = require('../platform/PlatformLoader.js');

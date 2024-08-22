@@ -30,7 +30,7 @@ class Plugin {
 
   init(pluginConfig) {
     this.pluginConfig = pluginConfig;
-    this.log.info(`Initializing Plugin ${this.constructor.name}...`);
+    this.log.info(`Initializing Plugin ${this.constructor.name} ${JSON.stringify(pluginConfig)}...`);
   }
 
   configure(networkConfig) {
