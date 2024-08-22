@@ -104,6 +104,10 @@ sudo ipset flush -! osi_subnet_set &>/dev/null
 sudo ipset flush -! osi_rules_mac_set &>/dev/null
 sudo ipset flush -! osi_rules_subnet_set &>/dev/null
 
+# ipset for wan inbound block during reboot, service restart/upgrade
+sudo ipset create -! osi_wan_inbound_set hash:net,iface timeout 600 &>/dev/null
+sudo ipset flush -! osi_wan_inbound_set &> /dev/null
+
 # use this knob to match everything if needed
 sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
 sudo ipset flush -! osi_match_all_knob &>/dev/null
@@ -125,6 +129,11 @@ if [[ -z "$OSI_TIMEOUT" ]]; then
   OSI_TIMEOUT=600 # default 10 mins
 fi
 
+mode=$(redis-cli get mode)
+if [[ -z "$mode" ]]; then
+  mode="router"
+fi
+
 function prepare_osi {
   # fullfil from redis
   redis-cli smembers osi:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "mac" || $1 == "tag" {print "add osi_mac_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
@@ -135,6 +144,14 @@ function prepare_osi {
   # only clear for initial setup
   sudo ipset flush -! osi_verified_mac_set &>/dev/null
   sudo ipset flush -! osi_verified_subnet_set &>/dev/null
+
+  if [[ $mode == "router" ]]; then
+    wans=$(curl 'http://localhost:8837/v1/config/wans' | jq -r 'keys[]')
+    while IFS= read -r wan; do
+      sudo ipset add -! osi_wan_inbound_set 0.0.0.0/1,$wan
+      sudo ipset add -! osi_wan_inbound_set 128.0.0.0/1,$wan
+    done <<< "$wans"
+  fi
 }
 
 
@@ -172,6 +189,8 @@ sudo iptables -w -A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob dst
 
 sudo iptables -w -N FR_OSI &> /dev/null
 sudo iptables -w -F FR_OSI &> /dev/null
+# block inbound connection during reboot/restart
+sudo iptables -w -A FR_OSI -m set --match-set osi_wan_inbound_set src,src -j DROP &>/dev/null
 # only these devices are subjected to inspection
 sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
 sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION &>/dev/null
@@ -260,6 +279,10 @@ sudo ipset create -! osi_rules_subnet6_set hash:net family inet6 timeout 600 &>/
 sudo ipset flush -! osi_subnet6_set &>/dev/null
 sudo ipset flush -! osi_rules_subnet6_set &>/dev/null
 
+# ipset for wan inbound block during reboot, service restart/upgrade
+sudo ipset create -! osi_wan_inbound_set6 hash:net,iface family inet6 timeout 600 &>/dev/null
+sudo ipset flush -! osi_wan_inbound_set6 &> /dev/null
+
 # use this knob to match everything if needed
 sudo ipset create -! osi_match_all_knob6 hash:net family inet6 &>/dev/null
 sudo ipset flush -! osi_match_all_knob6 &>/dev/null
@@ -281,6 +304,14 @@ function prepare_osi6 {
   redis-cli smembers osi:rules:active | awk -v OSI_TIMEOUT="$OSI_TIMEOUT" -F, '$1 == "network6" {print "add osi_rules_subnet6_set " $NF " timeout " OSI_TIMEOUT}' | sudo ipset -! restore &> /dev/null
 
   sudo ipset flush -! osi_verified_subnet6_set &>/dev/null
+
+  if [[ $mode == "router" ]]; then
+    wans=$(curl 'http://localhost:8837/v1/config/wans' | jq -r 'keys[]')
+    while IFS= read -r wan; do
+      sudo ipset add -! osi_wan_inbound_set6 ::/1,$wan
+      sudo ipset add -! osi_wan_inbound_set6 8000::/1,$wan
+    done <<< "$wans"
+  fi
 }
 
 # DO NOT FULLFIL FROM REDIS WHEN FIREWALLA IS ALREADY RUNNING
@@ -315,6 +346,8 @@ sudo ip6tables -w -A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob6 d
 
 sudo ip6tables -w -N FR_OSI &> /dev/null
 sudo ip6tables -w -F FR_OSI &> /dev/null
+# block inbound connection during reboot/restart
+sudo ip6tables -w -A FR_OSI -m set --match-set osi_wan_inbound_set6 src,src -j DROP &>/dev/null
 # only these devices are subjected to inspection
 sudo ip6tables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
 sudo ip6tables -w -A FR_OSI -m set --match-set osi_subnet6_set src -j FR_OSI_INSPECTION &>/dev/null
