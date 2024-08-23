@@ -58,6 +58,9 @@
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
+      "config": {
+        "smooth_failover": true
+      },
       "init_seq": 5
     },
     {
@@ -157,6 +160,12 @@
       "file_path": "./ipchange_sensor.js",
       "config": {
         "delay": 5
+      }
+    },
+    {
+      "file_path": "./kern_netdev_sensor.js",
+      "config": {
+        "kern_netdev_enable_reboot": false
       }
     },
     {
