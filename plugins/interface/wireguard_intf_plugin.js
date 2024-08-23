@@ -26,6 +26,7 @@ const util = require('../../util/util.js');
 const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
+const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 const bindIntfRulePriority = 5999;
 
@@ -67,9 +68,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     if(bindIntf) {
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
-    } else {
-      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
-      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
     }
     this._bindIntf = null;
   }
@@ -173,8 +171,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
     await this._resetBindIntfRule().catch((err) => {});
     // add specific routing for wireguard outgoing packets
-    let bindIntf = this.networkConfig.bindIntf;
-    if (!bindIntf) {
+    let bindIntf = this.networkConfig.bindIntf || null;
+    // try to find active interface as bindIntf if it is unspecified in config
+    if (!_.has(this.networkConfig, "bindIntf")) {
       const routingPlugin = pl.getPluginInstance("routing", "global");
       if (routingPlugin) {
         this.subscribeChangeFrom(routingPlugin);
@@ -193,8 +192,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
       this._bindIntf = bindIntf;
     } else {
-      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
-      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
+      // if bindIntf is null, no need to bind it to any wan interface
       this._bindIntf = null;
     }
 
@@ -268,6 +266,10 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return state;
   }
 
+  hasHardwareAddress() {
+    return false;
+  }
+
   onEvent(e) {
     super.onEvent(e);
     const eventType = event.getEventType(e);
@@ -285,7 +287,11 @@ const dgram = require('dgram');
 const CTRLMessages = {
   PEER_ENDPOINT_INFO: "msg:peer_endpoint_info",
   ROUTE_REQUEST: "msg:route_request",
-  ROUTE_DECISION: "msg:route_decision"
+  ROUTE_DECISION: "msg:route_decision",
+  INFO_REQUEST: "msg:info_request",
+  INFO_RESPONSE: "msg:info_response",
+  PEER_INFO_REQUEST: "msg:peer_info_request",
+  PEER_INFO_RESPONSE: "msg:peer_info_response"
 };
 const LOCK_PEER_INFO = "lock_peer_info";
 const AsyncLock = require('async-lock');
@@ -370,6 +376,22 @@ class WireguardMeshAutomata {
             }).catch((err) => {});
             break;
           }
+          case CTRLMessages.INFO_REQUEST: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handleInfoRequestMsg(msg, info).catch((err) => {
+                this.log.error(`Failed to handle info request message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
+          case CTRLMessages.PEER_INFO_REQUEST: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handlePeerInfoRequestMsg(msg, info).catch((err) => {
+                this.log.error(`Failed to handle peer info request message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
           default:
             this.log.error(`Unknown message type ${msg.type} from peer ${from}, ignore`);
         }
@@ -418,6 +440,62 @@ class WireguardMeshAutomata {
 
   getPeerInfo() {
     return this.peerInfo;
+  }
+
+  isAnyPeerVPNIP(ip) {
+    for (const pubKey of Object.keys(this.peerInfo)) {
+      const info = this.peerInfo[pubKey];
+      const peerIP = info.peerIP;
+      if (peerIP) {
+        const pip = peerIP.split('/')[0];
+        if (ip === pip) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  async handleInfoRequestMsg(msg, info) {
+    try {
+      const address = info.address;
+      if (this.isAnyPeerVPNIP(address)) {
+        // populate peer name for better readability at app side
+        const name = await rclient.getAsync("groupName") || "";
+        const model = await rclient.getAsync("model") || "";
+        const type = CTRLMessages.INFO_RESPONSE;
+        const data = JSON.stringify({name, model, type});
+
+        this.socket.send(data, 6666, info.address);
+      } else {
+        this.log.warn("Not a valid vpn ip:", address, "ignore");
+      }
+    } catch (err) {
+      this.log.error("Failed to handle info request message", err.message);
+    }
+  }
+
+  async handlePeerInfoRequestMsg(msg, info) {
+    try {
+      const addr = info.address;
+      const publicKey = msg.key;
+      const peer = this.peerInfo[publicKey];
+      if(peer) {
+        const peerCopy = JSON.parse(JSON.stringify(peer));
+        delete peerCopy.router;
+        delete peerCopy.connected;
+        delete peerCopy.asRouter;
+        delete peerCopy.useOrigEndpoint;
+        peerCopy.type = CTRLMessages.PEER_INFO_RESPONSE;
+        peerCopy.from = this.pubKey;
+        peerCopy.key = publicKey;
+        const payload = JSON.stringify(peerCopy);
+        this.socket.send(payload, 6666, addr);
+      }
+    } catch (err) {
+      this.log.error("Failed to handle peer info request message", err.message);
+    }
   }
 
   async sendPeerEndpointInfoMsg() {
