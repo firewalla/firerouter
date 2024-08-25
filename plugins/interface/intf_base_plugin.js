@@ -646,6 +646,12 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  async resetConnmark() {
+    // reset first bit of connmark to make packets of established connections go through iptables filter again
+    await exec(`sudo conntrack -U -m 0x00000000/0x80000000`).catch((err) => {});
+    await exec(`sudo conntrack -U -f ipv6 -m 0x00000000/0x80000000`).catch((err) => {});
+  }
+
   async updateRouteForDNS() {
     // TODO: there is no IPv6 DNS currently
     const dns = await this.getDNSNameservers();
@@ -776,6 +782,8 @@ class InterfaceBasePlugin extends Plugin {
     await this.applyDnsSettings();
 
     await this.changeRoutingTables();
+
+    await this.resetConnmark();
 
     if (this.isWAN()) {
       this._wanStatus = {};
