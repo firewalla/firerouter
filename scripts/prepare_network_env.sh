@@ -351,6 +351,8 @@ sudo ip -6 r flush table static
 
 # ------ initialize ip rules
 # do not touch ip rules created by Firewalla
+# intermediate state of ip rule initializaton may result in wrong routing decision and wrongly accepts a packet that should be blocked, so temporarily suspend packet forward
+sudo iptables -w -C FR_FORWARD -m comment --comment "forward temp suspend" -j DROP &> /dev/null || sudo iptables -w -I FR_FORWARD -m comment --comment "forward temp suspend" -j DROP
 rules_to_remove=`ip rule list | grep -v -e "^\(5000\|6000\|10000\):" | cut -d: -f2-`;
 while IFS= read -r line; do
   sudo ip rule del $line
@@ -363,7 +365,9 @@ sudo ip rule add pref 32767 from all lookup default
 sudo ip rule add pref 500 from all iif lo lookup global_local
 sudo ip rule add pref 4001 from all lookup static
 "
+sudo iptables -w -D FR_FORWARD -m comment --comment "forward temp suspend" -j DROP
 
+sudo ip6tables -w -C FR_FORWARD -m comment --comment "forward temp suspend" -j DROP &> /dev/null || sudo ip6tables -w -I FR_FORWARD -m comment --comment "forward temp suspend" -j DROP
 rules_to_remove=`ip -6 rule list | grep -v -e "^\(5000\|6000\|10000\):" | cut -d: -f2-`;
 while IFS= read -r line; do
   sudo ip -6 rule del $line
@@ -376,4 +380,4 @@ sudo ip -6 rule add pref 32767 from all lookup default
 sudo ip -6 rule add pref 500 from all iif lo lookup global_local
 sudo ip -6 rule add pref 4001 from all lookup static
 "
-
+sudo ip6tables -w -D FR_FORWARD -m comment --comment "forward temp suspend" -j DROP
