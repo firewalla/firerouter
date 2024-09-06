@@ -131,6 +131,22 @@ class GSEPlatform extends Platform {
     return;
   }
 
+  async setHardwareAddress(iface, hwAddr) {
+    if (!this._isWLANInterface(iface)) {
+      await super.setHardwareAddress(iface, hwAddr);
+      return;
+    }
+    
+    if(hwAddr) {
+      const activeMac = await this.getActiveMac(iface);
+      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
+        log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
+        return;
+      }
+      await this._setHardwareAddress(iface, hwAddr);
+    }
+  }
+
   async resetHardwareAddress(iface) {
     log.info(`reset ${iface} hardware address`);
     if(!this._isWLANInterface(iface)) {
