@@ -19,6 +19,7 @@ const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const _ = require('lodash');
 const url = require('url');
+const { v4: uuidv4 } = require("uuid");
 
 const r = require('../../util/firerouter');
 
@@ -382,7 +383,7 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp6.duidType) {
         await this._genDuid(this.networkConfig.dhcp6.duidType);
       } else {
-        await this._unsetDuid();
+        await this._resetDuid();
       }
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
@@ -482,15 +483,24 @@ class InterfaceBasePlugin extends Plugin {
     return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => null);
   }
 
-  async _unsetDuid() {
-    const lastDuid = await this.getLastDuid();
-    if (!lastDuid) {
-      return;
+  async _resetDuid() {
+    let duidType = 'DUID-UUID';
+    const arch = await exec("uname -m", {encoding: 'utf8'}).then(result => result.stdout.trim()).catch((err) => {
+      this.log.error(`Failed to get architecture`, err.message);
+      return null;
+    });
+    if (arch) {
+      switch (arch) {
+        case 'x86_64':
+          break;
+        case 'aarch64':
+          duidType = 'DUID-LLT';
+          break;
+        default:
+          break;
+      }
     }
-    const currentDuid = await this._getDuid();
-    this.log.info("unset duid", this.name, currentDuid);
-    await rclient.delAsync(`duid_record`);
-    await exec(`cat /dev/null | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+    return await this._genDuid(duidType);
   }
 
   // Generate DHCP Unique Identifier (DUID), see RFC8415
@@ -523,7 +533,7 @@ class InterfaceBasePlugin extends Plugin {
         break;
       case 'DUID-UUID':
         // 00:04 DUID-Type (DUID-UUID), DUID Based on UUID, see rfc6355
-        const uuid = await fs.readFileAsync("/var/lib/dbus/machine-id", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        const uuid = await this._genDuidUuid();
         if (uuid) {
           duid = '00:04:' + this._formatDuid(uuid);
         }
@@ -540,12 +550,15 @@ class InterfaceBasePlugin extends Plugin {
     return duid;
   }
 
-  async getLastDuid(){
-    const results = await rclient.zrevrangeAsync(`duid_record`, 0, 0);
-    if (results.length > 0) {
-      return results[0];
+  async _genDuidUuid() {
+    const existUuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+    if (existUuid) {
+      return existUuid;
     }
-    return null;
+
+    const newUuid = uuidv4();
+    await fs.writeFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, newUuid).catch((err) => {this.log.warn("fail to persistently save duid uuid", err.message)});
+    return newUuid;
   }
 
   async saveDuidRecord(record){
@@ -761,6 +774,12 @@ class InterfaceBasePlugin extends Plugin {
     }
   }
 
+  async resetConnmark() {
+    // reset first bit of connmark to make packets of established connections go through iptables filter again
+    await exec(`sudo conntrack -U -m 0x00000000/0x80000000`).catch((err) => {});
+    await exec(`sudo conntrack -U -f ipv6 -m 0x00000000/0x80000000`).catch((err) => {});
+  }
+
   async updateRouteForDNS() {
     // TODO: there is no IPv6 DNS currently
     const dns = await this.getDNSNameservers();
@@ -891,6 +910,8 @@ class InterfaceBasePlugin extends Plugin {
     await this.applyDnsSettings();
 
     await this.changeRoutingTables();
+
+    await this.resetConnmark();
 
     if (this.isWAN()) {
       this._wanStatus = {};
