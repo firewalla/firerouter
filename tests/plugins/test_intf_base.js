@@ -18,7 +18,10 @@
 let chai = require('chai');
 let expect = chai.expect;
 
+const fs = require('fs');
 const exec = require('child-process-promise').exec;
+
+const r = require('../../util/firerouter');
 let log = require('../../util/logger.js')(__filename, 'info');
 
 let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js');
@@ -30,7 +33,7 @@ describe('Test interface base dhcp6', function(){
       async() => {
         this.plugin = new InterfaceBasePlugin("eth0");
         this.plugin.configure({dhcp6:{}});
-        await this.plugin._unsetDuid();
+        await exec(`cat /dev/null | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
         done();
       })()
     );
@@ -63,19 +66,26 @@ describe('Test interface base dhcp6', function(){
       expect(duid).to.contains('00:04:');
     });
 
-    it('should get last duid', async() => {
-      let duid = await this.plugin._getDuid();
-      log.debug("current duid", duid);
-      let lastDuid = await this.plugin.getLastDuid();
-      log.debug("last duid", lastDuid);
-      expect(lastDuid).to.be.contains("00:03:");
+    it('should gen duid uuid', async() => {
+      const t1 = await this.plugin._genDuidUuid();
+      const t2 = await this.plugin._genDuidUuid();
+      const duuuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+      log.debug("duid uuid generated", duuuid);
+      expect(t1).to.be.equal(duuuid);
+      expect(t2).to.be.equal(duuuid);
     });
 
-    it('should unset duid', async() => {
-      await this.plugin._unsetDuid();
-      expect(await this.plugin.getLastDuid()).to.be.equal(null);
-      let duid = await this.plugin._getDuid();
-      expect(duid).to.be.empty;
+    it('should reset duid', async() => {
+      await this.plugin._resetDuid();
+      let duidType = await this.plugin._getDuidType(await this.plugin._getDuid());
+      const arch = await exec("uname -m", {encoding: 'utf8'}).then(result => result.stdout.trim()).catch((err) => {}); switch (arch) {
+        case 'x86_64':
+          expect(duidType).to.equal('DUID-UUID');
+          break;
+        case 'aarch64':
+          expect(duidType).to.equal('DUID-LLT');
+          break;
+      }
     });
 
     it('should get duid type', async() => {
