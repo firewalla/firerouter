@@ -224,6 +224,18 @@ function scheduleRestartFireBoot(delay = 10) {
   }, delay * 1000);
 }
 
+// return true if it has valid MAC address, false otherwise. Or return null if permanent MAC cannot be obtained via ethtool -P
+async function verifyPermanentMAC(iface) {
+  const pmac = await exec(`sudo ethtool -P ${iface}`).then(result => result.stdout.substring("Permanent address:".length).trim()).catch((err) => {
+    log.error(`Failed to get permanent MAC address of ${iface}`, err.message);
+    return null;
+  });
+  if (pmac && (pmac.toUpperCase().startsWith("20:6D:31:") || pmac.toUpperCase().startsWith("22:6D:31:"))) // Wi-Fi SD may have a private permanent MAC address on wlan1
+    return true;
+  log.error(`Permanent MAC address of ${iface} is invalid: ${pmac}`);
+  return false;
+}
+
 module.exports = {
   getUserHome: getUserHome,
   getHiddenFolder: getHiddenFolder,
@@ -252,5 +264,6 @@ module.exports = {
   getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
   getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
   getInterfaceSysFSDirectory: getInterfaceSysFSDirectory,
-  switchBranch: switchBranch
+  switchBranch: switchBranch,
+  verifyPermanentMAC: verifyPermanentMAC
 };
