@@ -17,6 +17,22 @@ if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
   fi
 fi
 
+# check redis.conf in root-ro partition and remove defualt maxmemory config
+if sudo grep -q "^maxmemory " /media/root-ro/etc/redis/redis.conf; then
+  mount -t ext4 | grep "/media/root-ro" | awk '{print $6}' | grep -q -w rw
+  writable=$?
+  if [[ ! writable -eq 0 ]]; then
+    sudo mount -o remount,rw /media/root-ro
+  fi
+  sudo sed -i '/^maxmemory /d' /media/root-ro/etc/redis/redis.conf
+  redis-cli config set maxmemory 0
+  # overwrite redis.conf in root-rw
+  redis-cli config rewrite
+  if [[ ! writable -eq 0 ]]; then
+    sudo mount -o remount,ro /media/root-ro
+  fi
+fi
+
 # step 1 - init network config
 rc=0
 
