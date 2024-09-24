@@ -24,6 +24,7 @@ const { spawn } = require('child_process')
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
+const uuid = require('uuid');
 const pl = require('../platform/PlatformLoader.js');
 const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
@@ -671,7 +672,18 @@ class NetworkConfigManager {
     return errors;
   }
 
+  async validateNcid(networkConfig, inTransaction = false, skipNcid = false) {
+    const originConfig = await this.getActiveConfig(inTransaction);
+    if (originConfig && originConfig.ncid && networkConfig.ncid && originConfig.ncid !== networkConfig.ncid) {
+      if (!skipNcid) return ["ncid not match"];
+    }
+  }
+
   async saveConfig(networkConfig, transaction = false) {
+    // do not generate ncid in transaction
+    if (!networkConfig.ncid && !transaction) {
+      networkConfig.ncid = util.generateUUID();
+    }
     const configString = JSON.stringify(networkConfig);
     if (configString) {
       await rclient.setAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig", configString);
