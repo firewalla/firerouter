@@ -298,7 +298,7 @@ router.post('/set',
           inTransaction = false;
           currentTransID = null;
           log.info("Commit config change transaction: " + JSON.stringify(newConfig));
-          res.status(200).json({errors: []});
+          res.status(200).json({errors: [], "ncid": newConfig.ncid || ""});
           return;
         case T_OP_REVERT:
           // previous persisted config will be applied in the code below
@@ -354,7 +354,7 @@ router.post('/set',
         log.info("New ncid generated", newConfig.ncid);
         await ncm.saveConfig(newConfig, inTransaction);
 
-        res.status(200).json({errors: errors});
+        res.status(200).json({errors: errors, "ncid": newConfig.ncid});
       }
     }
     } catch (err) {
