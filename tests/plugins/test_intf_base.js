@@ -94,3 +94,54 @@ describe('Test interface base dhcp6', function(){
       expect(this.plugin._getDuidType('00:04:7e:89:20:22:89:15:45:b8:ac:05:3c:68:2b:08:04:8f')).to.be.equal('DUID-UUID');
     });
   });
+
+
+  describe('Test interface base dns', function(){
+    this.timeout(30000);
+
+    before((done) => (
+      async() => {
+        this.plugin = new InterfaceBasePlugin("eth0");
+        this.plugin.configure({dhcp6:{}, dhcp:true});
+        done();
+      })()
+    );
+
+    after((done) => (
+      async() => {
+        done();
+      })()
+    );
+
+    it('should config dns6', async() => {
+      await this.plugin.configure({dns6Servers: ["2606:4700:4700::1111", "2001:4860:4860::8888"], dhcp:false});
+      await this.plugin.applyDnsSettings();
+      log.debug("dns6", await this.plugin.getOrigDNS6Nameservers());
+      log.debug("resolv.conf\n", await exec("cat /etc/resolv.conf").then(ret => ret.stdout.trim()).catch( (err) => {log.error(err.message)}));
+    });
+
+    it('should dhcp dns6', async() => {
+      await this.plugin.configure({dhcp:true});
+      await this.plugin.applyDnsSettings();
+      log.debug("dns6", await this.plugin.getOrigDNS6Nameservers());
+      log.debug("resolv.conf\n", await exec("cat /etc/resolv.conf").then(ret => ret.stdout.trim()).catch( (err) => {log.error(err.message)}));
+    });
+
+    it.skip('should get dns result', async() => {
+      const config = await exec('redis-cli -n 1 get sysdb:networkConfig | jq -c .interface.phy.eth0').then(r => r.stdout.trim()).catch((err) => {return '{dhcp:true, extra:{}}'}) ;
+      await this.plugin.configure(JSON.parse(config));
+      const ip6s = await this.plugin.getIPv6Addresses();
+      const dns6 = await this.plugin.getOrigDNS6Nameservers();
+
+      const result = await this.plugin._getDNSResult("archlinux.org", ip6s.pop().split('/')[0], dns6[0], false, 6);
+      log.debug("dig dns result:", result);
+      // expect(result).to.be.equal("95.217.163.246");
+    });
+
+    it('should run dns test', async() => {
+      const results = await this.plugin.getDNSResult("archlinux.org", false);
+      log.debug("dig dns result:", results);
+      // expect(result).to.be.equal(["95.217.163.246","95.217.163.246"]);
+    });
+  });
+
