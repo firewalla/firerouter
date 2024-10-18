@@ -201,6 +201,10 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
   }
 
+  _getDhcpcdFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd`;
+  }
+
   async _getDHCPCDLease6Filename() {
     const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
@@ -389,7 +393,6 @@ class InterfaceBasePlugin extends Plugin {
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
       });
-      // TODO: do not support dns nameservers from DHCPv6 currently
     } else {
       if (this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6))) {
         // add link local route to interface local and default routing table
@@ -631,17 +634,29 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async applyDnsSettings() {
-    if (this.networkConfig.dhcp || (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0)) {
+    if (this.isDHCP() || (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0) || (this.networkConfig.dns6Servers && this.networkConfig.dns6Servers.length > 0)) {
       await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
         this.log.info(`Remove old resolv conf for ${this.name}`);
         return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
       }).catch((err) => {});
       // specified DNS nameservers supersedes those assigned by DHCP
+      let dnsservers = [];
       if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0 && this.networkConfig.nameservers.some(s => new Address4(s).isValid())) {
-        const nameservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid()).map((nameserver) => `nameserver ${nameserver}`).join("\n");
+        dnsservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid());
+      }
+
+      if (this.networkConfig.dns6Servers && this.networkConfig.dns6Servers.some(s => new Address6(s).isValid())) {
+        dnsservers = dnsservers.concat(this.networkConfig.dns6Servers.filter(s => new Address6(s).isValid()));
+      }
+      if (dnsservers.length > 0) {
+        let nameservers = dnsservers.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       } else {
-        await fs.symlinkAsync(this._getResolvConfFilePath(), r.getInterfaceResolvConfPath(this.name)).catch((err) => {});
+        let content = await fs.readFileAsync(this._getResolvConfFilePath(), {encoding: "utf8"});
+        const dns6 = await this.getOrigDNS6Nameservers();
+        if (!content.endsWith("\n")) content += "\n"
+        content += dns6.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
+        await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), content);
       }
     }
   }
@@ -781,13 +796,16 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async updateRouteForDNS() {
-    // TODO: there is no IPv6 DNS currently
     const dns = await this.getDNSNameservers();
     const gateway = await routing.getInterfaceGWIP(this.name, 4);
+    const gateway6 = await routing.getInterfaceGWIP(this.name, 6);
     if (!_.isArray(dns) || dns.length === 0 || !gateway)
       return;
     for (const dnsIP of dns) {
-      await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true).catch((err) => {});
+      if (new Address4(dnsIP).isValid())
+        await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true).catch((err) => {});
+      else
+        await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true).catch((err) => {});
     }
   }
 
@@ -959,6 +977,21 @@ class InterfaceBasePlugin extends Plugin {
   async getOrigDNSNameservers() {
     const dns = await fs.readFileAsync(this._getResolvConfFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
     return dns;
+  }
+
+  async getDns4Nameservers() {
+    const dns = await this.getDNSNameservers() || [];
+    return dns.filter(i => new Address4(i).isValid());
+  }
+
+  async getDns6Nameservers() {
+    const dns = await this.getDNSNameservers() || [];
+    return dns.filter(i => new Address6(i).isValid());
+  }
+
+  async getOrigDNS6Nameservers() {
+    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
+    return dns6 || [];
   }
 
   async getPrefixDelegations() {
@@ -1262,8 +1295,9 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   // use throw error for Promise.any
-  async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false) {
-    const cmd = `dig -4 -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
+  async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false, af = 4) {
+    const cmd = `dig -${af} -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
+    this.log.debug("dig dns command:", cmd);
     const result = await exec(cmd).catch((err) => null);
 
     let dnsResult = null;
@@ -1278,14 +1312,14 @@ class InterfaceBasePlugin extends Plugin {
       }
     }
 
-
     const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;
     const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
 
     if (sendEvent)
-      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, af == 4 ? nameserver : `${nameserver}:[${srcIP}]`, dnsResult ? 0 : 1, {
         "wan_intf_name":wanName,
         "wan_intf_uuid":wanUUID,
+        "wan_intf_address":srcIP,
         "name_server":nameserver,
         "dns_test_domain":dnsTestDomain
       });
@@ -1300,22 +1334,43 @@ class InterfaceBasePlugin extends Plugin {
   async getDNSResult(dnsTestDomain, sendEvent = false) {
     const nameservers = await this.getDNSNameservers();
     const ip4s = await this.getIPv4Addresses();
+    const ip6s = await this.getIPv6Addresses();
+    let dnsResult = [];
 
     if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
       const srcIP = ip4s[0].split('/')[0];
-
       const promises = [];
       for(const nameserver of nameservers) {
+        if (!new Address4(nameserver).isValid()) continue;
         promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent));
       }
-
       const result = await Promise.any(promises).catch((err) => {
-        this.log.error("no valid dns from any nameservers on", this.name, err.message);
-        return null;
+        this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
       });
-      return result;
+      if (result) dnsResult.push(result);
     }
 
+    if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip6s) && ip6s.length !== 0) {
+      const srcIPs = ip6s.map(i => i.split('/')[0]);
+      const promises = [];
+      for(const nameserver of nameservers) {
+        for (const srcIP of srcIPs) {
+          const ipaddr  = new Address6(srcIP);
+          if (!ipaddr.isValid() || ipaddr.getScope().toLowerCase() != "global") continue;
+          if (!new Address6(nameserver).isValid()) continue;
+          promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent, 6));
+        }
+      }
+      const result = await Promise.any(promises).catch((err) => {
+        this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
+      });
+      if (result) dnsResult.push(result);
+    }
+
+    if (dnsResult.length > 0) {
+      return dnsResult;
+    }
+    this.log.error("no valid dns from any nameservers on", this.name, err.message);
     return null;
   }
 
@@ -1411,7 +1466,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1427,8 +1482,10 @@ class InterfaceBasePlugin extends Plugin {
       exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
-      this.getDNSNameservers(),
+      this.getDns4Nameservers(),
       this.getOrigDNSNameservers(),
+      this.getDns6Nameservers(),
+      this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
       this.isInterfacePresent()
     ]);
@@ -1442,7 +1499,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, pds, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
