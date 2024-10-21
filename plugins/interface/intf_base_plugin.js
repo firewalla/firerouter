@@ -652,10 +652,10 @@ class InterfaceBasePlugin extends Plugin {
         let nameservers = dnsservers.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), nameservers);
       } else {
-        let content = await fs.readFileAsync(this._getResolvConfFilePath(), {encoding: "utf8"});
+        const dns = await this.getOrigDNSNameservers();
         const dns6 = await this.getOrigDNS6Nameservers();
-        if (!content.endsWith("\n")) content += "\n"
-        content += dns6.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
+        dns.push(...dns6);
+        const content = dns.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
         await fs.writeFileAsync(r.getInterfaceResolvConfPath(this.name), content);
       }
     }
@@ -976,7 +976,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async getOrigDNSNameservers() {
     const dns = await fs.readFileAsync(this._getResolvConfFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
-    return dns;
+    return dns || [];
   }
 
   async getDns4Nameservers() {
@@ -1466,7 +1466,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1484,6 +1484,7 @@ class InterfaceBasePlugin extends Plugin {
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDns4Nameservers(),
       this.getOrigDNSNameservers(),
+      this.getDns6Nameservers(),
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
       this.isInterfacePresent()
@@ -1498,7 +1499,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, pds, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present};
   }
 
   onEvent(e) {
@@ -1575,9 +1576,9 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
           // update route for DNS from DHCP
-          this.updateRouteForDNS().catch((err) => {
-            this.log.error(`Failed to update route for DNS on ${this.name}`, err.message);
-          });
+          this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
+            this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
+          })
           this.markOutputConnection().catch((err) => {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
