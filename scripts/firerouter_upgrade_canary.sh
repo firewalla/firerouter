@@ -33,14 +33,14 @@ popd
 : ${FW_ENDPOINT:=$(get_cloud_endpoint)}
 FW_VERSION=$(cat $FIREWALLA_HOME/net2/config.json | jq .version)
 FW_URL="${FW_ENDPOINT}?type=box_update&model=${FIREWALLA_PLATFORM}&branch=${FR_BRANCH}&version=${FW_VERSION}"
-FWRCMD="curl -s --max-time 5 -H 'Authorization: Bearer $(redis-cli hget sys:ept token)' '$FW_URL' | jq '. | length' "
-ratio=$(eval $FWRCMD)
-if [ "$ratio" == "0" ];
+FWRCMD="curl -s --max-time 5 -H 'Authorization: Bearer $(redis-cli hget sys:ept token)' '$FW_URL' | jq 'if (. | length) > 0 then .[0].pause else null end' "
+pause=$(eval $FWRCMD)
+if [ "$pause" == "true" ];
 then
-    echo "======= FIREROUTER CANARY NO UPGRADING FOR CLOUD DECISION (ratio=$ratio)======="
+    echo "======= FIREROUTER CANARY NO UPGRADING FOR CLOUD DECISION (pause=$pause)======="
     echo $(date +%s) > ${FRCANARY_FLAG}
 else
-    echo "======= FIREROUTER CANARY UPGRADING (ratio=$ratio)======="
+    echo "======= FIREROUTER CANARY UPGRADING (pause=$pause)======="
 fi
 
 logger "FIREROUTER:UPGRADE_CANARY:END"
