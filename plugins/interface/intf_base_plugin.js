@@ -1344,10 +1344,12 @@ class InterfaceBasePlugin extends Plugin {
         if (!new Address4(nameserver).isValid()) continue;
         promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent));
       }
-      const result = await Promise.any(promises).catch((err) => {
-        this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
-      });
-      if (result) dnsResult.push(result);
+      if (!_.isEmpty(promises)) {
+        const result = await Promise.any(promises).catch((err) => {
+          this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
+        });
+        if (result) dnsResult.push(result);
+      }
     }
 
     if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip6s) && ip6s.length !== 0) {
@@ -1361,16 +1363,18 @@ class InterfaceBasePlugin extends Plugin {
           promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent, 6));
         }
       }
-      const result = await Promise.any(promises).catch((err) => {
-        this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
-      });
-      if (result) dnsResult.push(result);
+      if (!_.isEmpty(promises)) {
+        const result = await Promise.any(promises).catch((err) => {
+          this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
+        });
+        if (result) dnsResult.push(result);
+      }
     }
 
     if (dnsResult.length > 0) {
       return dnsResult;
     }
-    this.log.error("no valid dns from any nameservers on", this.name, err.message);
+    this.log.error(`no valid dns from any nameservers on ${this.name}`);
     return null;
   }
 
