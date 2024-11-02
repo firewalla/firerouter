@@ -1,0 +1,137 @@
+# Generate /run/resolvconf/resolv.conf
+# Support resolvconf(8) if available
+# We can merge other dhcpcd resolv.conf files into one like resolvconf,
+# but resolvconf is preferred as other applications like VPN clients
+# can readily hook into it.
+# Also, resolvconf can configure local nameservers such as bind
+# or dnsmasq. This is important as the libc resolver isn't that powerful.
+
+resolv_conf_file="/run/resolvconf/interface/$interface.dhcpcd"
+NL="
+"
+: ${resolvconf:=resolvconf}
+
+# Extract any ND DNS options from the RA
+# For now, we ignore the lifetime of the DNS options unless they
+# are absent or zero.
+# In this case they are removed from consideration.
+# See draft-gont-6man-slaac-dns-config-issues-01 for issues
+# regarding DNS option lifetime in ND messages.
+eval_nd_dns()
+{
+	eval ltime=\$nd${i}_rdnss${j}_lifetime
+	if [ -z "$ltime" ] || [ "$ltime" = 0 ]; then
+		rdnss=
+	else
+		eval rdnss=\$nd${i}_rdnss${j}_servers
+	fi
+	eval ltime=\$nd${i}_dnssl${j}_lifetime
+	if [ -z "$ltime" ] || [ "$ltime" = 0 ]; then
+		dnssl=
+	else
+		eval dnssl=\$nd${i}_dnssl${j}_search
+	fi
+
+	[ -z "${rdnss}${dnssl}" ] && return 1
+
+	[ -n "$rdnss" ] && new_rdnss="$new_rdnss${new_rdnss:+ }$rdnss"
+	[ -n "$dnssl" ] && new_dnssl="$new_dnssl${new_dnssl:+ }$dnssl"
+	j=$(($j + 1))
+	return 0
+}
+
+add_resolv_conf()
+{
+	conf="$signature$NL"
+	warn=true
+
+	# Loop to extract the ND DNS options using our indexed shell values
+	i=1
+	j=1
+	while true; do
+		while true; do
+			eval_nd_dns || break
+		done
+		i=$(($i + 1))
+		j=1
+		eval_nd_dns || break
+	done
+	[ -n "$new_rdnss" ] && \
+	    new_domain_name_servers="$new_domain_name_servers${new_domain_name_servers:+ }$new_rdnss"
+	[ -n "$new_dnssl" ] && \
+	    new_domain_search="$new_domain_search${new_domain_search:+ }$new_dnssl"
+
+	# Derive a new domain from our various hostname options
+	if [ -z "$new_domain_name" ]; then
+		if [ "$new_dhcp6_fqdn" != "${new_dhcp6_fqdn#*.}" ]; then
+			new_domain_name="${new_dhcp6_fqdn#*.}"
+		elif [ "$new_fqdn" != "${new_fqdn#*.}" ]; then
+			new_domain_name="${new_fqdn#*.}"
+		elif [ "$new_host_name" != "${new_host_name#*.}" ]; then
+			new_domain_name="${new_host_name#*.}"
+		fi
+	fi
+
+	# If we don't have any configuration, remove it
+	if [ -z "$new_domain_name_servers" ] &&
+	   [ -z "$new_domain_name" ] &&
+	   [ -z "$new_domain_search" ]; then
+		remove_resolv_conf
+		return $?
+	fi
+
+	if [ -n "$new_domain_name" ]; then
+		set -- $new_domain_name
+		if valid_domainname "$1"; then
+			conf="${conf}domain $1$NL"
+		else
+			syslog err "Invalid domain name: $1"
+		fi
+		# If there is no search this, make this one
+		if [ -z "$new_domain_search" ]; then
+			new_domain_search="$new_domain_name"
+			[ "$new_domain_name" = "$1" ] && warn=true
+		fi
+	fi
+	if [ -n "$new_domain_search" ]; then
+		if valid_domainname_list $new_domain_search; then
+			conf="${conf}search $new_domain_search$NL"
+		elif ! $warn; then
+			syslog err "Invalid domain name in list:" \
+			    "$new_domain_search"
+		fi
+	fi
+	for x in ${new_domain_name_servers}; do
+		conf="${conf}nameserver $x$NL"
+	done
+
+	echo "${conf}" > $resolv_conf_file
+
+	if type "$resolvconf" >/dev/null 2>&1; then
+		[ -n "$ifmetric" ] && export IF_METRIC="$ifmetric"
+		printf %s "$conf" | "$resolvconf" -a "$ifname"
+		return $?
+	fi
+}
+
+remove_resolv_conf()
+{
+	if type "$resolvconf" >/dev/null 2>&1; then
+		"$resolvconf" -d "$ifname" -f
+	fi
+	rm $resolv_conf_file
+}
+
+# For ease of use, map DHCP6 names onto our DHCP4 names
+case "$reason" in
+BOUND6|RENEW6|REBIND6|REBOOT6|INFORM6)
+	new_domain_name_servers="$new_dhcp6_name_servers"
+	new_domain_search="$new_dhcp6_domain_search"
+	;;
+esac
+
+if $if_up || [ "$reason" = ROUTERADVERT ]; then
+	add_resolv_conf
+elif $if_down; then
+	remove_resolv_conf
+fi
