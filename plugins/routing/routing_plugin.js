@@ -647,74 +647,53 @@ class RoutingPlugin extends Plugin {
                 const defaultRoutingType = settings.type || "single";
                 let changeDescs = [];
                 switch (defaultRoutingType) {
+                  case "single":
                   case "primary_standby": {
-                    const viaIntf2 = settings.viaIntf2;
-                    const viaIntf2Plugin = pl.getPluginInstance("interface", viaIntf2);
-                    if (!viaIntf2Plugin)
-                      this.fatal(`Cannot find global default interface plugin ${viaIntf2}`);
-                    this.subscribeChangeFrom(viaIntf2Plugin);
-                    wanStatus[viaIntf2] = {
-                      active: false,
-                      ready: true
-                    };
-                    // inherit active/ready based on seq
-                    for (const intf of Object.keys(lastWanStatus)) {
-                      if (lastWanStatus[intf].seq === 1) {
-                        wanStatus[viaIntf2].active = lastWanStatus[intf].active;
-                        wanStatus[viaIntf2].ready = lastWanStatus[intf].ready;
-                        break;
-                      }
+                    const viaIntfs = [];
+                    // new key that can contain more than two wans for primary_standby
+                    if (_.isArray(settings.viaIntfs))
+                      viaIntfs.push(...settings.viaIntfs);
+                    else {
+                      // old keys that hardcodes two wans
+                      if (settings.viaIntf)
+                        viaIntfs.push(settings.viaIntf);
+                      if (settings.viaIntf2)
+                        viaIntfs.push(settings.viaIntf2);
                     }
-                    if (await viaIntf2Plugin.isInterfacePresent() === false) {
-                      // need to publish wan conn change events if it was ready previously
-                      if (wanStatus[viaIntf2].ready === true) {
-                        changeDescs.push({
-                          intf: viaIntf2,
-                          ready: false,
-                          wanSwitched: wanStatus[viaIntf2].active === true ? true : false,
-                          failures: [{type: "carrier"}]
-                        });
+                    for (let seq = 0; seq < viaIntfs.length; seq++) {
+                      const viaIntf = viaIntfs[seq];
+                      const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
+                      if (!viaIntfPlugin)
+                        this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
+                      this.subscribeChangeFrom(viaIntfPlugin);
+                      wanStatus[viaIntf] = {
+                        active: false,
+                        ready: true
+                      };
+                      for (const intf of Object.keys(lastWanStatus)) {
+                        if (lastWanStatus[intf].seq === seq) {
+                          wanStatus[viaIntf].active = lastWanStatus[intf].active;
+                          wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
+                          break;
+                        }
                       }
-                      // directly mark ready to false if interface does not exist at the moment
-                      wanStatus[viaIntf2].ready = false;
-                      wanStatus[viaIntf2].active = false;
-                    }
-                    wanStatus[viaIntf2].seq = 1;
-                    wanStatus[viaIntf2].plugin = viaIntf2Plugin;
-                  }
-                  case "single": {
-                    const viaIntf = settings.viaIntf;
-                    const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
-                    if (!viaIntfPlugin)
-                      this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
-                    this.subscribeChangeFrom(viaIntfPlugin);
-                    wanStatus[viaIntf] = {
-                      active: false,
-                      ready: true
-                    };
-                    for (const intf of Object.keys(lastWanStatus)) {
-                      if (lastWanStatus[intf].seq === 0) {
-                        wanStatus[viaIntf].active = lastWanStatus[intf].active;
-                        wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
-                        break;
+                      if (await viaIntfPlugin.isInterfacePresent() === false) {
+                        // need to publish wan conn change events if it was ready previously
+                        if (wanStatus[viaIntf].ready === true) {
+                          changeDescs.push({
+                            intf: viaIntf,
+                            ready: false,
+                            wanSwitched: wanStatus[viaIntf].active === true && viaIntfs.length > 1 ? true : false,
+                            failures: [{type: "carrier"}]
+                          });
+                        }
+                        // directly mark ready to false if interface does not exist at the moment
+                        wanStatus[viaIntf].ready = false;
+                        wanStatus[viaIntf].active = false;
                       }
+                      wanStatus[viaIntf].seq = seq;
+                      wanStatus[viaIntf].plugin = viaIntfPlugin;
                     }
-                    if (await viaIntfPlugin.isInterfacePresent() === false) {
-                      // need to publish wan conn change events if it was ready previously
-                      if (wanStatus[viaIntf].ready === true) {
-                        changeDescs.push({
-                          intf: viaIntf,
-                          ready: false,
-                          wanSwitched: wanStatus[viaIntf].active === true && type !== "single" ? true : false,
-                          failures: [{type: "carrier"}]
-                        });
-                      }
-                      // directly mark ready to false if interface does not exist at the moment
-                      wanStatus[viaIntf].ready = false;
-                      wanStatus[viaIntf].active = false;
-                    }
-                    wanStatus[viaIntf].seq = 0;
-                    wanStatus[viaIntf].plugin = viaIntfPlugin;
                     break;
                   }
                   case "load_balance": {
@@ -935,6 +914,7 @@ class RoutingPlugin extends Plugin {
       const result = {};
       Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).forEach(i => {
         result[i] = {
+          seq: this._wanStatus[i].seq,
           ready: this._wanStatus[i].ready,
           active: this._wanStatus[i].active,
           pendingTest: this._wanStatus[i].pendingTest
@@ -1050,9 +1030,10 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "primary_standby": {
+              const activeWanPlugins = this.getActiveWANPlugins();
               const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-              if (this.getActiveWANPlugins().length === 0 || (failback && currentStatus.seq === 0))
-                // apply WAN settings in failback mode if primary WAN is back to ready
+              if (_.isEmpty(activeWanPlugins) || (failback && currentStatus.seq < activeWanPlugins[0].seq))
+                // apply WAN settings in failback mode if a WAN with higher rank is back to ready
                 changeActiveWanNeeded = true;
               break;
             }
@@ -1155,6 +1136,7 @@ class RoutingPlugin extends Plugin {
           result[i] = {
             wan_intf_name: ifacePlugin.networkConfig.meta.name,
             wan_intf_uuid: ifacePlugin.networkConfig.meta.uuid,
+            seq: wanStatus[i].seq,
             ready: wanStatus[i].ready,
             active: wanStatus[i].active
           };
