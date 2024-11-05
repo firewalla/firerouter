@@ -643,10 +643,14 @@ class InterfaceBasePlugin extends Plugin {
       let dnsservers = [];
       if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0 && this.networkConfig.nameservers.some(s => new Address4(s).isValid())) {
         dnsservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid());
+      } else {
+        dnsservers = await this.getOrigDNSNameservers();
       }
 
       if (this.networkConfig.dns6Servers && this.networkConfig.dns6Servers.some(s => new Address6(s).isValid())) {
         dnsservers = dnsservers.concat(this.networkConfig.dns6Servers.filter(s => new Address6(s).isValid()));
+      } else {
+        dnsservers = dnsservers.concat(await this.getOrigDNS6Nameservers());
       }
       if (dnsservers.length > 0) {
         let nameservers = dnsservers.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
