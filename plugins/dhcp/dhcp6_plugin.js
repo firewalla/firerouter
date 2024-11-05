@@ -16,6 +16,7 @@
 'use strict';
 
 const pl = require('../plugin_loader.js');
+const event = require('../../core/event.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -51,7 +52,7 @@ class DHCP6Plugin extends DHCPPlugin {
     if (nameservers.length > 0){
       content.push(`dhcp-option=tag:${iface},option6:dns-server,${nameservers.map(a => `[${a}]`).join(",")}`);
     } else { // return router's link-local address as RDNSS option in ra
-      content.push(`dhcp-option=tag:${iface},option6:dns-server,[fe80::]`);
+      content.push(`dhcp-option=tag:${iface},option6:dns-server,[::]`);
     }
 
     switch (type) {

@@ -1553,6 +1553,19 @@ class InterfaceBasePlugin extends Plugin {
         }
         break;
       }
+      case event.EVENT_DNS6_CHANGE: {
+        const payload = event.getEventPayload(e);
+        if (payload.intf === this.name && this.isWAN()) {
+          // update DNS from DHCP
+          pl.acquireApplyLock(async () => {
+            await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
+              this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
+            });
+            // this.propagateConfigChanged(true);
+          });
+        }
+        break;
+      }
       case event.EVENT_PD_CHANGE: {
         const payload = event.getEventPayload(e);
         const iface = payload.intf;
