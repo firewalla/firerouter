@@ -32,7 +32,7 @@ FIREROUTER_CANARY_SCRIPT="${FIREROUTER_HOME}/scripts/firerouter_upgrade_canary.s
 FRCANARY_FLAG="/home/pi/.router/config/.no_upgrade_canary"
 
 if [[ -e "$FIREROUTER_CANARY_SCRIPT" ]];then
-  $FIREROUTER_CANARY_SCRIPT &> /tmp/firerouter_upgrade_canary.log
+  bash $FIREROUTER_CANARY_SCRIPT &> /tmp/firerouter_upgrade_canary.log
 fi
 
 if [[ -e $FRCANARY_FLAG ]]; then
