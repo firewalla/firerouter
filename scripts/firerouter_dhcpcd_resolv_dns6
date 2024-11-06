@@ -10,6 +10,8 @@ resolv_conf_file="/run/resolvconf/interface/$interface.dhcpcd"
 NL="
 "
 : ${resolvconf:=resolvconf}
+dns_changed=""
+dns6_md5=""
 
 # Extract any ND DNS options from the RA
 # For now, we ignore the lifetime of the DNS options unless they
@@ -93,6 +95,7 @@ add_resolv_conf()
 			[ "$new_domain_name" = "$1" ] && warn=true
 		fi
 	fi
+
 	if [ -n "$new_domain_search" ]; then
 		if valid_domainname_list $new_domain_search; then
 			conf="${conf}search $new_domain_search$NL"
@@ -106,6 +109,10 @@ add_resolv_conf()
 	done
 
 	echo "${conf}" > $resolv_conf_file
+	new_dns6_md5=`md5sum $resolv_conf_file  | cut -d" " -f1`
+	if [ "$dns6_md5" != "$new_dns6_md5" ];then
+		redis-cli -n 1 publish "dhcpcd6.dns_change" "$interface"
+	fi
 
 	if type "$resolvconf" >/dev/null 2>&1; then
 		[ -n "$ifmetric" ] && export IF_METRIC="$ifmetric"
@@ -120,8 +127,19 @@ remove_resolv_conf()
 		"$resolvconf" -d "$ifname" -f
 	fi
 	rm $resolv_conf_file
+	if [ -n "$dns6_md5" ]; then
+		redis-cli -n 1 publish "dhcpcd6.dns_change" "$interface"
+	fi
 }
 
+md5_resolv_conf()
+{
+	if [ -s $resolv_conf_file ]; then
+		dns6_md5=`md5sum $resolv_conf_file  | cut -d" " -f1`
+	fi
+}
+
+md5_resolv_conf
 # For ease of use, map DHCP6 names onto our DHCP4 names
 case "$reason" in
 BOUND6|RENEW6|REBIND6|REBOOT6|INFORM6)
