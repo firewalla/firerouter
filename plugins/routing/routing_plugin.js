@@ -1107,9 +1107,9 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "primary_standby": {
-              const activeWanPlugins = this.getActiveWANPlugins();
+              const activeWanStatus = Object.values(this._wanStatus).filter(status => status.active).sort((a, b) => a.seq - b.seq);
               const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-              if (_.isEmpty(activeWanPlugins) || (failback && currentStatus.seq < activeWanPlugins[0].seq))
+              if (_.isEmpty(activeWanStatus) || (failback && currentStatus.seq < activeWanStatus[0].seq))
                 // apply WAN settings in failback mode if a WAN with higher rank is back to ready
                 changeActiveWanNeeded = true;
               break;
