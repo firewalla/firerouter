@@ -989,11 +989,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getDns6Nameservers() {
+    if (!this.isIPv6Enabled()) return [];
     const dns = await this.getDNSNameservers() || [];
     return dns.filter(i => new Address6(i).isValid());
   }
 
   async getOrigDNS6Nameservers() {
+    if (!this.isIPv6Enabled()) return [];
     const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
     return dns6 || [];
   }
