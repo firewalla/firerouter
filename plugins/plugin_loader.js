@@ -243,8 +243,11 @@ async function reapply(config, dryRun = false) {
             instance.configure(instance._nextConfig);
           if (instance.isReapplyNeeded()) {
             if (!dryRun) {
-              log.info("Flushing old config", pluginConf.category, instance.name);
-              await instance.flush();
+              if (instance.isFlushNeeded(instance._nextConfig)) {
+                log.info("Flushing old config", pluginConf.category, instance.name);
+                await instance.flush();
+              } else
+                log.info("No need to flush old config", pluginConf.category, instance.name);
               CHANGE_FLAGS |= FLAG_CHANGE;
               if (pluginConf.category === "interface")
                 CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
