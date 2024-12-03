@@ -149,7 +149,8 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
-    await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    // a special handling for wg_ap interface to avoid disrupting existing peer sessions
+    await exec(`sudo wg ${this.name === "wg_ap" ? "syncconf" : "setconf"} ${this.name} ${this._getInterfaceConfPath()}`);
     return true;
   }
 
