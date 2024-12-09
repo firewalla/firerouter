@@ -643,10 +643,14 @@ class InterfaceBasePlugin extends Plugin {
       let dnsservers = [];
       if (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0 && this.networkConfig.nameservers.some(s => new Address4(s).isValid())) {
         dnsservers = this.networkConfig.nameservers.filter(s => new Address4(s).isValid());
+      } else {
+        dnsservers = await this.getOrigDNSNameservers();
       }
 
       if (this.networkConfig.dns6Servers && this.networkConfig.dns6Servers.some(s => new Address6(s).isValid())) {
         dnsservers = dnsservers.concat(this.networkConfig.dns6Servers.filter(s => new Address6(s).isValid()));
+      } else {
+        dnsservers = dnsservers.concat(await this.getOrigDNS6Nameservers());
       }
       if (dnsservers.length > 0) {
         let nameservers = dnsservers.map((nameserver) => `nameserver ${nameserver}`).join("\n") + "\n";
@@ -985,11 +989,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getDns6Nameservers() {
+    if (!this.isIPv6Enabled()) return [];
     const dns = await this.getDNSNameservers() || [];
     return dns.filter(i => new Address6(i).isValid());
   }
 
   async getOrigDNS6Nameservers() {
+    if (!this.isIPv6Enabled()) return [];
     const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
     return dns6 || [];
   }
@@ -1344,10 +1350,12 @@ class InterfaceBasePlugin extends Plugin {
         if (!new Address4(nameserver).isValid()) continue;
         promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent));
       }
-      const result = await Promise.any(promises).catch((err) => {
-        this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
-      });
-      if (result) dnsResult.push(result);
+      if (!_.isEmpty(promises)) {
+        const result = await Promise.any(promises).catch((err) => {
+          this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
+        });
+        if (result) dnsResult.push(result);
+      }
     }
 
     if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip6s) && ip6s.length !== 0) {
@@ -1361,16 +1369,18 @@ class InterfaceBasePlugin extends Plugin {
           promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent, 6));
         }
       }
-      const result = await Promise.any(promises).catch((err) => {
-        this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
-      });
-      if (result) dnsResult.push(result);
+      if (!_.isEmpty(promises)) {
+        const result = await Promise.any(promises).catch((err) => {
+          this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
+        });
+        if (result) dnsResult.push(result);
+      }
     }
 
     if (dnsResult.length > 0) {
       return dnsResult;
     }
-    this.log.error("no valid dns from any nameservers on", this.name, err.message);
+    this.log.error(`no valid dns from any nameservers on ${this.name}`);
     return null;
   }
 
@@ -1545,6 +1555,19 @@ class InterfaceBasePlugin extends Plugin {
             // trigger downstream plugins to reapply config
             this.propagateConfigChanged(true);
             pl.scheduleReapply();
+          });
+        }
+        break;
+      }
+      case event.EVENT_DNS6_CHANGE: {
+        const payload = event.getEventPayload(e);
+        if (payload.intf === this.name && this.isWAN()) {
+          // update DNS from DHCP
+          pl.acquireApplyLock(async () => {
+            await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
+              this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
+            });
+            // this.propagateConfigChanged(true);
           });
         }
         break;
