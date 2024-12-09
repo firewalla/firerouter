@@ -40,6 +40,15 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     await exec(`mkdir -p ${r.getUserConfigFolder()}/wireguard`);
   }
 
+  isFlushNeeded(newConfig) {
+    if (this.name === "wg_ap") {
+      const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "peers" && k !== "extra"));
+      const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "peers" && k !== "extra"));
+      return !_.isEqual(c1, c2);
+    }
+    return true;
+  }
+
   async flush() {
     await super.flush();
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
@@ -140,23 +149,33 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
-    await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    // a special handling for wg_ap interface to avoid disrupting existing peer sessions
+    await exec(`sudo wg ${this.name === "wg_ap" ? "syncconf" : "setconf"} ${this.name} ${this._getInterfaceConfPath()}`);
     return true;
   }
 
   async changeRoutingTables() {
     await super.changeRoutingTables();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
+    const v4Subnets = this.networkConfig.ipv4s ? this.networkConfig.ipv4s.map(addr => new Address4(addr)) : [new Address4(this.networkConfig.ipv4)];
+    let v6Subnets = [];
+    if (this.networkConfig.ipv6) {
+      v6Subnets.push(...(_.isArray(ipv6) ? ipv6.map(addr => new Address6(addr)) : [new Address6(ipv6)]));
+    }
     if (_.isArray(this.networkConfig.peers)) {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
+            const af = new Address4(allowedIP).isValid() ? 4 : 6;
+            // no need to add allowed IP that is in wg interface's cidr, this can reduce cost of executing ip route commands since most peers are in the same IP range
+            if ((af == 4 && v4Subnets.some(subnet => new Address4(allowedIP).isInSubnet(subnet))) || (af == 6 && v6Subnets.some(subnet => new Address6(allowedIP).isInSubnet(subnet))))
+              continue;
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
-            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, af).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, af).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, af).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
@@ -209,7 +228,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
     if (this.networkConfig.assetsController) {
       this._assetsController = require('../../core/assets_controller.js');
-      this._assetsController.startServer(this.networkConfig);
+      await this._assetsController.startServer(this.networkConfig, this.name);
     }
   }
 
