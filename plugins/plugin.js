@@ -24,6 +24,10 @@ class Plugin {
     return this;
   }
 
+  isFlushNeeded(newConfig) {
+    return true;
+  }
+
   static async preparePlugin() {
 
   }
