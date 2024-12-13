@@ -38,6 +38,7 @@ let lastAppliedTimestamp = null;
 let CHANGE_FLAGS = 0;
 const FLAG_IFACE_CHANGE = 0x1;
 const FLAG_CHANGE = 0x2;
+const FLAG_APC_CHANGE = 0x4;
 
 async function initPlugins() {
   if(_.isEmpty(config.plugins)) {
@@ -69,7 +70,7 @@ async function initPlugins() {
   log.info("Plugin initialized", pluginConfs);
 }
 
-function createPluginInstance(category, name, constructor) {
+function createPluginInstance(category, name, constructor, config=null) {
   let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
   if (instance)
     return instance;
@@ -83,6 +84,9 @@ function createPluginInstance(category, name, constructor) {
   instance = new constructor(name);
   instance.name = name;
   pluginCategoryMap[category][name] = instance;
+  if (config) {
+    instance.init(config);
+  }
   log.info("Instance created", instance.name);
   return instance;
 }
@@ -132,12 +136,27 @@ async function publishIfaceChangeApplied() {
     CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
 }
 
+async function publishAPCChangeApplied() {
+  if (!isApplyInProgress())
+    await fwpclient.publishAsync(Message.MSG_FR_APC_CHANGE_APPLIED, "");
+  else
+    CHANGE_FLAGS |= FLAG_APC_CHANGE;
+}
+
 function isApplyInProgress() {
   return applyInProgress;
 }
 
 function getLastAppliedTimestamp() {
   return lastAppliedTimestamp;
+}
+
+async function acquireApplyLock(func) {
+  return lock.acquire(LOCK_REAPPLY, async () => {
+    await func()
+  }).catch((err) => {
+    log.error(`Failed to run async function with apply lock`, err.message);
+  });
 }
 
 async function reapply(config, dryRun = false) {
@@ -171,7 +190,7 @@ async function reapply(config, dryRun = false) {
         }
         if (value) {
           for (let name in value) {
-            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c);
+            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c, pluginConf.config);
             if (!instance)
               continue;
             instance._mark = 1;
@@ -200,6 +219,8 @@ async function reapply(config, dryRun = false) {
               CHANGE_FLAGS |= FLAG_CHANGE;
               if (pluginConf.category === "interface")
                 CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+              if (pluginConf.category === "apc")
+                CHANGE_FLAGS |= FLAG_APC_CHANGE;
             }
             instance.propagateConfigChanged(true);
             instance.unsubscribeAllChanges();
@@ -222,11 +243,16 @@ async function reapply(config, dryRun = false) {
             instance.configure(instance._nextConfig);
           if (instance.isReapplyNeeded()) {
             if (!dryRun) {
-              log.info("Flushing old config", pluginConf.category, instance.name);
-              await instance.flush();
+              if (instance.isFlushNeeded(instance._nextConfig)) {
+                log.info("Flushing old config", pluginConf.category, instance.name);
+                await instance.flush();
+              } else
+                log.info("No need to flush old config", pluginConf.category, instance.name);
               CHANGE_FLAGS |= FLAG_CHANGE;
               if (pluginConf.category === "interface")
                 CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+              if (pluginConf.category === "apc")
+                CHANGE_FLAGS |= FLAG_APC_CHANGE;
             }
             instance.unsubscribeAllChanges();
           }
@@ -259,6 +285,8 @@ async function reapply(config, dryRun = false) {
             CHANGE_FLAGS |= FLAG_CHANGE;
             if (pluginConf.category === "interface")
               CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+            if (pluginConf.category === "apc")
+              CHANGE_FLAGS |= FLAG_APC_CHANGE;
           } else {
             log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
           }
@@ -273,6 +301,8 @@ async function reapply(config, dryRun = false) {
       await publishChangeApplied();
     if (CHANGE_FLAGS & FLAG_IFACE_CHANGE)
       await publishIfaceChangeApplied();
+    if (CHANGE_FLAGS & FLAG_APC_CHANGE)
+      await publishAPCChangeApplied();
     CHANGE_FLAGS = 0;
     lastAppliedTimestamp = Date.now() / 1000;
     return errors;
@@ -313,6 +343,7 @@ module.exports = {
   initPlugins:initPlugins,
   getPluginInstance: getPluginInstance,
   getPluginInstances: getPluginInstances,
+  acquireApplyLock: acquireApplyLock,
   reapply: reapply,
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,

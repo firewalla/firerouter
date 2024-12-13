@@ -24,13 +24,17 @@ class Plugin {
     return this;
   }
 
+  isFlushNeeded(newConfig) {
+    return true;
+  }
+
   static async preparePlugin() {
 
   }
 
   init(pluginConfig) {
     this.pluginConfig = pluginConfig;
-    this.log.info(`Initializing Plugin ${this.constructor.name}...`);
+    this.log.info(`Initializing Plugin ${this.constructor.name} ${JSON.stringify(pluginConfig)}...`);
   }
 
   configure(networkConfig) {

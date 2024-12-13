@@ -58,6 +58,9 @@
       "file_path": "./routing/routing_plugin.js",
       "config_path": "routing",
       "category": "routing",
+      "config": {
+        "smooth_failover": true
+      },
       "init_seq": 5
     },
     {
@@ -143,6 +146,30 @@
       "config_path": "docker",
       "category": "docker",
       "init_seq": 9
+    },
+    {
+      "file_path": "./profile/profile_plugin.js",
+      "config_path": "profile",
+      "category": "profile",
+      "init_seq": 10
+    },
+    {
+      "file_path": "./assets/assets_template_plugin.js",
+      "config_path": "assets_template",
+      "category": "assets_template",
+      "init_seq": 11
+    },
+    {
+      "file_path": "./assets/assets_plugin.js",
+      "config_path": "assets",
+      "category": "assets",
+      "init_seq": 12
+    },
+    {
+      "file_path": "./apc/apc_plugin.js",
+      "config_path": "apc",
+      "category": "apc",
+      "init_seq": 12
     }
   ],
   "sensors": [
