@@ -43,6 +43,12 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     if (!af) {
       await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
       await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
+      // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
+      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+      const lease6Filename = await this._getDHCPCDLease6Filename();
+      if (lease6Filename)
+        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
     } else
       await super.flushIP(af);
   }
