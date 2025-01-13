@@ -18,6 +18,7 @@
 const Promise = require('bluebird');
 const { exec } = require('child-process-promise');
 const log = require('../util/logger.js')('util');
+const uuid = require('uuid');
 
 const _ = require('lodash')
 
@@ -257,6 +258,11 @@ function parseNumList(str) {
   return result.filter(n => !isNaN(n))
 }
 
+function generateUUID() {
+  const ts = Date.now() + '';
+  return uuid.v4().replace(/-/g,"").substring(ts.length) + ts;
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -266,6 +272,7 @@ module.exports = {
   getHexStrArray: getHexStrArray,
   generatePSK: generatePSK,
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
+  generateUUID,
   parseEscapedString,
   parseHexString,
   freqToChannel,
