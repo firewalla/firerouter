@@ -1341,7 +1341,6 @@ class InterfaceBasePlugin extends Plugin {
     const nameservers = await this.getDNSNameservers();
     const ip4s = await this.getIPv4Addresses();
     const ip6s = await this.getIPv6Addresses();
-    let dnsResult = [];
 
     if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
       const srcIP = ip4s[0].split('/')[0];
@@ -1354,7 +1353,8 @@ class InterfaceBasePlugin extends Plugin {
         const result = await Promise.any(promises).catch((err) => {
           this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
         });
-        if (result) dnsResult.push(result);
+        if (result)
+          return result;
       }
     }
 
@@ -1373,12 +1373,9 @@ class InterfaceBasePlugin extends Plugin {
         const result = await Promise.any(promises).catch((err) => {
           this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
         });
-        if (result) dnsResult.push(result);
+        if (result)
+          return result;
       }
-    }
-
-    if (dnsResult.length > 0) {
-      return dnsResult;
     }
     this.log.error(`no valid dns from any nameservers on ${this.name}`);
     return null;
