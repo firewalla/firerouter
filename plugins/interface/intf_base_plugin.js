@@ -1010,6 +1010,11 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv4Addresses() {
+    // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
+    if (_.isArray(this.networkConfig.ipv4s) && !_.isEmpty(this.networkConfig.ipv4s))
+      return this.networkConfig.ipv4s;
+    if (_.isString(this.networkConfig.ipv4))
+      return [this.networkConfig.ipv4];
     let ip4s = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4s)
       ip4s = ip4s.split("\n").filter(l => l.length > 0).map(ip => ip.includes("/") ? ip : `${ip}/32`);
@@ -1017,6 +1022,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
+    // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
     let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
     if (ip6s)
       ip6s = ip6s.split("\n").filter(l => l.length > 0);
@@ -1472,8 +1478,15 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async _getRtId() {
+    if (!this.rtId) {
+      this.rtId = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    }
+    return this.rtId;
+  }
+
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1482,8 +1495,7 @@ class InterfaceBasePlugin extends Plugin {
       this._getSysFSClassNetValue("operstate"),
       this._getSysFSClassNetValue("statistics/tx_bytes"),
       this._getSysFSClassNetValue("statistics/rx_bytes"),
-      routing.createCustomizedRoutingTable(`${this.name}_default`),
-      exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
+      this._getRtId(),
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
       exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
@@ -1496,6 +1508,7 @@ class InterfaceBasePlugin extends Plugin {
       this.getPrefixDelegations(),
       this.isInterfacePresent()
     ]);
+    const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
     if (ip6)
