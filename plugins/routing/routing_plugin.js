@@ -80,10 +80,18 @@ class RoutingPlugin extends Plugin {
           if (!af || af == 4) {
             // remove DNS specific routes
             if (_.isObject(this._dnsRoutes)) {
-              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]))
-                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", 4).catch((err) => { });
-            }
-            this._dnsRoutes = {};
+              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]).filter(i => i.af == 4))
+                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
+              this._dnsRoutes = Object.entries(this._dnsRoutes).reduce((routes, item) => { if (item[1].af == 6) routes[item[0]] = item[1]; return routes }, {});
+            } else { this._dnsRoutes = {} }
+          }
+          if (!af || af == 6) {
+            // remove DNS specific routes
+            if (_.isObject(this._dnsRoutes)) {
+              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]).filter(i => i.af == 6))
+                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
+              this._dnsRoutes = Object.entries(this._dnsRoutes).reduce((routes, item) => { if (item[1].af != 6) routes[item[0]] = item[1]; return routes }, {});
+            } else {this._dnsRoutes = {}}
           }
           break;
         }
@@ -224,7 +232,7 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  _updateDnsRouteCache(dnsIP, gw, viaIntf, metric, tableName="main") {
+  _updateDnsRouteCache(dnsIP, gw, viaIntf, metric, tableName="main", af=4) {
     if (!this._dnsRoutes){
       this._dnsRoutes = {}
     }
@@ -237,7 +245,7 @@ class RoutingPlugin extends Plugin {
         return;
       }
     }
-    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: tableName});
+    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: tableName, af:af});
   }
 
   async refreshGlobalIntfRoutes(intf, af = null) {
@@ -302,7 +310,7 @@ class RoutingPlugin extends Plugin {
             }
           }
 
-          const dns = await intfPlugin.getDNSNameservers();
+          const dns = await intfPlugin.getDns4Nameservers();
           if (_.isArray(dns) && dns.length > 0) {
             for (const dnsIP of dns) {
               await routing.addRouteToTable(dnsIP, gw, intf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
@@ -321,6 +329,18 @@ class RoutingPlugin extends Plugin {
         if (gw6) {
           await this.upsertRouteToTable("default", gw6, intf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
           await this.upsertRouteToTable("default", gw6, intf, "main", metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
+
+          const dns6 = await intfPlugin.getDns6Nameservers();
+          if (_.isArray(dns6) && dns6.length > 0) {
+            for (const dns6IP of dns6) {
+              await routing.addRouteToTable(dns6IP, gw6, intf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => {
+                this.log.warn(`fail to add route -6 ${dns6IP} via ${gw6} dev ${intf} table ${routing.RT_GLOBAL_DEFAULT}, err:`, err.message)});
+              await routing.addRouteToTable(dns6IP, gw6, intf, "main", metric, 6).then(() => {
+                this._updateDnsRouteCache(dns6IP, gw6, intf, metric, "main", 6);
+              }).catch((err) => {
+                this.log.warn(`fail to add route -6 ${dns6IP} via ${gw6} dev ${intf} table main, err:`, err.message)});
+            }
+          }
         }
       }
     });
@@ -402,13 +422,24 @@ class RoutingPlugin extends Plugin {
       if (!af || af == 4) {
         // remove DNS specific routes
         if (_.isObject(this._dnsRoutes)) {
-          for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key])) {
+          for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]).filter(i => i.af == 4)) {
             await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName : "main", 4).catch((err) => {
               this.log.warn('fail to remove dns route from table main, err:', err.message)
             });
           }
-        }
-        this._dnsRoutes = {};
+          this._dnsRoutes = Object.entries(this._dnsRoutes).reduce((routes, item) => { if (item[1].af == 6) routes[item[0]] = item[1]; return routes }, {});
+        } else { this._dnsRoutes = {}}
+      }
+      if (!af || af == 6) {
+        // remove DNS specific routes
+        if (_.isObject(this._dnsRoutes)) {
+          for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]).filter(i => i.af == 6)) {
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName : "main", 6).catch((err) => {
+              this.log.warn('fail to remove dns route from table main, err:', err.message)
+            });
+          }
+          this._dnsRoutes = Object.entries(this._dnsRoutes).reduce((routes, item) => { if (item[1].af != 6) routes[item[0]] = item[1]; return routes }, {});
+        } else { this._dnsRoutes = {}}
       }
   }
 
@@ -479,7 +510,7 @@ class RoutingPlugin extends Plugin {
                 await this.upsertRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
                 await this.upsertRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 // add route for DNS nameserver IP in global_default table
-                const dns = await viaIntfPlugin.getDNSNameservers();
+                const dns = await viaIntfPlugin.getDns4Nameservers();
                 if (_.isArray(dns) && dns.length !== 0) {
                   for (const dnsIP of dns) {
                     await this.upsertRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
@@ -503,6 +534,22 @@ class RoutingPlugin extends Plugin {
               if (gw6 && (ready || type === "single")) { // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
                 await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 await this.upsertRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
+                // add route for ipv6 DNS nameserver IP in global_default table
+                const dns6 = await viaIntfPlugin.getDns6Nameservers();
+                if (_.isArray(dns6) && dns6.length !== 0 ){
+                  for (const dns6IP of dns6) {
+                    await this.upsertRouteToTable(dns6IP, gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => {
+                      this.log.error(`Failed to add route ipv6 to ${routing.RT_GLOBAL_DEFAULT} for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
+                    });
+                     // update all dns routes via the same interface but with new metrics in main table
+                     await this.upsertRouteToTable(dns6IP, gw6, viaIntf, "main", metric, 6).then(() => {
+                      this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, "main", 6);
+                    }).catch((err) => {
+                      this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
+                    });
+                  }
+                }
+
               } else {
                 this.log.info("IPv6 gateway is not defined on global default interface " + viaIntf);
               }
@@ -558,7 +605,7 @@ class RoutingPlugin extends Plugin {
                   await routing.addRouteToTable("default", gw, viaIntf, "main", metric, 4).catch((err) => { });
                 }
                 // add route for DNS nameserver IP in global_default table
-                const dns = await viaIntfPlugin.getDNSNameservers();
+                const dns = await viaIntfPlugin.getDns4Nameservers();
                 if (_.isArray(dns) && dns.length !== 0) {
                   for (const dnsIP of dns) {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
@@ -583,7 +630,7 @@ class RoutingPlugin extends Plugin {
                     if (!this._dnsRoutes[viaIntf]) {
                       this._dnsRoutes[viaIntf] = [];
                     }
-                    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: "main"});
+                    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: "main", af: af});
                   }
                 }
               } else {
@@ -603,6 +650,35 @@ class RoutingPlugin extends Plugin {
                   await routing.addRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
                   */
                 }
+                // add route for ipv6 DNS nameserver IP in global_default table
+                const dns6 = await viaIntfPlugin.getDns6Nameservers();
+                if (_.isArray(dns6) && dns6.length !== 0) {
+                  for (const dns6IP of dns6) {
+                    await routing.addRouteToTable(dns6IP, gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6, true).catch((err) => {
+                      this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
+                    });
+                    let dnsRouteRemoved = false;
+                    // remove all ipv6 dns routes via the same interface but with different metrics in main table
+                    do {
+                      await routing.removeRouteFromTable(dns6IP, gw6, viaIntf, "main", 6).then(() => {
+                        dnsRouteRemoved = true;
+                      }).catch((err) => {
+                        dnsRouteRemoved = false;
+                      })
+                    } while (dnsRouteRemoved)
+                    await routing.addRouteToTable(dns6IP, gw6, viaIntf, "main", metric, 6, true).catch((err) => {
+                      this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
+                    });
+                    if (!this._dnsRoutes){
+                      log.warn("should init _dnsRoutes in load_balance mode");
+                      this._dnsRoutes = {}
+                    }
+                    if (!this._dnsRoutes[viaIntf]) {
+                      this._dnsRoutes[viaIntf] = [];
+                    }
+                    this._dnsRoutes[viaIntf].push({dest: dns6IP, gw: gw6, viaIntf: viaIntf, metric: metric, tableName: "main", af: af});
+                  }
+                }
               } else {
                 this.log.info("Failed to get IPv6 gateway of global default interface " + viaIntf);
               }
@@ -616,6 +692,7 @@ class RoutingPlugin extends Plugin {
             await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 6, ...multiPathDesc6).catch((err) => { });
             await routing.addMultiPathRouteToTable("default", "main", 6, ...multiPathDesc6).catch((err) => { });
           }
+
           break;
         }
         default:
@@ -647,74 +724,53 @@ class RoutingPlugin extends Plugin {
                 const defaultRoutingType = settings.type || "single";
                 let changeDescs = [];
                 switch (defaultRoutingType) {
+                  case "single":
                   case "primary_standby": {
-                    const viaIntf2 = settings.viaIntf2;
-                    const viaIntf2Plugin = pl.getPluginInstance("interface", viaIntf2);
-                    if (!viaIntf2Plugin)
-                      this.fatal(`Cannot find global default interface plugin ${viaIntf2}`);
-                    this.subscribeChangeFrom(viaIntf2Plugin);
-                    wanStatus[viaIntf2] = {
-                      active: false,
-                      ready: true
-                    };
-                    // inherit active/ready based on seq
-                    for (const intf of Object.keys(lastWanStatus)) {
-                      if (lastWanStatus[intf].seq === 1) {
-                        wanStatus[viaIntf2].active = lastWanStatus[intf].active;
-                        wanStatus[viaIntf2].ready = lastWanStatus[intf].ready;
-                        break;
-                      }
+                    const viaIntfs = [];
+                    // new key that can contain more than two wans for primary_standby
+                    if (_.isArray(settings.viaIntfs))
+                      viaIntfs.push(...settings.viaIntfs);
+                    else {
+                      // old keys that hardcodes two wans
+                      if (settings.viaIntf)
+                        viaIntfs.push(settings.viaIntf);
+                      if (settings.viaIntf2)
+                        viaIntfs.push(settings.viaIntf2);
                     }
-                    if (await viaIntf2Plugin.isInterfacePresent() === false) {
-                      // need to publish wan conn change events if it was ready previously
-                      if (wanStatus[viaIntf2].ready === true) {
-                        changeDescs.push({
-                          intf: viaIntf2,
-                          ready: false,
-                          wanSwitched: wanStatus[viaIntf2].active === true ? true : false,
-                          failures: [{type: "carrier"}]
-                        });
+                    for (let seq = 0; seq < viaIntfs.length; seq++) {
+                      const viaIntf = viaIntfs[seq];
+                      const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
+                      if (!viaIntfPlugin)
+                        this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
+                      this.subscribeChangeFrom(viaIntfPlugin);
+                      wanStatus[viaIntf] = {
+                        active: false,
+                        ready: true
+                      };
+                      for (const intf of Object.keys(lastWanStatus)) {
+                        if (lastWanStatus[intf].seq === seq) {
+                          wanStatus[viaIntf].active = lastWanStatus[intf].active;
+                          wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
+                          break;
+                        }
                       }
-                      // directly mark ready to false if interface does not exist at the moment
-                      wanStatus[viaIntf2].ready = false;
-                      wanStatus[viaIntf2].active = false;
-                    }
-                    wanStatus[viaIntf2].seq = 1;
-                    wanStatus[viaIntf2].plugin = viaIntf2Plugin;
-                  }
-                  case "single": {
-                    const viaIntf = settings.viaIntf;
-                    const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
-                    if (!viaIntfPlugin)
-                      this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
-                    this.subscribeChangeFrom(viaIntfPlugin);
-                    wanStatus[viaIntf] = {
-                      active: false,
-                      ready: true
-                    };
-                    for (const intf of Object.keys(lastWanStatus)) {
-                      if (lastWanStatus[intf].seq === 0) {
-                        wanStatus[viaIntf].active = lastWanStatus[intf].active;
-                        wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
-                        break;
+                      if (await viaIntfPlugin.isInterfacePresent() === false) {
+                        // need to publish wan conn change events if it was ready previously
+                        if (wanStatus[viaIntf].ready === true) {
+                          changeDescs.push({
+                            intf: viaIntf,
+                            ready: false,
+                            wanSwitched: wanStatus[viaIntf].active === true && viaIntfs.length > 1 ? true : false,
+                            failures: [{type: "carrier"}]
+                          });
+                        }
+                        // directly mark ready to false if interface does not exist at the moment
+                        wanStatus[viaIntf].ready = false;
+                        wanStatus[viaIntf].active = false;
                       }
+                      wanStatus[viaIntf].seq = seq;
+                      wanStatus[viaIntf].plugin = viaIntfPlugin;
                     }
-                    if (await viaIntfPlugin.isInterfacePresent() === false) {
-                      // need to publish wan conn change events if it was ready previously
-                      if (wanStatus[viaIntf].ready === true) {
-                        changeDescs.push({
-                          intf: viaIntf,
-                          ready: false,
-                          wanSwitched: wanStatus[viaIntf].active === true && type !== "single" ? true : false,
-                          failures: [{type: "carrier"}]
-                        });
-                      }
-                      // directly mark ready to false if interface does not exist at the moment
-                      wanStatus[viaIntf].ready = false;
-                      wanStatus[viaIntf].active = false;
-                    }
-                    wanStatus[viaIntf].seq = 0;
-                    wanStatus[viaIntf].plugin = viaIntfPlugin;
                     break;
                   }
                   case "load_balance": {
@@ -935,6 +991,7 @@ class RoutingPlugin extends Plugin {
       const result = {};
       Object.keys(this._wanStatus).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).forEach(i => {
         result[i] = {
+          seq: this._wanStatus[i].seq,
           ready: this._wanStatus[i].ready,
           active: this._wanStatus[i].active,
           pendingTest: this._wanStatus[i].pendingTest
@@ -1050,9 +1107,10 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "primary_standby": {
+              const activeWanStatus = Object.values(this._wanStatus).filter(status => status.active).sort((a, b) => a.seq - b.seq);
               const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-              if (this.getActiveWANPlugins().length === 0 || (failback && currentStatus.seq === 0))
-                // apply WAN settings in failback mode if primary WAN is back to ready
+              if (_.isEmpty(activeWanStatus) || (failback && currentStatus.seq < activeWanStatus[0].seq))
+                // apply WAN settings in failback mode if a WAN with higher rank is back to ready
                 changeActiveWanNeeded = true;
               break;
             }
@@ -1155,6 +1213,7 @@ class RoutingPlugin extends Plugin {
           result[i] = {
             wan_intf_name: ifacePlugin.networkConfig.meta.name,
             wan_intf_uuid: ifacePlugin.networkConfig.meta.uuid,
+            seq: wanStatus[i].seq,
             ready: wanStatus[i].ready,
             active: wanStatus[i].active
           };
