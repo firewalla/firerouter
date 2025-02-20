@@ -19,6 +19,7 @@ const fs = require('fs');
 const ncm = require('../core/network_config_mgr.js');
 const platform = require('../platform/PlatformLoader.js').getPlatform();
 const r = require('../util/firerouter.js');
+const util = require('../util/util.js');
 
 class WlanConfUpdateSensor extends Sensor {
   async run() {
@@ -72,6 +73,8 @@ class WlanConfUpdateSensor extends Sensor {
             this.log.error(`Error occured while applying updated config`, errors);
             return;
           }
+          currentConfig.ncid = util.generateUUID();
+          log.info("New ncid generated", currentConfig.ncid);
           await ncm.saveConfig(currentConfig, false);
         }
       }
