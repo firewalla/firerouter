@@ -1211,7 +1211,7 @@ class InterfaceBasePlugin extends Plugin {
     if (active && pingTestEnabled) {
       // no need to use Promise.any as ping test time for each target is the same
       // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
-      const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+      const rtid = await this._getRtId();
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `sudo ping -n -q -m ${rtid} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
