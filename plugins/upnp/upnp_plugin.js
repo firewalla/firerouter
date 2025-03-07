@@ -86,7 +86,7 @@ class UPnPPlugin extends Plugin {
 
     // delete lease file on turning off
     if (!upnpEnabled) {
-      await exec(`sudo rm /var/run/upnp.${this.name}.leases`)
+      await exec(`sudo rm /var/run/upnp.${this.name}.leases`).catch((err) => {});
     }
   }
 
