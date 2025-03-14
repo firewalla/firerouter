@@ -2,26 +2,34 @@
 
 case $reason in
   ROUTERADVERT)
-    new_addrs="";
-    gw6="";
+    nd_id=1
+    gw6=""
     vltime="";
-    addr_id=1
-    while [ $addr_id -lt 10 ]; do
-      var_name="nd1_addr$addr_id"
+    while [ $nd_id -lt 10 ]; do
+      nd_name="nd${nd_id}_from"
+      eval "nd_from_tmp=\$$nd_name"
+      if [ -z "$nd_from_tmp" ]; then
+        nd_id=$((nd_id - 1));
+        break
+      fi
+      gw6=${nd_from_tmp}
+      nd_id=$((nd_id + 1));
+    done
+    vltime_name="nd${nd_id}_prefix_information1_vltime"
+    eval "vltime=\$$vltime_name"
+
+    new_addrs=""
+    addr_id=10
+    while [ $addr_id -gt 0 ]; do
+      var_name="nd${nd_id}_addr$addr_id"
       eval "addr=\$$var_name"
       if [ -n "$addr" ]; then
-        new_addrs="$new_addrs$addr,"
-        var_name="nd1_prefix_information${addr_id}_vltime"
-        eval "vltime=\$$var_name"
-      else
-        break;
+        new_addrs="$addr"
+        break
       fi
-      addr_id=$((addr_id + 1))
+      addr_id=$((addr_id - 1))
     done
 
-    if [ -n "$nd1_from" ]; then
-      gw6="$nd1_from"
-    fi
     echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)" > /dev/shm/dhcpcd.ra.$interface
     ;;
   BOUND6|REBOOT6|RENEW6|REBIND6)
