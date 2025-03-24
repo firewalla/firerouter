@@ -25,21 +25,32 @@ ip_changed=""
 case $reason in
 
   ROUTERADVERT)
-    # If the IPv6 address of the upstream router changes, we may recieve sevaral groups of nd_* variables, take the last one.
-    nd_id=1
+    # If the IPv6 address of the upstream router changes, 
+    # we may recieve sevaral groups of nd_* variables, take the last complete ND option set.
+    nd_id=10
     nd_from=""
-    while [ $nd_id -lt 10 ]; do
+    while [ $nd_id -gt 0 ]; do
       nd_name="nd${nd_id}_from"
-      eval "nd_from_tmp=\$$nd_name"
-      if [ -z "$nd_from_tmp" ]; then
+      eval "nd_from_val=\$$nd_name"
+      nd_mtu="nd${nd_id}_mtu"
+      eval "nd_mtu_val=\$$nd_mtu"
+      nd_rdnss1_servers="nd${nd_id}_rdnss1_servers"
+      eval "nd_rdnss1_servers_val=\$$nd_rdnss1_servers"
+      nd_addr1="nd${nd_id}_addr1"
+      eval "nd1_addr1_val=\$$nd_addr1"
+
+      if [ -z "$nd_from_val" -o -z "$nd_mtu_val" -o -z "$nd_rdnss1_servers_val" -o -z "$nd1_addr1_val" ]; then
         nd_id=$((nd_id - 1));
+        continue
+      else
+        nd_from=${nd_from_val}
         break
       fi
-      nd_from=${nd_from_tmp}
-      nd_id=$((nd_id + 1));
     done
-    echo "nd_from: ${nd_from}"
-    echo "nd_id: ${nd_id}"
+
+    if [ -z "$nd_from" ]; then
+      exit 0
+    fi
 
     new_addrs=""
     addr_id=10
