@@ -2,19 +2,32 @@
 
 case $reason in
   ROUTERADVERT)
-    nd_id=1
+    # If the IPv6 address of the upstream router changes, 
+    # we may recieve sevaral groups of nd_* variables, take the last complete ND option set.
+    nd_id=10
     gw6=""
     vltime="";
-    while [ $nd_id -lt 10 ]; do
+    while [ $nd_id -gt 0 ]; do
       nd_name="nd${nd_id}_from"
-      eval "nd_from_tmp=\$$nd_name"
-      if [ -z "$nd_from_tmp" ]; then
-        nd_id=$((nd_id - 1));
+      eval "nd_from_val=\$$nd_name"
+      nd_mtu="nd${nd_id}_mtu"
+      eval "nd_mtu_val=\$$nd_mtu"
+      nd_rdnss1_servers="nd${nd_id}_rdnss1_servers"
+      eval "nd_rdnss1_servers_val=\$$nd_rdnss1_servers"
+      nd_addr1="nd${nd_id}_addr1"
+      eval "nd_addr1_val=\$$nd_addr1"
+
+      if [ -n "$nd_from_val" ] && { [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ]; }; then
+        gw6=${nd_from_val}
         break
+      else
+        nd_id=$((nd_id - 1));
+        continue
       fi
-      gw6=${nd_from_tmp}
-      nd_id=$((nd_id + 1));
     done
+    if [ -z "$gw6" ]; then
+      exit 0
+    fi
     vltime_name="nd${nd_id}_prefix_information1_vltime"
     eval "vltime=\$$vltime_name"
 
