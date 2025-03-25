@@ -37,14 +37,14 @@ case $reason in
       nd_rdnss1_servers="nd${nd_id}_rdnss1_servers"
       eval "nd_rdnss1_servers_val=\$$nd_rdnss1_servers"
       nd_addr1="nd${nd_id}_addr1"
-      eval "nd1_addr1_val=\$$nd_addr1"
+      eval "nd_addr1_val=\$$nd_addr1"
 
-      if [ -z "$nd_from_val" -o -z "$nd_mtu_val" -o -z "$nd_rdnss1_servers_val" -o -z "$nd1_addr1_val" ]; then
-        nd_id=$((nd_id - 1));
-        continue
-      else
+      if [ -n "$nd_from_val" ] && { [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ]; }; then
         nd_from=${nd_from_val}
         break
+      else
+        nd_id=$((nd_id - 1));
+        continue
       fi
     done
 
