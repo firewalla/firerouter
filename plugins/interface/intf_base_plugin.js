@@ -1011,10 +1011,14 @@ class InterfaceBasePlugin extends Plugin {
 
   async getIPv4Addresses() {
     // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
+    const staticIpv4s = {};
     if (_.isArray(this.networkConfig.ipv4s) && !_.isEmpty(this.networkConfig.ipv4s))
-      return this.networkConfig.ipv4s;
+      for (const ip4 of this.networkConfig.ipv4s)
+        staticIpv4s[ip4] = 1;
     if (_.isString(this.networkConfig.ipv4))
-      return [this.networkConfig.ipv4];
+      staticIpv4s[this.networkConfig.ipv4] = 1;
+    if (!_.isEmpty(staticIpv4s))
+      return Object.keys(staticIpv4s);
     let ip4s = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4s)
       ip4s = ip4s.split("\n").filter(l => l.length > 0).map(ip => ip.includes("/") ? ip : `${ip}/32`);
