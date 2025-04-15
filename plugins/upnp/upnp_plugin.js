@@ -83,6 +83,11 @@ class UPnPPlugin extends Plugin {
     const allowNetworks = internalNetworks.map(n => `allow 1024-65535 ${n} 1024-65535`);
     content = content.replace(/%ALLOW_NETWORK%/g, allowNetworks.join("\n"));
     await fs.writeFileAsync(this._getConfigFilePath(), content, {encoding: 'utf8'});
+
+    // delete lease file on turning off
+    if (!upnpEnabled) {
+      await exec(`sudo rm /var/run/upnp.${this.name}.leases`).catch((err) => {});
+    }
   }
 
   async apply() {
