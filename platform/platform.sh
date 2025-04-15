@@ -36,6 +36,10 @@ function get_dnsmasq_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
 }
 
+function get_dhcpcd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/dhcpcd"
+}
+
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }
