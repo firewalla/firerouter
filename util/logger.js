@@ -42,6 +42,7 @@ if (process.env.FWDEBUG) {
 }
 
 const keysToRedact = new Set(["password", "passwd", "psk", "key", "psks"]);
+
 function redactLog(obj, redactRequired = false) {
   if (!obj)
     return obj;
