@@ -483,7 +483,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getDuid() {
-    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => null);
+    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => null);
   }
 
   async _resetDuid() {
@@ -509,19 +509,21 @@ class InterfaceBasePlugin extends Plugin {
   // Generate DHCP Unique Identifier (DUID), see RFC8415
   async _genDuid(duidType, force=false) {
     let origDuid = await this._getDuid();
-    const origDuidType = this._getDuidType(origDuid);
-    if (origDuidType == duidType && !force) {
-      this.log.info('duid already generated as', origDuid);
-      return;
+    if (origDuid && origDuid.length > 5) {
+      const origDuidType = this._getDuidType(origDuid);
+      if (origDuidType == duidType && !force) {
+        this.log.info('duid already generated as', origDuid);
+        return;
+      }
     }
-    let duid, eth0Mac;
+    let duid, ethMac;
     switch (duidType) {
       case 'DUID-LLT':
         // 00:01 DUID-Type (DUID-LLT), 00:01 hardware type (Ethernet)
-        eth0Mac = await fs.readFileAsync("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-        if (eth0Mac) {
+        ethMac = await fs.readFileAsync(`/sys/class/net/${this.name}/address`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        if (ethMac) {
           const ts = this._formatDuid(Math.floor(Date.now()/1000).toString(16));
-          duid = `00:01:00:01:${ts}:${eth0Mac}`;
+          duid = `00:01:00:01:${ts}:${ethMac}`;
         }
         break;
       case 'DUID-EN':
@@ -529,9 +531,9 @@ class InterfaceBasePlugin extends Plugin {
         break;
       case 'DUID-LL':
         // 00:03 DUID-Type (DUID-LL), 00:01 hardware type (Ethernet)
-        eth0Mac = await fs.readFileAsync("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-        if (eth0Mac) {
-          duid = `00:03:00:01:${eth0Mac}`;
+        ethMac = await fs.readFileAsync(`/sys/class/net/${this.name}/address`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        if (ethMac) {
+          duid = `00:03:00:01:${ethMac}`;
         }
         break;
       case 'DUID-UUID':
@@ -549,27 +551,27 @@ class InterfaceBasePlugin extends Plugin {
     }
     // save previous duid in redis
     await this.saveDuidRecord(`${origDuid}#${duidType}:${duid}`);
-    await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+    await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`).catch((err) => {});
     return duid;
   }
 
   async _genDuidUuid() {
-    const existUuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+    const existUuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
     if (existUuid) {
       return existUuid;
     }
 
     const newUuid = uuidv4();
-    await fs.writeFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, newUuid).catch((err) => {this.log.warn("fail to persistently save duid uuid", err.message)});
+    await fs.writeFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid_uuid`, newUuid).catch((err) => {this.log.warn("fail to persistently save duid uuid", err.message)});
     return newUuid;
   }
 
   async saveDuidRecord(record){
-    await rclient.zaddAsync('duid_record', Math.floor(new Date() / 1000), record);
+    await rclient.zaddAsync(`duid_record_${this.name}`, Math.floor(new Date() / 1000), record);
     // keep latest records
-    const count = await rclient.zcardAsync('duid_record');
+    const count = await rclient.zcardAsync(`duid_record_${this.name}`);
     if (count > DUID_RECORD_MAX) {
-      await rclient.zremrangebyrankAsync('duid_record', 0, count-DUID_RECORD_MAX-1);
+      await rclient.zremrangebyrankAsync(`duid_record_${this.name}`, 0, count-DUID_RECORD_MAX-1);
     }
   }
 

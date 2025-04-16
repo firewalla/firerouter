@@ -69,10 +69,10 @@ describe('Test interface base dhcp6', function(){
     it('should gen duid uuid', async() => {
       const t1 = await this.plugin._genDuidUuid();
       const t2 = await this.plugin._genDuidUuid();
-      const duuuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-      log.debug("duid uuid generated", duuuid);
-      expect(t1).to.be.equal(duuuid);
-      expect(t2).to.be.equal(duuuid);
+      const duid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.plugin.name}.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+      log.debug("duid uuid generated", duid);
+      expect(t1).to.be.equal(duid);
+      expect(t2).to.be.equal(duid);
     });
 
     it('should reset duid', async() => {
