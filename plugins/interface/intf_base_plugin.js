@@ -1650,7 +1650,9 @@ class InterfaceBasePlugin extends Plugin {
               this.carrierState().then((result) => {
                 if (result === "1") {
                   this.gatewayReachable().then((reachable) => {
-                    if (!reachable) {
+                    const routingPlugin = pl.getPluginInstance("routing", "global");
+                    // renew dhcp lease if gateway is unreachable or internet is down globally
+                    if (!reachable || (routingPlugin && _.isEmpty(routingPlugin.getActiveWANPlugins()))) {
                       this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
                       this.renewDHCPLease().catch((err) => {
                         this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
