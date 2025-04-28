@@ -69,6 +69,13 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     return `/etc/ppp/${this.name}.resolv.conf`
   }
 
+  async getLinkAddress() {
+    const addr = await exec(`cat /sys/class/net/${this.networkConfig.intf}/address`).then((result) => result.stdout.trim() || null).catch((err) => {
+      this.log.error(`Failed to get hardware address of ${this.networkConfig.intf}`, err.message);
+    });
+    return addr;
+  }
+
   async createInterface() {
     // create config file instead
     if (!this.networkConfig || !this.networkConfig.username || !this.networkConfig.password) {
