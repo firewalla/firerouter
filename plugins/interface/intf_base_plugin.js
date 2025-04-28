@@ -483,10 +483,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getDuid() {
-    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => null);
+    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => {
+      this.log.info(`Cannot read current DUID ${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`, err.message);
+    });
   }
 
   async _resetDuid() {
+    this.log.debug("Resetting DUID");
     let duidType = 'DUID-UUID';
     const arch = await exec("uname -m", {encoding: 'utf8'}).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get architecture`, err.message);
@@ -508,11 +511,13 @@ class InterfaceBasePlugin extends Plugin {
 
   // Generate DHCP Unique Identifier (DUID), see RFC8415
   async _genDuid(duidType, force=false) {
+    this.log.debug("Generating DUID", this.name, duidType);
     let origDuid = await this._getDuid();
     if (origDuid && origDuid.length > 5) {
+      this.log.debug("Found current DUID", origDuid);
       const origDuidType = this._getDuidType(origDuid);
       if (origDuidType == duidType && !force) {
-        this.log.info('duid already generated as', origDuid);
+        this.log.info(`${this.name} duid already generated as`, origDuid);
         return;
       }
     }
@@ -520,10 +525,12 @@ class InterfaceBasePlugin extends Plugin {
     switch (duidType) {
       case 'DUID-LLT':
         // 00:01 DUID-Type (DUID-LLT), 00:01 hardware type (Ethernet)
-        ethMac = await fs.readFileAsync(`/sys/class/net/${this.name}/address`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        ethMac = await this.getLinkAddress();
         if (ethMac) {
           const ts = this._formatDuid(Math.floor(Date.now()/1000).toString(16));
           duid = `00:01:00:01:${ts}:${ethMac}`;
+        } else {
+          this.log.warn("cannot generate duid of type DUID-LLT, no ethernet address");
         }
         break;
       case 'DUID-EN':
@@ -531,9 +538,11 @@ class InterfaceBasePlugin extends Plugin {
         break;
       case 'DUID-LL':
         // 00:03 DUID-Type (DUID-LL), 00:01 hardware type (Ethernet)
-        ethMac = await fs.readFileAsync(`/sys/class/net/${this.name}/address`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+        ethMac = await this.getLinkAddress();
         if (ethMac) {
           duid = `00:03:00:01:${ethMac}`;
+        } else {
+          this.log.warn("cannot generate duid of type DUID-LL, no ethernet address");
         }
         break;
       case 'DUID-UUID':
@@ -541,17 +550,20 @@ class InterfaceBasePlugin extends Plugin {
         const uuid = await this._genDuidUuid();
         if (uuid) {
           duid = '00:04:' + this._formatDuid(uuid);
+        } else {
+          this.log.warn("cannot generate duid of type DUID-UUID, no uuid");
         }
         break;
       default:
     }
     if (!duid) {
-      this.log.warn("cannot generate duid of type %s", duidType);
+      this.log.warn("cannot generate duid of type", duidType);
       return;
     }
     // save previous duid in redis
     await this.saveDuidRecord(`${origDuid}#${duidType}:${duid}`);
     await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`).catch((err) => {});
+    this.log.info(`generate new duid for ${this.name}`, duid);
     return duid;
   }
 
@@ -1046,6 +1058,13 @@ class InterfaceBasePlugin extends Plugin {
 
   async getHardwareAddress() {
     const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => null);
+    return addr;
+  }
+
+  async getLinkAddress() {
+    const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => {
+      this.log.error(`Failed to get hardware address of ${this.name}`, err.message);
+    });
     return addr;
   }
 
