@@ -1429,7 +1429,7 @@ class InterfaceBasePlugin extends Plugin {
       for(const nameserver of nameservers) {
         for (const srcIP of srcIPs) {
           const ipaddr  = new Address6(srcIP);
-          if (!ipaddr.isValid() || ipaddr.getScope().toLowerCase() != "global") continue;
+          if (!ipaddr.isValid() || ipaddr.isLinkLocal()) continue;
           if (!new Address6(nameserver).isValid()) continue;
           promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent, 6));
         }
