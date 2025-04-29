@@ -814,6 +814,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async updateRouteForDNS() {
+    await this._removeOldRouteForDNS();
     const dns = await this.getDNSNameservers();
     const gateway = await routing.getInterfaceGWIP(this.name, 4);
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6);
@@ -821,12 +822,45 @@ class InterfaceBasePlugin extends Plugin {
       return;
     for (const dnsIP of dns) {
       if (new Address4(dnsIP).isValid())
-        await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true).catch((err) => {});
+        await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true)
+                      .then(()=>{this._updateDnsRouteCache(dnsIP, gateway, this.name, `${this.name}_default`, 4);})
+                      .catch((err) => {});
       else
-        await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true).catch((err) => {});
+        await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true)
+                      .then(()=>{this._updateDnsRouteCache(dnsIP, gateway6, this.name, `${this.name}_default`, 6);})
+                      .catch((err) => {});
     }
   }
 
+  async _removeOldRouteForDNS() {
+    // remove Old DNS specific routes
+    if (_.isObject(this._dnsRoutes)) {
+      for (const inf of Object.keys(this._dnsRoutes)) {
+        for (const dnsRoute of this._dnsRoutes[inf]) {
+          await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
+        }
+      }
+    } 
+    this._dnsRoutes = {}
+  }
+
+  _updateDnsRouteCache(dnsIP, gw, viaIntf, tableName="main", af=4) {
+    if (!this._dnsRoutes){
+      this._dnsRoutes = {}
+    }
+    if (!this._dnsRoutes[viaIntf]) {
+      this._dnsRoutes[viaIntf] = [];
+    }
+    for (const dns of this._dnsRoutes[viaIntf]) {
+      if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.tableName == tableName) {
+        // ensure no duplicates
+        return;
+      }
+    }
+    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, tableName: tableName, af:af});
+  }
+
+  
   async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
