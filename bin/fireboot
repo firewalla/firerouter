@@ -21,6 +21,7 @@ fi
 rc=0
 
 if [[ $NETWORK_SETUP == "yes" ]]; then
+  remap_eth_interfaces
   init_network_config; rc=$?
 else
   wait_until_any_wan_carrier_connected
@@ -28,6 +29,7 @@ else
 fi
 
 logger "Uptime after init_network_config: $(awk '{print $1}' /proc/uptime)"
+record_eth_interfaces
 
 
 bootingComplete=$(redis-cli get bootingComplete)
