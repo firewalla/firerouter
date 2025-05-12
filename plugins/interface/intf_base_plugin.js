@@ -1132,6 +1132,11 @@ class InterfaceBasePlugin extends Plugin {
     return state;
   }
 
+  async linkSpeed() {
+    const speed = Number(await this._getSysFSClassNetValue("speed"));
+    return !isNaN(speed) ? speed : 0;
+  }
+
   // is the interface physically ready to connect
   async readyToConnect() {
     const carrierState = await this.carrierState();

@@ -93,7 +93,14 @@ describe('Test interface base dhcp6', function(){
       expect(this.plugin._getDuidType('00:03:00:01:20:6d:31:01:2b:43')).to.be.equal('DUID-LL');
       expect(this.plugin._getDuidType('00:04:7e:89:20:22:89:15:45:b8:ac:05:3c:68:2b:08:04:8f')).to.be.equal('DUID-UUID');
     });
-  });
+
+    it('should get link speed', async() => {
+      const speed = await this.plugin.linkSpeed();
+      log.debug(this.plugin.name,"speed:", speed);
+      expect(isNaN(speed)).to.be.equal(false);
+    });
+
+});
 
 
   describe('Test interface base dns', function(){
