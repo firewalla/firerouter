@@ -87,6 +87,10 @@ case $reason in
 
     old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
     if [ "$new_addrs," != "$old_addrs" ]; then
+      old_addrs="${old_addrs%,}"
+      for rt_table in $rt_tables; do
+        execute_and_log "sudo ip -6 r del $old_addrs dev $interface table $rt_table"
+      done
       echo "$new_addrs," > /dev/shm/dhcpcd.ip6.$interface
       ip_changed="1"
     fi
