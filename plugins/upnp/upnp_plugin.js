@@ -27,6 +27,7 @@ const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
+const rclient0 = require('../../util/redis_manager').getRedisClient(0);
 
 class UPnPPlugin extends Plugin {
   static async preparePlugin() {
@@ -87,6 +88,7 @@ class UPnPPlugin extends Plugin {
     // delete lease file on turning off
     if (!upnpEnabled) {
       await exec(`sudo rm /var/run/upnp.${this.name}.leases`).catch((err) => {});
+      await rclient0.hdelAsync('sys:scan:nat', 'upnp');
     }
   }
 
