@@ -196,13 +196,13 @@ async function reapply(config, dryRun = false) {
             instance._mark = 1;
             const oldConfig = instance.networkConfig;
             if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
-              log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
+              log.info(`Network config of ${pluginConf.category}-->${name} changed`, pluginConf.hide_config_in_log ? "hidden" : oldConfig, pluginConf.hide_config_in_log ? "hidden" : value[name]);
               instance.propagateConfigChanged(true);
             }
             instance._nextConfig = value[name];
             if (!oldConfig) {
               // initialization of network config, flush instance with new config
-              log.info(`Initial setup of ${pluginConf.category}-->${name}`, value[name]);
+              log.info(`Initial setup of ${pluginConf.category}-->${name}`, pluginConf.hide_config_in_log ? "hidden" : value[name]);
               instance.propagateConfigChanged(true);
               instance.unsubscribeAllChanges();
             }
