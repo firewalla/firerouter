@@ -1683,6 +1683,7 @@ class InterfaceBasePlugin extends Plugin {
           this.markOutputConnection().catch((err) => {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
+          pl.publishIfaceChangeApplied();
         }
         break;
       }

@@ -691,12 +691,12 @@ class RoutingPlugin extends Plugin {
             }
           }
           if (multiPathDesc.length > 0) {
-            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 4, ...multiPathDesc).catch((err) => { });
-            await routing.addMultiPathRouteToTable("default", "main", 4, ...multiPathDesc).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 4, 1, ...multiPathDesc).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", "main", 4, 1, ...multiPathDesc).catch((err) => { });
           }
           if (multiPathDesc6.length > 0) {
-            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 6, ...multiPathDesc6).catch((err) => { });
-            await routing.addMultiPathRouteToTable("default", "main", 6, ...multiPathDesc6).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 6, 1, ...multiPathDesc6).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", "main", 6, 1, ...multiPathDesc6).catch((err) => { });
           }
 
           break;
