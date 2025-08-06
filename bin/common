@@ -140,12 +140,15 @@ test_network() {
     fi
 
     if ! nc -w 5 -z 1.1.1.1 443; then
-        echo "Unable to reach 1.1.1.1, trying 8.8.8.8 ..."
-        if ! nc -w 5 -z 8.8.8.8 53; then
-          echo "Unable to reach 8.8.8.8"
+      echo "Unable to reach 1.1.1.1:443, trying 8.8.8.8:53 ..."
+      if ! nc -w 5 -z 8.8.8.8 53; then
+        echo "Unable to reach 8.8.8.8:53, trying 8.8.8.8:443 ..."
+        if ! nc -w 5 -z 8.8.8.8 443; then
+          echo "Unable to reach 8.8.8.8:443 ..."
           _rc=3
           continue
         fi
+      fi
     fi
 
     if ! dig +short +timeout=5 github.com && ! dig +short +timeout=5 +tcp github.com; then
