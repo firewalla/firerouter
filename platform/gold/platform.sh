@@ -86,7 +86,7 @@ function get_smcrouted_path {
 
 function record_eth_interfaces {
   # only record eth information if all 4 interfaces are properly detected, dummy interface is linked to /sys/devices/virtual and won't be recorded
-  if [[ $(readlink -f /sys/class/net/eth{0,1,2,3} | grep -v virtual | wc -l) == "4" ]]; then
+  if [[ $(readlink -e /sys/class/net/eth{0,1,2,3} | grep -v virtual | wc -l) == "4" ]]; then
     for (( i = 0; i <= 3; i++ )); do
       pci_path=$(get_pci_path eth${i})
       mac=$(cat /sys/class/net/eth${i}/address)
