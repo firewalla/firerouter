@@ -1334,6 +1334,11 @@ class InterfaceBasePlugin extends Plugin {
         } else {
           dnsResult = true;
         }
+      } else {
+        active = false;
+        dnsResult = false;
+        failures.push({ type: "dns", target: "no nameserver", domain: dnsTestDomain });
+        this.log.error(`No DNS nameserver found on ${this.name}`);
       }
     }
 
