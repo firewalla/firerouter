@@ -21,6 +21,7 @@ const config = winston.config;
 const loggerManager = require('./log_mgr.js');
 const path = require('path');
 const fs = require('fs');
+const _ = require('lodash');
 
 const moment = require('moment')
 
@@ -40,13 +41,42 @@ if (process.env.FWDEBUG) {
   console.log("LOGGER SET TO", globalLogLevel);
 }
 
+const keysToRedact = new Set(["password", "passwd", "psk", "key", "psks"]);
+
+function redactLog(obj, redactRequired = false, depth) {
+  if (!obj || depth > 5)
+    return obj;
+  // obj should be either object or array
+  const objCopy = _.isArray(obj) ? [] : Object.create(obj);
+  try {
+    for (const key of Object.keys(obj)) {
+      if (_.isFunction(obj[key]))
+        continue;
+      if (_.isObject(obj[key]) || _.isArray(obj[key]))
+        objCopy[key] = redactLog(obj[key], redactRequired || keysToRedact.has(key), depth + 1);
+      else {
+        if (redactRequired || keysToRedact.has(key))
+          objCopy[key] = "*** redacted ***";
+        else
+          objCopy[key] = obj[key];
+      }
+    }
+  } catch (err) {}
+  return objCopy;
+}
+
 // pass in function arguments object and returns string with whitespaces
 function argumentsToString(v) {
   // convert arguments object to real array
   var args = Array.prototype.slice.call(v);
+  let depth = 0;
   for (var k in args) {
     if (typeof args[k] === "object") {
       // args[k] = JSON.stringify(args[k]);
+      if (_.isFunction(args[k]))
+        continue;
+      if (_.isArray(args[k]) || _.isObject(args[k]))
+        args[k] = redactLog(args[k], false, depth + 1);
       args[k] = require('util').inspect(args[k], false, null, true);
     }
   }
