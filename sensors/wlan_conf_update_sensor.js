@@ -19,6 +19,7 @@ const fs = require('fs');
 const ncm = require('../core/network_config_mgr.js');
 const platform = require('../platform/PlatformLoader.js').getPlatform();
 const r = require('../util/firerouter.js');
+const util = require('../util/util.js');
 
 class WlanConfUpdateSensor extends Sensor {
   async run() {
@@ -47,6 +48,10 @@ class WlanConfUpdateSensor extends Sensor {
   }
 
   async checkAndUpdateNetworkConfig(iface) {
+    if (!await r.verifyPermanentMAC(iface)) {
+      this.log.error(`Permanent MAC address of ${iface} is not valid, ignore it`);
+      return;
+    }
     await ncm.acquireConfigRWLock(async () => {
       const currentConfig = await ncm.getActiveConfig();
       if (currentConfig && currentConfig.interface) { // assume "interface" exists under root
@@ -68,6 +73,8 @@ class WlanConfUpdateSensor extends Sensor {
             this.log.error(`Error occured while applying updated config`, errors);
             return;
           }
+          currentConfig.ncid = util.generateUUID();
+          this.log.info("New ncid generated", currentConfig.ncid);
           await ncm.saveConfig(currentConfig, false);
         }
       }

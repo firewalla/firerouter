@@ -26,6 +26,7 @@ const util = require('../../util/util.js');
 const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
+const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 const bindIntfRulePriority = 5999;
 
@@ -37,6 +38,15 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
   static async preparePlugin() {
     await exec(`sudo modprobe wireguard`);
     await exec(`mkdir -p ${r.getUserConfigFolder()}/wireguard`);
+  }
+
+  isFlushNeeded(newConfig) {
+    if (this.name === "wg_ap") {
+      const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "peers" && k !== "extra"));
+      const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "peers" && k !== "extra"));
+      return !_.isEqual(c1, c2);
+    }
+    return true;
   }
 
   async flush() {
@@ -67,9 +77,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     if(bindIntf) {
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
       await routing.removePolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
-    } else {
-      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => {});
-      await routing.removePolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {});
     }
     this._bindIntf = null;
   }
@@ -142,23 +149,33 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
-    await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    // a special handling for wg_ap interface to avoid disrupting existing peer sessions
+    await exec(`sudo wg ${this.name === "wg_ap" ? "syncconf" : "setconf"} ${this.name} ${this._getInterfaceConfPath()}`);
     return true;
   }
 
   async changeRoutingTables() {
     await super.changeRoutingTables();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
+    const v4Subnets = this.networkConfig.ipv4s ? this.networkConfig.ipv4s.map(addr => new Address4(addr)) : [new Address4(this.networkConfig.ipv4)];
+    let v6Subnets = [];
+    if (this.networkConfig.ipv6) {
+      v6Subnets.push(...(_.isArray(ipv6) ? ipv6.map(addr => new Address6(addr)) : [new Address6(ipv6)]));
+    }
     if (_.isArray(this.networkConfig.peers)) {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
+            const af = new Address4(allowedIP).isValid() ? 4 : 6;
+            // no need to add allowed IP that is in wg interface's cidr, this can reduce cost of executing ip route commands since most peers are in the same IP range
+            if ((af == 4 && v4Subnets.some(subnet => new Address4(allowedIP).isInSubnet(subnet))) || (af == 6 && v6Subnets.some(subnet => new Address6(allowedIP).isInSubnet(subnet))))
+              continue;
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
-            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, af).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, af).catch((err) => {});
+              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, af).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
@@ -173,8 +190,9 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
     await this._resetBindIntfRule().catch((err) => {});
     // add specific routing for wireguard outgoing packets
-    let bindIntf = this.networkConfig.bindIntf;
-    if (!bindIntf) {
+    let bindIntf = this.networkConfig.bindIntf || null;
+    // try to find active interface as bindIntf if it is unspecified in config
+    if (!_.has(this.networkConfig, "bindIntf")) {
       const routingPlugin = pl.getPluginInstance("routing", "global");
       if (routingPlugin) {
         this.subscribeChangeFrom(routingPlugin);
@@ -193,8 +211,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
       this._bindIntf = bindIntf;
     } else {
-      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
-      await routing.createPolicyRoutingRule("all", "lo", routing.RT_GLOBAL_DEFAULT, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
+      // if bindIntf is null, no need to bind it to any wan interface
       this._bindIntf = null;
     }
 
@@ -268,6 +285,10 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return state;
   }
 
+  hasHardwareAddress() {
+    return false;
+  }
+
   onEvent(e) {
     super.onEvent(e);
     const eventType = event.getEventType(e);
@@ -285,7 +306,11 @@ const dgram = require('dgram');
 const CTRLMessages = {
   PEER_ENDPOINT_INFO: "msg:peer_endpoint_info",
   ROUTE_REQUEST: "msg:route_request",
-  ROUTE_DECISION: "msg:route_decision"
+  ROUTE_DECISION: "msg:route_decision",
+  INFO_REQUEST: "msg:info_request",
+  INFO_RESPONSE: "msg:info_response",
+  PEER_INFO_REQUEST: "msg:peer_info_request",
+  PEER_INFO_RESPONSE: "msg:peer_info_response"
 };
 const LOCK_PEER_INFO = "lock_peer_info";
 const AsyncLock = require('async-lock');
@@ -370,6 +395,22 @@ class WireguardMeshAutomata {
             }).catch((err) => {});
             break;
           }
+          case CTRLMessages.INFO_REQUEST: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handleInfoRequestMsg(msg, info).catch((err) => {
+                this.log.error(`Failed to handle info request message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
+          case CTRLMessages.PEER_INFO_REQUEST: {
+            await lock.acquire(LOCK_PEER_INFO, async () => {
+              await this.handlePeerInfoRequestMsg(msg, info).catch((err) => {
+                this.log.error(`Failed to handle peer info request message`, err.message);
+              });
+            }).catch((err) => {});
+            break;
+          }
           default:
             this.log.error(`Unknown message type ${msg.type} from peer ${from}, ignore`);
         }
@@ -418,6 +459,62 @@ class WireguardMeshAutomata {
 
   getPeerInfo() {
     return this.peerInfo;
+  }
+
+  isAnyPeerVPNIP(ip) {
+    for (const pubKey of Object.keys(this.peerInfo)) {
+      const info = this.peerInfo[pubKey];
+      const peerIP = info.peerIP;
+      if (peerIP) {
+        const pip = peerIP.split('/')[0];
+        if (ip === pip) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  async handleInfoRequestMsg(msg, info) {
+    try {
+      const address = info.address;
+      if (this.isAnyPeerVPNIP(address)) {
+        // populate peer name for better readability at app side
+        const name = await rclient.getAsync("groupName") || "";
+        const model = await rclient.getAsync("model") || "";
+        const type = CTRLMessages.INFO_RESPONSE;
+        const data = JSON.stringify({name, model, type});
+
+        this.socket.send(data, 6666, info.address);
+      } else {
+        this.log.warn("Not a valid vpn ip:", address, "ignore");
+      }
+    } catch (err) {
+      this.log.error("Failed to handle info request message", err.message);
+    }
+  }
+
+  async handlePeerInfoRequestMsg(msg, info) {
+    try {
+      const addr = info.address;
+      const publicKey = msg.key;
+      const peer = this.peerInfo[publicKey];
+      if(peer) {
+        const peerCopy = JSON.parse(JSON.stringify(peer));
+        delete peerCopy.router;
+        delete peerCopy.connected;
+        delete peerCopy.asRouter;
+        delete peerCopy.useOrigEndpoint;
+        peerCopy.type = CTRLMessages.PEER_INFO_RESPONSE;
+        peerCopy.from = this.pubKey;
+        peerCopy.key = publicKey;
+        const payload = JSON.stringify(peerCopy);
+        this.socket.send(payload, 6666, addr);
+      }
+    } catch (err) {
+      this.log.error("Failed to handle peer info request message", err.message);
+    }
   }
 
   async sendPeerEndpointInfoMsg() {

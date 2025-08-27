@@ -1,5 +1,47 @@
 #!/bin/bash
 
+execute_and_log() {
+  if [ -z "$1" ]; then
+    return 1
+  fi
+  command="$*"
+  # echo "command: $command" >> /tmp/test/dhcpcd6.log
+  eval "$command"
+}
+
+
+check_is_private_addr() {
+  if [ -z "$interface" ]; then
+    return 1 
+  fi
+  ipv4_address=$(ip -4 addr show dev "$interface" 2>/dev/null | grep -oP 'inet\s+\K[\d.]+'| head -n 1)
+
+  if [ -z "$ipv4_address" ]; then
+    return 1 
+  else
+    # echo "  IPv4 address for '$interface' : $ipv4_address"
+    first_octet=$(echo "$ipv4_address" | cut -d'.' -f1)
+    second_octet=$(echo "$ipv4_address" | cut -d'.' -f2)
+
+    # A Class private: 10.0.0.0/8
+    if [ "$first_octet" -eq 10 ]; then
+      return 0 
+    fi
+
+    # B Class private: 172.16.0.0/12
+    if [ "$first_octet" -eq 172 ] && [ "$second_octet" -ge 16 ] && [ "$second_octet" -le 31 ]; then
+      return 0 
+    fi
+
+    # C Class private: 192.168.0.0/16
+    if [ "$first_octet" -eq 192 ] && [ "$second_octet" -eq 168 ]; then
+      return 0 
+    fi
+    return 1
+  fi
+  return 1
+}
+
 metric=${ifmetric:-'1024'}
 mtu=${ifmtu:-'1500'}
 
@@ -16,42 +58,95 @@ ip_changed=""
 case $reason in
 
   ROUTERADVERT)
-    new_addrs="";
-    addr_id=1
-    while [ $addr_id -lt 10 ]; do
-      var_name="nd1_addr$addr_id"
-      eval "addr=\$$var_name"
-      if [ -n "$addr" ]; then
-        new_addrs="$new_addrs$addr,"
-        for rt_table in $rt_tables; do
-          sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table
-        done
-      else
-        break;
+    # If the IPv6 address of the upstream router changes, 
+    # we may recieve sevaral groups of nd_* variables, take the last complete ND option set.
+    nd_id=10
+    nd_from=""
+    while [ $nd_id -gt 0 ]; do
+      nd_name="nd${nd_id}_from"
+      eval "nd_from_val=\$$nd_name"
+      if [ -n "$nd_from_val" ]; then
+        check_is_private_addr
+        RETURN_CODE=$?
+        # interface to ISP should not recieve RA which only include "Route Information" from IOT gateway 
+        if [ "$RETURN_CODE" -ne 0 ]; then
+          nd_from="$nd_from_val"
+          break
+        fi
+
+        # otherwise check other value
+        nd_mtu="nd${nd_id}_mtu"
+        eval "nd_mtu_val=\$$nd_mtu"
+        nd_rdnss1_servers="nd${nd_id}_rdnss1_servers"
+        eval "nd_rdnss1_servers_val=\$$nd_rdnss1_servers"
+        nd_addr1="nd${nd_id}_addr1"
+        eval "nd_addr1_val=\$$nd_addr1"
+        if [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ]; then
+          nd_from="$nd_from_val"
+          break
+        fi
       fi
-      addr_id=$((addr_id + 1))
+      nd_id=$((nd_id - 1))
     done
 
-    if [ -n "$nd1_from" ]; then
-      for default_rt_table in $default_rt_tables; do
-        sudo ip -6 r replace default via $nd1_from dev $interface mtu $mtu table $default_rt_table
+    if [ -n "$nd_from" ]; then
+      new_addrs=""
+      addr_id=10
+      while [ $addr_id -gt 0 ]; do
+        var_name="nd${nd_id}_addr$addr_id"
+        eval "addr=\$$var_name"
+        if [ -n "$addr" ] && [ -z "$new_addrs" ]; then
+          new_addrs="$addr"
+        elif [ -n "$addr" ]; then
+          # here we should take other addresses as the old addresses and remove them and related routes.
+          for rt_table in $rt_tables; do
+            execute_and_log "sudo ip -6 r del $addr dev $interface table $rt_table"
+          done
+          execute_and_log "sudo ip -6 addr del $addr dev $interface"
+        fi
+        addr_id=$((addr_id - 1))
       done
+      if [ -n "$new_addrs" ]; then
+        for rt_table in $rt_tables; do
+          execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+        done
+      fi
+
+      for default_rt_table in $default_rt_tables; do
+        execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
+      done
+      old_gw=`cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo ""`
+      if [ "$nd_from" != "$old_gw" ]; then
+        echo $nd_from > /dev/shm/dhcpcd.gw6.$interface
+        ip_changed="1"
+      fi
     fi
+
     old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
-    if [ "$new_addrs" != "$old_addrs" ]; then
-      echo $new_addrs > /dev/shm/dhcpcd.ip6.$interface
+    if [ "$new_addrs," != "$old_addrs" ]; then
+      old_addrs="${old_addrs%,}"
+      for rt_table in $rt_tables; do
+        execute_and_log "sudo ip -6 r del $old_addrs dev $interface table $rt_table"
+      done
+      echo "$new_addrs," > /dev/shm/dhcpcd.ip6.$interface
       ip_changed="1"
     fi
     ;;
   BOUND6|REBOOT6)
-    ip_changed="1"
     addr_id=1
     while [ $addr_id -lt 10 ]; do
       old_var_name="old_dhcp6_ia_na1_ia_addr$addr_id"
       eval "old_addr=\$$old_var_name"
       new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
+      status_code_name="new_dhcp6_ia_na1_ia_addr${addr_id}_status_code"
+      eval "status_code=\$$status_code_name"
+      if [ "$status_code" = "2" ]; then
+        addr_id=$((addr_id + 1))
+        continue
+      fi
       eval "new_addr=\$$new_var_name"
       if [ -n "$new_addr" ]; then
+        ip_changed="1"
         for rt_table in $rt_tables; do
           sudo ip -6 r add $new_addr dev $interface metric $metric mtu $mtu table $rt_table
         done

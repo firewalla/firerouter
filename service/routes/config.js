@@ -21,7 +21,9 @@ const bodyParser = require('body-parser');
 const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
 const ns = require('../../core/network_setup.js');
-
+const util = require('../../util/util.js');
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
 
 const WLAN_FLAG_WEP         = 0b1
 const WLAN_FLAG_WPA         = 0b10
@@ -32,6 +34,7 @@ const WLAN_FLAG_SAE         = 0b100000
 const WLAN_FLAG_PSK_SHA256  = 0b1000000
 const WLAN_FLAG_EAP_SHA256  = 0b10000000
 
+const LOCK_NETWORK_CONFIG_NCID = "LOCK_NETWORK_CONFIG_NCID";
 
 const _ = require('lodash');
 const { exec } = require('child-process-promise');
@@ -253,6 +256,8 @@ router.post('/set',
     const transID = newConfig.transID;
     delete newConfig.transactionOp; // do not leave transactionOp in the saved config
     delete newConfig.transID;
+    const ignoreNcid = newConfig.ignoreNcid || false;
+    delete newConfig.ignoreNcid;
     if (transactionOp && !validTransactionOps.includes(transactionOp)) {
       const errMsg = `Unrecognized transactionOp in config: ${transactionOp}`;
       log.error(errMsg);
@@ -292,7 +297,7 @@ router.post('/set',
           inTransaction = false;
           currentTransID = null;
           log.info("Commit config change transaction: " + JSON.stringify(newConfig));
-          res.status(200).json({errors: []});
+          res.status(200).json({errors: [], "ncid": newConfig.ncid || ""});
           return;
         case T_OP_REVERT:
           // previous persisted config will be applied in the code below
@@ -307,6 +312,15 @@ router.post('/set',
       }
     }
     let errors = await ncm.validateConfig(newConfig);
+    if (errors && errors.length != 0) {
+      log.error("Invalid network config", errors);
+      res.status(400).json({errors: errors});
+      return;
+    }
+
+    await lock.acquire(LOCK_NETWORK_CONFIG_NCID, async () => {
+    try {
+    errors = await ncm.validateNcid(newConfig, inTransaction, ignoreNcid);
     if (errors && errors.length != 0) {
       log.error("Invalid network config", errors);
       res.status(400).json({errors: errors});
@@ -335,10 +349,21 @@ router.post('/set',
             currentTransID = null;
           }, T_REVERT_TIMEOUT);
         }
+        newConfig.ncid = util.generateUUID();
+        log.info("New ncid generated", newConfig.ncid);
         await ncm.saveConfig(newConfig, inTransaction);
-        res.status(200).json({errors: errors});
+
+        res.status(200).json({errors: errors, "ncid": newConfig.ncid});
       }
     }
+    } catch (err) {
+      log.error("Cannot set network config", err.message);
+      res.status(500).json({errors: [err.message]});
+    }
+    }).catch((err) => {
+      log.error("Cannot acquire LOCK_NETWORK_CONFIG_NCID", err.message);
+      res.status(500).json({errors: [err.message]});
+    });
   });
 
 router.post('/prepare_env',

@@ -1,4 +1,4 @@
-/*    Copyright 2022 Firewalla Inc.
+/*    Copyright 2022-2023 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or  modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -131,6 +131,22 @@ class GSEPlatform extends Platform {
     return;
   }
 
+  async setHardwareAddress(iface, hwAddr) {
+    if (!this._isWLANInterface(iface)) {
+      await super.setHardwareAddress(iface, hwAddr);
+      return;
+    }
+    
+    if(hwAddr) {
+      const activeMac = await this.getActiveMac(iface);
+      if((activeMac && activeMac.toUpperCase()) === (hwAddr && hwAddr.toUpperCase())) {
+        log.info(`Skip setting hwaddr of ${iface}, as it's already been configured.`);
+        return;
+      }
+      await this._setHardwareAddress(iface, hwAddr);
+    }
+  }
+
   async resetHardwareAddress(iface) {
     log.info(`reset ${iface} hardware address`);
     if(!this._isWLANInterface(iface)) {
@@ -148,7 +164,6 @@ class GSEPlatform extends Platform {
         return;
       }
 
-      log.info(`Resetting the hwaddr of ${iface} to :`, expectMac);
       await this._setHardwareAddress(iface, expectMac);
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already in place.`);
@@ -173,7 +188,6 @@ class GSEPlatform extends Platform {
     });
 
     // set mac address
-    log.info(`Set ${iface} MAC to ${hwAddr}`);
     await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
       log.error(`Failed to set MAC address of ${iface}`, err.message);
       errCounter++;
@@ -187,6 +201,23 @@ class GSEPlatform extends Platform {
 
   async overrideWLANKernelModule() {
     // nothing to do, driver in os image now
+  }
+
+  async setMTU(iface, mtu) {
+    if (iface === "eth1" || iface === "eth2") {
+      const ifplug = sensorLoader.getSensor("IfPlugSensor");
+      if (ifplug) {
+        await ifplug.stopMonitoringInterface(iface);
+      }
+      await exec(`sudo ip link set ${iface} down`);
+      await super.setMTU(iface, mtu);
+      await exec(`sudo ip link set ${iface} up`);
+      if (ifplug) {
+        await ifplug.startMonitoringInterface(iface);
+      }
+    } else {
+      await super.setMTU(iface, mtu);
+    }
   }
 }
 

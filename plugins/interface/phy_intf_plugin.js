@@ -40,6 +40,7 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_update_rt /lib/dhcpcd/dhcpcd-hooks/`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_pd /lib/dhcpcd/dhcpcd-hooks/`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_lease /lib/dhcpcd/dhcpcd-hooks/`);
+    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_resolv_dns6 /lib/dhcpcd/dhcpcd-hooks/`);
     // copy firerouter_dhclient@.service
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient@.service /etc/systemd/system/`);
     // copy firerouter_dhcpcd6@.service
@@ -56,6 +57,10 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
       this.log.info(`Set TX ring to ${txRingBuffer}, RX ring to ${rxRingBuffer} on ${this.name}`);
       await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
     }
+  }
+
+  getDefaultMTU() {
+    return 1500;
   }
 
 }

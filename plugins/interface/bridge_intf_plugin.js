@@ -50,6 +50,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
     });
+    // default forward delay is 15 seconds, maybe too long
+    await exec(`sudo brctl setfd ${this.name} 2.5`).catch((err) => {
+      this.log.error(`Failed to change forward delay of bridge interface ${this.name}`, err.message);
+    });
     // no need to enable stp if there is only one interface in bridge
     if (this.networkConfig.intf.length > 1) {
       // Spanning tree protocol is enabled by default
@@ -65,6 +69,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         })
       }
     return true;
+  }
+
+  getDefaultMTU() {
+    return 1500;
   }
 }
 

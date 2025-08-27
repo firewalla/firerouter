@@ -39,9 +39,18 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
   }
 
-  async flushIP() {
-    await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
-    await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
+  async flushIP(af = null) {
+    if (!af) {
+      await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
+      await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
+      // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
+      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+      const lease6Filename = await this._getDHCPCDLease6Filename();
+      if (lease6Filename)
+        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+    } else
+      await super.flushIP(af);
   }
 
   isWAN() {
@@ -58,6 +67,13 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
 
   _getResolvConfFilePath() {
     return `/etc/ppp/${this.name}.resolv.conf`
+  }
+
+  async getLinkAddress() {
+    const addr = await exec(`cat /sys/class/net/${this.networkConfig.intf}/address`).then((result) => result.stdout.trim() || null).catch((err) => {
+      this.log.error(`Failed to get hardware address of ${this.networkConfig.intf}`, err.message);
+    });
+    return addr;
   }
 
   async createInterface() {
@@ -133,6 +149,10 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     return baseIntfState;
+  }
+
+  hasHardwareAddress() {
+    return false;
   }
 
   onEvent(e) {

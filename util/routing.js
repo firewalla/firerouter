@@ -66,7 +66,7 @@ async function createCustomizedRoutingTable(tableName, type = RT_TYPE_REG) {
             log.info(`Previous table id of ${tableName} is out of range ${tid}, removing old entry for ${tableName} ...`);
             await removeCustomizedRoutingTable(tableName);
           } else {
-            log.info("Table with same name already exists: " + tid);
+            log.debug("Table with same name already exists: " + tid);
             done(null, Number(tid));
             return;
           }
@@ -190,6 +190,8 @@ async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 
   cmd = `${cmd} table ${tableName}`;
   if (preference)
     cmd = `${cmd} preference ${preference}`;
+
+  log.debug('[routing] add route to table:', cmd);
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to add route to table.", result.stderr);
@@ -197,12 +199,50 @@ async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 
   }
 }
 
-async function addMultiPathRouteToTable(dest, tableName, af = 4, ...multipathDesc) {
+function formatGetRouteCommand(dest, gateway, intf, tableName, metric, af=4) {
+  let cmd=`ip -${af} route show`;
+  if (tableName) {
+    cmd += ` table ${tableName}`
+  }
+  if (dest) {
+    cmd += ` ${dest}`
+  }
+  if (intf) {
+    cmd += ` dev ${intf}`
+  }
+  if (gateway) {
+    cmd += ` via ${gateway}`
+  }
+  if (metric) {
+    cmd += ` metric ${metric}`
+  }
+  return cmd;
+}
+
+async function searchRouteRules(dest, gateway, intf, tableName, metric=null, af=4) {
+  tableName = tableName || "main";
+  const cmd = formatGetRouteCommand(dest, gateway, intf, tableName, metric, af);
+  const result = await exec(cmd).then(r => r.stdout.trim()).catch((err) => {log.info(`Failed to get route using command '${cmd}'`, err.stderr); return "";});
+
+  return result.split("\n").filter(r => r.length > 0).map(r => r.trim());
+}
+
+async function removeDeviceRouteRule(intf, tableName, af = 4) {
+  const cmd=`sudo ip -${af} route flush table ${tableName} dev ${intf}`;
+  log.debug('[routing] flush device route rule:', cmd);
+  const result = await exec(cmd);
+  if (result.stderr !== "") {
+    log.error(`Failed to exec ${cmd}, err`, result.stderr);
+    throw result.stderr;
+  }
+}
+
+async function addMultiPathRouteToTable(dest, tableName, af = 4, metric, ...multipathDesc) {
   let cmd = null;
   dest = dest || "default";
   cmd =  `sudo ip -${af} route add ${dest}`;
   tableName = tableName || "main";
-  cmd = `${cmd} table ${tableName}`;
+  cmd = `${cmd} table ${tableName} metric ${metric}`;
   for (let desc of multipathDesc) {
     const nextHop = desc.nextHop;
     const dev = desc.dev;
@@ -221,7 +261,7 @@ async function addMultiPathRouteToTable(dest, tableName, af = 4, ...multipathDes
   }
 }
 
-async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type = "unicast") {
+async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type = "unicast", metric = null) {
   dest = dest || "default";
   tableName = tableName || "main";
   let cmd = `sudo ip -${af} route del ${type} ${dest}`;
@@ -231,7 +271,12 @@ async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type
   if (intf) {
     cmd = `${cmd} dev ${intf}`;
   }
+  if (metric) {
+    cmd = `${cmd} metric ${metric}`;
+  }
   cmd = `${cmd} table ${tableName}`;
+
+  log.debug(`[routing] remove route from table: ${cmd}`);
   let result = await exec(cmd);
   if (result.stderr !== "") {
     log.error("Failed to remove route from table.", result.stderr);
@@ -246,6 +291,7 @@ async function flushRoutingTable(tableName, af = null) {
   if (!af || af == 6)
     cmds.push(`sudo ip -6 route flush table ${tableName}`);
   for (const cmd of cmds) {
+    log.debug(`[routing] flush route table: ${cmd}`);
     await exec(cmd).catch((err) => {
       log.error(`Failed to flush routing table using command ${cmd}`, err.message);
     });
@@ -340,6 +386,9 @@ module.exports = {
   createInterfaceGlobalLocalRoutingRules: createInterfaceGlobalLocalRoutingRules,
   removeInterfaceGlobalLocalRoutingRules: removeInterfaceGlobalLocalRoutingRules,
   getInterfaceGWIP: getInterfaceGWIP,
+  searchRouteRules: searchRouteRules,
+  formatGetRouteCommand: formatGetRouteCommand, // only for testing
+  removeDeviceRouteRule: removeDeviceRouteRule,
   RT_GLOBAL_LOCAL: RT_GLOBAL_LOCAL,
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
   RT_WAN_ROUTABLE: RT_WAN_ROUTABLE,

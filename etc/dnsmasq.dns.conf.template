@@ -8,7 +8,7 @@ bogus-priv
 user=pi
 group=pi
 
-cache-size=1000
+cache-size=3000
 
 strict-order
 

@@ -15,6 +15,8 @@
 
 'use strict';
 
+const _ = require('lodash');
+const {Address4, Address6} = require('ip-address');
 const Plugin = require('../plugin.js');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
@@ -92,8 +94,17 @@ class DNSPlugin extends Plugin {
     await fs.writeFileAsync(this._getConfFilePath(), content);
 
     await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
-    if (this.networkConfig.nameservers) {
-      const nameservers = this.networkConfig.nameservers.map((n) => `nameserver ${n}`).join("\n");
+    if (this.networkConfig.nameservers || this.networkConfig.dns6Servers) {
+      let dnsservers = this.networkConfig.nameservers || [];
+      dnsservers = dnsservers.filter(i => new Address4(i).isValid());
+      if (this.networkConfig.dns6Servers && _.isArray(this.networkConfig.dns6Servers))
+        dnsservers = dnsservers.concat(this.networkConfig.dns6Servers.filter(i => new Address6(i).isValid()));
+      if (dnsservers.length == 0) {
+        this.fatal("Cannot find valid dns options for", this.name);
+        return;
+      }
+      this.log.info("write dns conf file", this.name, dnsservers);
+      const nameservers = _.uniq(dnsservers).map((n) => `nameserver ${n}`).join("\n") + "\n";
       await fs.writeFileAsync(this._getResolvFilePath(), nameservers);
     } else {
       if (this.networkConfig.useNameserversFromWAN) {
@@ -110,16 +121,18 @@ class DNSPlugin extends Plugin {
             const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
             for (const wanIntfPlugin of allWanIntfPlugins) {
               // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name))) {
+              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
+                await wanIntfPlugin.isInterfacePresent() &&
+                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
                 intfPlugin = wanIntfPlugin;
                 break;
               }
             }
             if (intfPlugin) {
-              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${intfPlugin.name}`);
+              this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the primary WAN ${intfPlugin.name}`);
               await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
             } else {
-              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+              this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
             }
           }
         } else {
@@ -131,8 +144,17 @@ class DNSPlugin extends Plugin {
 
   async applyDefaultResolvConf() {
     await fs.unlinkAsync(this._getResolvFilePath()).catch((err) => {});
-    if (this.networkConfig.nameservers) {
-      const nameservers = this.networkConfig.nameservers.map((n) => `nameserver ${n}`).join("\n");
+    if (this.networkConfig.nameservers || this.networkConfig.dns6Servers) {
+      let dnsservers = this.networkConfig.nameservers || [];
+      dnsservers = dnsservers.filter(i => new Address4(i).isValid());
+      if (this.networkConfig.dns6Servers && _.isArray(this.networkConfig.dns6Servers))
+        dnsservers = dnsservers.concat(this.networkConfig.dns6Servers.filter(i => new Address6(i).isValid()));
+      if (dnsservers.length == 0) {
+        this.fatal("Cannot find valid dns options for", this.name);
+        return;
+      }
+      this.log.info("write dns conf file", this.name, dnsservers);
+      const nameservers = _.uniq(dnsservers).map((n) => `nameserver ${n}`).join("\n") + "\n";
       await fs.writeFileAsync(this._getResolvFilePath(), nameservers);
     } else {
       if (this.networkConfig.useNameserversFromWAN) {
@@ -140,7 +162,7 @@ class DNSPlugin extends Plugin {
         if (routingPlugin) {
           this.subscribeChangeFrom(routingPlugin);
           const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
-          if (wanIntfPlugins.length > 0) {
+          if (wanIntfPlugins && wanIntfPlugins.length > 0) {
             const wanIntf = wanIntfPlugins[0].name;
             await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
           } else {
@@ -149,16 +171,18 @@ class DNSPlugin extends Plugin {
             const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
             for (const wanIntfPlugin of allWanIntfPlugins) {
               // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name))) {
+              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
+                await wanIntfPlugin.isInterfacePresent() &&
+                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
                 intfPlugin = wanIntfPlugin;
                 break;
               }
             }
             if (intfPlugin) {
-              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
+              this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
               await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
             } else {
-              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+              this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
             }
           }
         } else {
@@ -204,8 +228,8 @@ class DNSPlugin extends Plugin {
         return;
       }
       const state = await intfPlugin.state();
-      if (!state || !state.ip4) {
-        this.log.warn(`Interface ${this.name} does not have IPv4 address`);
+      if (!state || (!state.ip4 && !state.ip6)) {
+        this.log.warn(`Interface ${this.name} does not have IPv4 or IPv6 address`);
         return;
       }
       await this.prepareEnvironment();
