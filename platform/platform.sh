@@ -109,6 +109,10 @@ case "$UNAME" in
         source $FW_PLATFORM_DIR/purple/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/purple
         ;;
+      orange)
+        source $FW_PLATFORM_DIR/orange/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/orange
+        ;;
       *)
         unset FW_PLATFORM_CUR_DIR
         ;;
