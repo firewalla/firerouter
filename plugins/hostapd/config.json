@@ -23,7 +23,21 @@
       "channels": [1,2,3,4,5,6,7,8,9,10,11,36,40,44,48,149,153,157,161]
     },
     "mt7996e": {
-      "channels": [1,2,3,4,5,6,7,8,9,10,11,36,40,44,48,149,153,157,161]
+      "channels": [1,2,3,4,5,6,7,8,9,10,11,36,40,44,48,149,153,157,161],
+      "extra": {
+        "utf8_ssid": 1,
+        "ieee80211h": 1,
+        "ieee80211ax": 1,
+        "ieee80211be": 1,
+        "he_oper_chwidth": 2,
+        "he_oper_centr_freq_seg0_idx":50,
+        "eht_oper_chwidth": 2,
+        "eht_oper_centr_freq_seg0_idx":50,
+        "vht_oper_chwidth": 2,
+        "vht_oper_centr_freq_seg0_idx":50,
+        "ht_capab":"[HT40+][LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][MAX-AMSDU-7935]",
+        "vht_capab":"[RXLDPC][SHORT-GI-80][SHORT-GI-160][TX-STBC-2BY1][SU-BEAMFORMER][SU-BEAMFORMEE][MU-BEAMFORMER][MU-BEAMFORMEE][RX-ANTENNA-PATTERN][TX-ANTENNA-PATTERN][RX-STBC-1][SOUNDING-DIMENSION-2][BF-ANTENNA-4][VHT160][MAX-MPDU-11454][MAX-A-MPDU-LEN-EXP7]"
+      }
     },
     "dhd": {
       "channels": [1,2,3,4,5,6,7,8,9,10,11,12,13]
