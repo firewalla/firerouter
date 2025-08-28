@@ -40,16 +40,7 @@ class OrangePlatform extends Platform {
   }
 
   async getWlanVendor() {
-    if ( !this.vendor ) {
-      try {
-        const procCmdline = await fs.readFileAsync("/proc/cmdline", {encoding: 'utf8'});
-        this.vendor = procCmdline.match(' wifi_rev=([0-9a-z]*) ')[1];
-      } catch(err) {
-        log.error("Failed to parse wifi_rev from /proc/cmdline", err.message);
-        return "unknown";
-      }
-    }
-    return this.vendor;
+    return "mt7996e";
   }
 
   async getWpaCliBinPath() {
