@@ -6,6 +6,10 @@ function get_pppoe_rps_cpus {
   echo "30"
 }
 
+function get_hostapd_path {
+  echo "/usr/local/bin/hostapd"
+}
+
 function map_target_branch {
   case "$1" in
   "release_6_0")

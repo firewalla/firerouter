@@ -186,6 +186,13 @@ class HostapdPlugin extends Plugin {
     channelConfig.hw_mode && (parameters.hw_mode = channelConfig.hw_mode)
     parameters.ht_capab = '[' + Array.from(parameters.ht_capab).join('][') + ']'
 
+    const vendorExtra = vendorConfig && vendorConfig.extra
+    if (vendorExtra) {
+      Object.keys(vendorExtra).forEach(k => {
+        parameters[k] = vendorExtra[k]
+      })
+    }
+
     const confPath = this._getConfFilePath();
     await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
