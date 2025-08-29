@@ -167,7 +167,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
       });
     if (localIp) {
       const addr = localIp.split('/')[0];
-      if (Address6.isValid(addr)) {
+      if (new Address6(addr).isValid()) {
         const mask = localIp.split('/')[1] || "64";
         const ip6 = `${addr}/${mask}`;
         ip6s.push(ip6);
