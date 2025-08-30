@@ -186,7 +186,8 @@ class HostapdPlugin extends Plugin {
     channelConfig.hw_mode && (parameters.hw_mode = channelConfig.hw_mode)
     parameters.ht_capab = '[' + Array.from(parameters.ht_capab).join('][') + ']'
 
-    const vendorExtra = vendorConfig && vendorConfig.extra
+    const vendorConfig = pluginConfig.vendor[await platform.getWlanVendor()];
+    const vendorExtra = vendorConfig && vendorConfig.extra;
     if (vendorExtra) {
       Object.keys(vendorExtra).forEach(k => {
         parameters[k] = vendorExtra[k]
