@@ -189,7 +189,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
         }
         const ip6s = await this.getIPv6Addresses();
         if (!_.isEmpty(ip6s)) {
-          state.ip6 = ip6s[0];
+          state.ip6 = ip6s;
         }
       }
     }
