@@ -36,6 +36,10 @@ function get_dnsmasq_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
 }
 
+function get_dhcpcd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/dhcpcd"
+}
+
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }
@@ -54,6 +58,14 @@ function get_wpa_cli_path {
 
 function get_smcrouted_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
+}
+
+function record_eth_interfaces {
+  return
+}
+
+function remap_eth_interfaces {
+  return
 }
 
 case "$UNAME" in

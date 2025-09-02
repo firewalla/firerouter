@@ -483,10 +483,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getDuid() {
-    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => null);
+    return await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`, {encoding: 'utf8'}).then(content => content.trim()).catch((err) => {
+      this.log.info(`Cannot read current DUID ${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`, err.message);
+    });
   }
 
   async _resetDuid() {
+    this.log.debug("Resetting DUID");
     let duidType = 'DUID-UUID';
     const arch = await exec("uname -m", {encoding: 'utf8'}).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get architecture`, err.message);
@@ -508,20 +511,26 @@ class InterfaceBasePlugin extends Plugin {
 
   // Generate DHCP Unique Identifier (DUID), see RFC8415
   async _genDuid(duidType, force=false) {
+    this.log.debug("Generating DUID", this.name, duidType);
     let origDuid = await this._getDuid();
-    const origDuidType = this._getDuidType(origDuid);
-    if (origDuidType == duidType && !force) {
-      this.log.info('duid already generated as', origDuid);
-      return;
+    if (origDuid && origDuid.length > 5) {
+      this.log.debug("Found current DUID", origDuid);
+      const origDuidType = this._getDuidType(origDuid);
+      if (origDuidType == duidType && !force) {
+        this.log.info(`${this.name} duid already generated as`, origDuid);
+        return;
+      }
     }
-    let duid, eth0Mac;
+    let duid, ethMac;
     switch (duidType) {
       case 'DUID-LLT':
         // 00:01 DUID-Type (DUID-LLT), 00:01 hardware type (Ethernet)
-        eth0Mac = await fs.readFileAsync("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-        if (eth0Mac) {
+        ethMac = await this.getLinkAddress();
+        if (ethMac) {
           const ts = this._formatDuid(Math.floor(Date.now()/1000).toString(16));
-          duid = `00:01:00:01:${ts}:${eth0Mac}`;
+          duid = `00:01:00:01:${ts}:${ethMac}`;
+        } else {
+          this.log.warn("cannot generate duid of type DUID-LLT, no ethernet address");
         }
         break;
       case 'DUID-EN':
@@ -529,9 +538,11 @@ class InterfaceBasePlugin extends Plugin {
         break;
       case 'DUID-LL':
         // 00:03 DUID-Type (DUID-LL), 00:01 hardware type (Ethernet)
-        eth0Mac = await fs.readFileAsync("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-        if (eth0Mac) {
-          duid = `00:03:00:01:${eth0Mac}`;
+        ethMac = await this.getLinkAddress();
+        if (ethMac) {
+          duid = `00:03:00:01:${ethMac}`;
+        } else {
+          this.log.warn("cannot generate duid of type DUID-LL, no ethernet address");
         }
         break;
       case 'DUID-UUID':
@@ -539,37 +550,40 @@ class InterfaceBasePlugin extends Plugin {
         const uuid = await this._genDuidUuid();
         if (uuid) {
           duid = '00:04:' + this._formatDuid(uuid);
+        } else {
+          this.log.warn("cannot generate duid of type DUID-UUID, no uuid");
         }
         break;
       default:
     }
     if (!duid) {
-      this.log.warn("cannot generate duid of type %s", duidType);
+      this.log.warn("cannot generate duid of type", duidType);
       return;
     }
     // save previous duid in redis
     await this.saveDuidRecord(`${origDuid}#${duidType}:${duid}`);
-    await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+    await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid`).catch((err) => {});
+    this.log.info(`generate new duid for ${this.name}`, duid);
     return duid;
   }
 
   async _genDuidUuid() {
-    const existUuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+    const existUuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
     if (existUuid) {
       return existUuid;
     }
 
     const newUuid = uuidv4();
-    await fs.writeFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, newUuid).catch((err) => {this.log.warn("fail to persistently save duid uuid", err.message)});
+    await fs.writeFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.name}.duid_uuid`, newUuid).catch((err) => {this.log.warn("fail to persistently save duid uuid", err.message)});
     return newUuid;
   }
 
   async saveDuidRecord(record){
-    await rclient.zaddAsync('duid_record', Math.floor(new Date() / 1000), record);
+    await rclient.zaddAsync(`duid_record_${this.name}`, Math.floor(new Date() / 1000), record);
     // keep latest records
-    const count = await rclient.zcardAsync('duid_record');
+    const count = await rclient.zcardAsync(`duid_record_${this.name}`);
     if (count > DUID_RECORD_MAX) {
-      await rclient.zremrangebyrankAsync('duid_record', 0, count-DUID_RECORD_MAX-1);
+      await rclient.zremrangebyrankAsync(`duid_record_${this.name}`, 0, count-DUID_RECORD_MAX-1);
     }
   }
 
@@ -800,6 +814,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async updateRouteForDNS() {
+    await this._removeOldRouteForDNS();
     const dns = await this.getDNSNameservers();
     const gateway = await routing.getInterfaceGWIP(this.name, 4);
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6);
@@ -807,12 +822,45 @@ class InterfaceBasePlugin extends Plugin {
       return;
     for (const dnsIP of dns) {
       if (new Address4(dnsIP).isValid())
-        await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true).catch((err) => {});
+        await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true)
+                      .then(()=>{this._updateDnsRouteCache(dnsIP, gateway, this.name, `${this.name}_default`, 4);})
+                      .catch((err) => {});
       else
-        await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true).catch((err) => {});
+        await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true)
+                      .then(()=>{this._updateDnsRouteCache(dnsIP, gateway6, this.name, `${this.name}_default`, 6);})
+                      .catch((err) => {});
     }
   }
 
+  async _removeOldRouteForDNS() {
+    // remove Old DNS specific routes
+    if (_.isObject(this._dnsRoutes)) {
+      for (const inf of Object.keys(this._dnsRoutes)) {
+        for (const dnsRoute of this._dnsRoutes[inf]) {
+          await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
+        }
+      }
+    } 
+    this._dnsRoutes = {}
+  }
+
+  _updateDnsRouteCache(dnsIP, gw, viaIntf, tableName="main", af=4) {
+    if (!this._dnsRoutes){
+      this._dnsRoutes = {}
+    }
+    if (!this._dnsRoutes[viaIntf]) {
+      this._dnsRoutes[viaIntf] = [];
+    }
+    for (const dns of this._dnsRoutes[viaIntf]) {
+      if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.tableName == tableName) {
+        // ensure no duplicates
+        return;
+      }
+    }
+    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, tableName: tableName, af:af});
+  }
+
+  
   async unmarkOutputConnection(rtid) {
     if (_.isArray(this._srcIPs)) {
       for (const ip4Addr of this._srcIPs) {
@@ -1010,6 +1058,17 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv4Addresses() {
+    if (!this.networkConfig.enabled)
+      return null;
+    // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
+    const staticIpv4s = {};
+    if (_.isArray(this.networkConfig.ipv4s) && !_.isEmpty(this.networkConfig.ipv4s))
+      for (const ip4 of this.networkConfig.ipv4s)
+        staticIpv4s[ip4] = 1;
+    if (_.isString(this.networkConfig.ipv4))
+      staticIpv4s[this.networkConfig.ipv4] = 1;
+    if (!_.isEmpty(staticIpv4s))
+      return Object.keys(staticIpv4s);
     let ip4s = await exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => null) || null;
     if (ip4s)
       ip4s = ip4s.split("\n").filter(l => l.length > 0).map(ip => ip.includes("/") ? ip : `${ip}/32`);
@@ -1017,6 +1076,9 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
+    if (!this.networkConfig.enabled)
+      return null;
+    // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
     let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
     if (ip6s)
       ip6s = ip6s.split("\n").filter(l => l.length > 0);
@@ -1034,6 +1096,13 @@ class InterfaceBasePlugin extends Plugin {
 
   async getHardwareAddress() {
     const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => null);
+    return addr;
+  }
+
+  async getLinkAddress() {
+    const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => {
+      this.log.error(`Failed to get hardware address of ${this.name}`, err.message);
+    });
     return addr;
   }
 
@@ -1061,6 +1130,11 @@ class InterfaceBasePlugin extends Plugin {
   async operstateState() {
     const state = await this._getSysFSClassNetValue("operstate");
     return state;
+  }
+
+  async linkSpeed() {
+    const speed = Number(await this._getSysFSClassNetValue("speed"));
+    return !isNaN(speed) ? speed : 0;
   }
 
   // is the interface physically ready to connect
@@ -1205,7 +1279,7 @@ class InterfaceBasePlugin extends Plugin {
     if (active && pingTestEnabled) {
       // no need to use Promise.any as ping test time for each target is the same
       // there is a way to optimize this is use spawn instead of exec to monitor number of received in real-time
-      const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+      const rtid = await this._getRtId();
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `sudo ping -n -q -m ${rtid} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
@@ -1260,6 +1334,11 @@ class InterfaceBasePlugin extends Plugin {
         } else {
           dnsResult = true;
         }
+      } else {
+        active = false;
+        dnsResult = false;
+        failures.push({ type: "dns", target: "no nameserver", domain: dnsTestDomain });
+        this.log.error(`No DNS nameserver found on ${this.name}`);
       }
     }
 
@@ -1341,7 +1420,6 @@ class InterfaceBasePlugin extends Plugin {
     const nameservers = await this.getDNSNameservers();
     const ip4s = await this.getIPv4Addresses();
     const ip6s = await this.getIPv6Addresses();
-    let dnsResult = [];
 
     if (_.isArray(nameservers) && nameservers.length !== 0 && _.isArray(ip4s) && ip4s.length !== 0) {
       const srcIP = ip4s[0].split('/')[0];
@@ -1354,7 +1432,8 @@ class InterfaceBasePlugin extends Plugin {
         const result = await Promise.any(promises).catch((err) => {
           this.log.warn("no valid ipv4 dns nameservers on", this.name, err.message);
         });
-        if (result) dnsResult.push(result);
+        if (result)
+          return result;
       }
     }
 
@@ -1364,7 +1443,7 @@ class InterfaceBasePlugin extends Plugin {
       for(const nameserver of nameservers) {
         for (const srcIP of srcIPs) {
           const ipaddr  = new Address6(srcIP);
-          if (!ipaddr.isValid() || ipaddr.getScope().toLowerCase() != "global") continue;
+          if (!ipaddr.isValid() || ipaddr.isLinkLocal()) continue;
           if (!new Address6(nameserver).isValid()) continue;
           promises.push(this._getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent, 6));
         }
@@ -1373,12 +1452,9 @@ class InterfaceBasePlugin extends Plugin {
         const result = await Promise.any(promises).catch((err) => {
           this.log.warn("no valid ipv6 dns nameservers on", this.name, err.message);
         });
-        if (result) dnsResult.push(result);
+        if (result)
+          return result;
       }
-    }
-
-    if (dnsResult.length > 0) {
-      return dnsResult;
     }
     this.log.error(`no valid dns from any nameservers on ${this.name}`);
     return null;
@@ -1475,8 +1551,15 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async _getRtId() {
+    if (!this.rtId) {
+      this.rtId = await routing.createCustomizedRoutingTable(`${this.name}_default`);
+    }
+    return this.rtId;
+  }
+
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1485,8 +1568,7 @@ class InterfaceBasePlugin extends Plugin {
       this._getSysFSClassNetValue("operstate"),
       this._getSysFSClassNetValue("statistics/tx_bytes"),
       this._getSysFSClassNetValue("statistics/rx_bytes"),
-      routing.createCustomizedRoutingTable(`${this.name}_default`),
-      exec(`ip addr show dev ${this.name} | awk '/inet /' | awk '$NF=="${this.name}" {print $2}' | head -n 1`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
+      this._getRtId(),
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
       exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
@@ -1499,6 +1581,7 @@ class InterfaceBasePlugin extends Plugin {
       this.getPrefixDelegations(),
       this.isInterfacePresent()
     ]);
+    const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
       ip4 = `${ip4}/32`;
     if (ip6)
@@ -1605,6 +1688,7 @@ class InterfaceBasePlugin extends Plugin {
           this.markOutputConnection().catch((err) => {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
+          pl.publishIfaceChangeApplied();
         }
         break;
       }
@@ -1634,7 +1718,9 @@ class InterfaceBasePlugin extends Plugin {
               this.carrierState().then((result) => {
                 if (result === "1") {
                   this.gatewayReachable().then((reachable) => {
-                    if (!reachable) {
+                    const routingPlugin = pl.getPluginInstance("routing", "global");
+                    // renew dhcp lease if gateway is unreachable or internet is down globally
+                    if (!reachable || (routingPlugin && _.isEmpty(routingPlugin.getActiveWANPlugins()))) {
                       this.log.info(`Restarting DHCP client on interface ${this.name}, failure count is ${currentStatus.failureCount} ...`);
                       this.renewDHCPLease().catch((err) => {
                         this.log.error(`Failed to renew DHCP lease on interface ${this.name}`, err.message);
