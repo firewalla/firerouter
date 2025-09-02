@@ -169,6 +169,7 @@
       "file_path": "./apc/apc_plugin.js",
       "config_path": "apc",
       "category": "apc",
+      "hide_config_in_log": true,
       "init_seq": 12
     }
   ],
