@@ -69,10 +69,10 @@ describe('Test interface base dhcp6', function(){
     it('should gen duid uuid', async() => {
       const t1 = await this.plugin._genDuidUuid();
       const t2 = await this.plugin._genDuidUuid();
-      const duuuid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-      log.debug("duid uuid generated", duuuid);
-      expect(t1).to.be.equal(duuuid);
-      expect(t2).to.be.equal(duuuid);
+      const duid = await fs.readFileAsync(`${r.getRuntimeFolder()}/dhcpcd-${this.plugin.name}.duid_uuid`, {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
+      log.debug("duid uuid generated", duid);
+      expect(t1).to.be.equal(duid);
+      expect(t2).to.be.equal(duid);
     });
 
     it('should reset duid', async() => {
@@ -93,7 +93,14 @@ describe('Test interface base dhcp6', function(){
       expect(this.plugin._getDuidType('00:03:00:01:20:6d:31:01:2b:43')).to.be.equal('DUID-LL');
       expect(this.plugin._getDuidType('00:04:7e:89:20:22:89:15:45:b8:ac:05:3c:68:2b:08:04:8f')).to.be.equal('DUID-UUID');
     });
-  });
+
+    it('should get link speed', async() => {
+      const speed = await this.plugin.linkSpeed();
+      log.debug(this.plugin.name,"speed:", speed);
+      expect(isNaN(speed)).to.be.equal(false);
+    });
+
+});
 
 
   describe('Test interface base dns', function(){
