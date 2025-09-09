@@ -121,16 +121,18 @@ class DNSPlugin extends Plugin {
             const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
             for (const wanIntfPlugin of allWanIntfPlugins) {
               // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name))) {
+              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
+                await wanIntfPlugin.isInterfacePresent() &&
+                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
                 intfPlugin = wanIntfPlugin;
                 break;
               }
             }
             if (intfPlugin) {
-              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the primary WAN ${intfPlugin.name}`);
+              this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the primary WAN ${intfPlugin.name}`);
               await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
             } else {
-              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+              this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
             }
           }
         } else {
@@ -169,16 +171,18 @@ class DNSPlugin extends Plugin {
             const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
             for (const wanIntfPlugin of allWanIntfPlugins) {
               // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name))) {
+              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
+                await wanIntfPlugin.isInterfacePresent() &&
+                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
                 intfPlugin = wanIntfPlugin;
                 break;
               }
             }
             if (intfPlugin) {
-              this.log.error(`No active WAN is for for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
+              this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
               await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
             } else {
-              this.log.error(`No active WAN is for for dns ${this.name}, DNS is temporarily unavailable`);
+              this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
             }
           }
         } else {
