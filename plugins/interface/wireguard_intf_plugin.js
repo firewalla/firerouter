@@ -783,7 +783,7 @@ class WireguardMeshAutomata {
         if (this.pubKey < pubKey && !info.router) {
           const routerPeer = t0Peers.find(k => this.peerInfo[k] && this.peerInfo[k].asRouter && this.peerInfo[k].connected.includes(pubKey));
           if (!routerPeer)
-            this.log.error(`Cannot find a relay node for peer ${pubKey}`);
+            this.log.errorRateLimited(300000, `Cannot find a relay node for peer ${pubKey}`);
           else {
             info.router = routerPeer;
             this.log.info(`Use peer ${routerPeer} as relay node for peer ${pubKey}`);
