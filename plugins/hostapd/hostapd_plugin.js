@@ -162,13 +162,20 @@ class HostapdPlugin extends Plugin {
       }
     }
 
-    if (parameters.ssid && parameters.wpa_passphrase) {
-      const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
-      parameters.wpa_psk = psk;
-      // use hexdump for ssid
-      parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
-      delete parameters["wpa_passphrase"];
-      delete parameters["ssid"];
+    // when in wpa3 mode, no need to hash passphrase
+    if (parameters.wpa3_mode) {
+      // need to delete this parameter as hostapd doesn't support it
+      // this parameter is only used to indicate wpa3 mode, and used only inside firerouter code
+      delete parameters["wpa3_mode"];
+    } else {
+      if (parameters.ssid && parameters.wpa_passphrase) {
+        const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
+        parameters.wpa_psk = psk;
+        // use hexdump for ssid
+        parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
+        delete parameters["wpa_passphrase"];
+        delete parameters["ssid"];
+      }
     }
 
     const hexdumpKeys = ["wep_key0", "wep_key1", "wep_key2", "wep_key3"];
