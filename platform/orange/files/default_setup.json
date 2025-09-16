@@ -1,10 +1,10 @@
 {
   "interface": {
     "phy": {
-      "eth1": {
+      "eth0": {
         "enabled": true
       },
-      "eth0": {
+      "eth1": {
         "meta": {
           "name": "WAN",
           "type": "wan"
@@ -27,7 +27,7 @@
         },
         "ipv4": "10.10.0.1/24",
         "intf": [
-          "eth1"
+          "eth0"
         ],
         "enabled": true
       }
@@ -47,7 +47,7 @@
   "routing": {
     "global": {
       "default": {
-        "viaIntf": "eth0"
+        "viaIntf": "eth1"
       }
     }
   },
@@ -63,9 +63,9 @@
     }
   },
   "nat": {
-    "br0_eth0": {
+    "br0_eth1": {
       "in": "br0",
-      "out": "eth0"
+      "out": "eth1"
     }
   },
   "dhcp": {
@@ -86,7 +86,7 @@
     }
   },
   "sshd": {
-    "eth0": {
+    "eth1": {
       "enabled": false
     },
     "br0": {
