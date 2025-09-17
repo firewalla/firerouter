@@ -160,15 +160,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async flush() {
     await super.flush();
 
-    if (this.networkConfig && this.networkConfig.baseIntf) {
-      const baseIntf = this.networkConfig.baseIntf;
-      const basePhy = await exec(`readlink -f /sys/class/net/${baseIntf}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-      const myPhy = await exec(`readlink -f /sys/class/net/${this.name}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-      if (basePhy && myPhy && basePhy === myPhy)
-        await exec(`sudo iw dev ${this.name} del`).catch((err) => {});
-      else
-        this.log.warn(`${this.name} and ${baseIntf} are not pointing to the same wifi phy, interface ${this.name} will not be deleted`);
-    }
+    await platform.removeWLANInterface(this);
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
       await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
@@ -224,25 +216,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async createInterface() {
-    const ifaceExists = await exec(`ip link show dev ${this.name}`).then(() => true).catch((err) => false);
-    if (!ifaceExists) {
-      if (this.networkConfig.baseIntf) {
-        const baseIntf = this.networkConfig.baseIntf;
-        const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
-        if (baseIntfPlugin) {
-          this.subscribeChangeFrom(baseIntfPlugin);
-          if (await baseIntfPlugin.isInterfacePresent() === false) {
-            this.log.warn(`Base interface ${baseIntf} is not present yet`);
-            return false;
-          }
-        } else {
-          this.fatal(`Lower interface plugin not found ${baseIntf}`);
-        }
-        const type = this.networkConfig.type || "managed";
-        await exec(`sudo iw dev ${baseIntf} interface add ${this.name} type ${type}`);
-      }
-    } else {
-      this.log.warn(`Interface ${this.name} already exists`);
+    try {
+      await platform.createWLANInterface(this);
+    } catch (err) {
+      this.log.error(`Failed to create wlan interface ${this.name}`, err.message);
+      return false;
     }
 
     // refresh interface state in case something is not relinquished in driver

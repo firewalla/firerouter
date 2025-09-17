@@ -13,17 +13,15 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-const fs = require('fs');
-const Promise = require('bluebird');
-Promise.promisifyAll(fs);
-
+const fsp = require('fs').promises;
 const Platform = require('../Platform.js');
-
+const _ = require('lodash');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const rclient = require('../../util/redis_manager.js').getRedisClient();
 
 const macCache = {};
 
@@ -76,20 +74,7 @@ class OrangePlatform extends Platform {
   }
 
   async overrideEthernetKernelModule() {
-    const changed = await this.overrideKernelModule(
-      'r8168',
-      this.getBinaryPath(),
-      '/lib/modules/4.9.241-firewalla/kernel/drivers/net/ethernet/realtek/r8168');
-    if (changed) {
-      // restore MAC address of eth1 from eprom
-      const mac = await this.getMacByIface("eth1");
-
-      if (mac) {
-        await exec(`sudo ip link set eth1 address ${mac}`).catch((err) => {
-          log.error(`Failed to set MAC address of eth1`, err.message);
-        })
-      }
-    }
+    
   }
 
   async configEthernet() {
@@ -107,48 +92,6 @@ class OrangePlatform extends Platform {
   }
 
   async overrideWLANKernelModule() {
-    if (await this.getWlanVendor() == '88x2cs') {
-      const changed = await this.overrideKernelModule(
-        '88x2cs',
-        this.getBinaryPath(),
-        '/lib/modules/4.9.241-firewalla/kernel/drivers/net/wireless/realtek/rtl8822cs');
-
-      if (changed) {
-        // restore MAC address of wlan0 from eprom
-        const clientMac = await this.getMacByIface(this.getWifiClientInterface());
-        const apMac = await this.getMacByIface(this.getWifiAPInterface());
-
-        if (clientMac && apMac) {
-          const client = this.getWifiClientInterface();
-          const ap = this.getWifiAPInterface();
-
-          // shutdown dependant services
-          await exec(`sudo systemctl stop firerouter_wpa_supplicant@${client}`).catch((err) => {})
-          await exec(`sudo systemctl stop firerouter_hostapd@${ap}`).catch((err) => {})
-
-          // a hard code 1-second wait for system to release wifi interfaces
-          await util.delay(1000);
-
-          // force shutdown interfaces
-          await exec(`sudo ip link set ${client} down`).catch((err) => {
-            log.error(`Failed to turn off interface ${client}`, err.message);
-          });
-
-          await exec(`sudo ip link set ${ap} down`).catch((err) => {
-            log.error(`Failed to turn off interface ${ap}`, err.message);
-          });
-
-          // set mac address
-          await exec(`sudo ip link set ${client} address ${clientMac}`).catch((err) => {
-            log.error(`Failed to set MAC address of ${client}`, err.message);
-          });
-
-          await exec(`sudo ip link set ${ap} address ${apMac}`).catch((err) => {
-            log.error(`Failed to set MAC address of ${ap}`, err.message);
-          });
-        }
-      }
-    }
   }
 
   clearMacCache(iface) {
@@ -157,7 +100,7 @@ class OrangePlatform extends Platform {
   }
 
   _isPhysicalInterface(iface) {
-    return ["wlan0", "wlan1", "eth0", "eth1"].includes(iface);
+    return ["eth0", "eth1"].includes(iface) || iface.startsWith("wlan");
   }
 
   async getMacByIface(iface) {
@@ -269,6 +212,72 @@ class OrangePlatform extends Platform {
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
+  }
+
+  async createWLANInterface(wlanIntfPlugin) {
+    const macAddr = await this._getWlanMacAddress(wlanIntfPlugin);
+    const phyName = await this._get80211PhyName();
+    if (!phyName) {
+      throw new Error("Failed to get 802.11 phy name");
+    }
+    if (!await wlanIntfPlugin.isInterfacePresent()) {
+      await exec(`sudo iw phy ${phyName} interface add ${wlanIntfPlugin.name} type ${await this._getWlanInterfaceType(wlanIntfPlugin)}`);
+    }
+    await exec(`sudo ip link set ${wlanIntfPlugin.name} down`).catch((err) => {});
+    await exec(`sudo ip link set ${wlanIntfPlugin.name} address ${macAddr}`).catch((err) => {});
+  }
+
+  async removeWLANInterface(wlanIntfPlugin) {
+    await exec(`sudo iw dev ${wlanIntfPlugin.name} del`).catch((err) => {});
+  }
+
+  async _getWlanInterfaceType(wlanIntfPlugin) {
+    if (wlanIntfPlugin.networkConfig.type)
+      return wlanIntfPlugin.networkConfig.type;
+    if (wlanIntfPlugin.name === this.getWifiClientInterface())
+      return "managed";
+    return "__ap";
+  }
+
+  async _get80211PhyName() {
+    const phyNames = await fsp.readdir(`/sys/class/ieee80211/`);
+    if (!_.isEmpty(phyNames))
+      return phyNames[0];
+    return null;
+  }
+
+  async _getWlanMacAddress(wlanIntfPlugin) {
+    if (wlanIntfPlugin.networkConfig.hwAddr)
+      return wlanIntfPlugin.networkConfig.hwAddr;
+    const cachedMac = await rclient.hgetAsync("intfMacs", wlanIntfPlugin.name);
+    if (cachedMac)
+      return cachedMac;
+    const existingMacs = await rclient.hvalsAsync("intfMacs");
+    
+    // Generate a random MAC address with a default prefix
+    // Using a common vendor prefix for locally administered addresses
+    const defaultPrefix = "20:6D:31"; // Locally administered, unicast
+    let newMac;
+    let attempts = 0;
+    const maxAttempts = 100;
+
+    do {
+      newMac = util.generateRandomMacAddress(defaultPrefix);
+      attempts++;
+    } while (existingMacs.includes(newMac) && attempts < maxAttempts);
+
+    if (attempts >= maxAttempts) {
+      log.error("Failed to generate unique MAC address after maximum attempts");
+      // Fallback to a deterministic approach using interface name
+      const hash = require('crypto').createHash('md5').update(wlanIntfPlugin.name).digest('hex');
+      newMac = `${defaultPrefix}:${hash.substring(0, 2)}:${hash.substring(2, 4)}:${hash.substring(4, 6)}`;
+    }
+
+    // Save the generated MAC address to Redis
+    await rclient.hsetAsync("intfMacs", wlanIntfPlugin.name, newMac);
+    log.info(`Generated new MAC address for ${wlanIntfPlugin.name}: ${newMac}`);
+    
+    return newMac;
   }
 }
 

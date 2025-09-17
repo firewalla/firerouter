@@ -19,6 +19,7 @@ const log = require('../util/logger.js')(__filename);
 const fsp = require('fs').promises
 const r = require('../util/firerouter')
 const exec = require('child-process-promise').exec;
+const pl = require('../plugins/plugin_loader.js');
 
 class Platform {
   getName() {
@@ -222,6 +223,41 @@ class Platform {
     await exec(`sudo ip link set ${iface} mtu ${mtu}`).catch((err) => {
       log.error(`Failed to set MTU of ${iface} to ${mtu}`, err.message);
     });
+  }
+
+  async createWLANInterface(wlanIntfPlugin) {
+    const ifaceExists = await exec(`ip link show dev ${wlanIntfPlugin.name}`).then(() => true).catch((err) => false);
+    if (!ifaceExists) {
+      if (wlanIntfPlugin.networkConfig.baseIntf) {
+        const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+        const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
+        if (baseIntfPlugin) {
+          wlanIntfPlugin.subscribeChangeFrom(baseIntfPlugin);
+          if (await baseIntfPlugin.isInterfacePresent() === false) {
+            wlanIntfPlugin.log.warn(`Base interface ${baseIntf} is not present yet`);
+            return false;
+          }
+        } else {
+          wlanIntfPlugin.fatal(`Lower interface plugin not found ${baseIntf}`);
+        }
+        const type = wlanIntfPlugin.networkConfig.type || "managed";
+        await exec(`sudo iw dev ${baseIntf} interface add ${wlanIntfPlugin.name} type ${type}`);
+      }
+    } else {
+      wlanIntfPlugin.log.warn(`Interface ${wlanIntfPlugin.name} already exists`);
+    }
+  }
+
+  async removeWLANInterface(wlanIntfPlugin) {
+    if (wlanIntfPlugin.networkConfig && wlanIntfPlugin.networkConfig.baseIntf) {
+      const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+      const basePhy = await exec(`readlink -f /sys/class/net/${baseIntf}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const myPhy = await exec(`readlink -f /sys/class/net/${wlanIntfPlugin.name}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      if (basePhy && myPhy && basePhy === myPhy)
+        await exec(`sudo iw dev ${wlanIntfPlugin.name} del`).catch((err) => {});
+      else
+        wlanIntfPlugin.log.warn(`${wlanIntfPlugin.name} and ${baseIntf} are not pointing to the same wifi phy, interface ${wlanIntfPlugin.name} will not be deleted`);
+    }
   }
 }
 
