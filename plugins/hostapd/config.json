@@ -29,6 +29,8 @@
         "ieee80211h": 1,
         "ieee80211ax": 1,
         "ieee80211be": 1,
+        "max_num_sta": 100,
+        "auth_algs": 1,
         "ht_capab":"[HT40+][LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][MAX-AMSDU-7935]"
       }
     },

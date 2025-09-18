@@ -227,6 +227,9 @@ class HostapdPlugin extends Plugin {
             retryCount++;
           }
         }
+        if (parameters.ap_isolate) {
+          await exec(`echo 1 | sudo tee /sys/class/net/${this.name}/brport/hairpin_mode`).catch((err) => {});
+        }
       }
       if (iwPhy)
         await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
