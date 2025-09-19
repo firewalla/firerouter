@@ -214,14 +214,6 @@ function getProcessName() {
   return process.title;
 }
 
-async function getBoardName() {
-  const boardName = await exec("awk -F= '/BOARD=/ {print $2}' /etc/firewalla-release", { encoding: 'utf8' }).then( r => r.stdout.trim()).catch((err) => {
-    log.error("Failed to get board name", err);
-    return 'unknown';
-  });
-  return boardName
-}
-
 async function switchBranch(targetBranch) {
   await exec(`${getFireRouterHome()}/scripts/switch_branch.sh ${targetBranch}`);
 }
@@ -246,7 +238,6 @@ async function verifyPermanentMAC(iface) {
 
 module.exports = {
   getUserHome: getUserHome,
-  getBoardName: getBoardName,
   getHiddenFolder: getHiddenFolder,
   getLogFolder: getLogFolder,
   getUserConfigFolder: getUserConfigFolder,

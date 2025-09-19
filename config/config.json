@@ -225,13 +225,6 @@
       }
     },
     {
-      "file_path": "./wlan_sensor.js",
-      "config": {
-        "up_delay": 5,
-        "down_delay": 5
-      }
-    },
-    {
       "file_path": "./wlan_conf_update_sensor.js",
       "config": {
       }
