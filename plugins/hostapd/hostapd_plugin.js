@@ -31,6 +31,7 @@ const fs = require('fs');
 
 const pluginConfig = require('./config.json');
 const util = require('../../util/util');
+const _ = require('lodash');
 
 const WLANInterfacePlugin = require('../interface/wlan_intf_plugin')
 
@@ -102,15 +103,11 @@ class HostapdPlugin extends Plugin {
       return;
     }
 
-    if (params.ht_capab && !Array.isArray(params.ht_capab)) delete params.ht_capab
-
     if (platform.wifiSD) {
       Object.assign(parameters, platform.wifiSD().getHostapdConfig())
     }
 
     Object.assign(parameters, params)
-
-    parameters.ht_capab = new Set(parameters.ht_capab)
 
     if (!parameters.channel) {
       let availableChannels = await HostapdPlugin.getAvailableChannels()
@@ -185,13 +182,26 @@ class HostapdPlugin extends Plugin {
       }
     }
 
-    const channelConfig = pluginConfig.channel[parameters.channel]
-    if (channelConfig.ht_capab) {
-      channelConfig.ht_capab.default && channelConfig.ht_capab.default.forEach(c => parameters.ht_capab.add(c))
-      channelConfig.ht_capab.not && channelConfig.ht_capab.not.forEach(c => parameters.ht_capab.delete(c))
+    if (!platform.isWLANManagedByAPC()) {
+      if (parameters.ht_capab && !Array.isArray(parameters.ht_capab)) delete parameters.ht_capab
+      parameters.ht_capab = new Set(parameters.ht_capab)
+  
+      const channelConfig = pluginConfig.channel[parameters.channel]
+      if (channelConfig.ht_capab) {
+        channelConfig.ht_capab.default && channelConfig.ht_capab.default.forEach(c => parameters.ht_capab.add(c))
+        channelConfig.ht_capab.not && channelConfig.ht_capab.not.forEach(c => parameters.ht_capab.delete(c))
+      }
+      channelConfig.hw_mode && (parameters.hw_mode = channelConfig.hw_mode)
+      parameters.ht_capab = '[' + Array.from(parameters.ht_capab).join('][') + ']'
     }
-    channelConfig.hw_mode && (parameters.hw_mode = channelConfig.hw_mode)
-    parameters.ht_capab = '[' + Array.from(parameters.ht_capab).join('][') + ']'
+
+    if ((_.isArray(parameters.ht_capab) || _.isSet(parameters.ht_capab)) && !_.isEmpty(parameters.ht_capab)) {
+      parameters.ht_capab = Array.from(parameters.ht_capab).map(c => `[${c}]`).join("");
+    }
+
+    if ((_.isArray(parameters.vht_capab) || _.isSet(parameters.vht_capab)) && !_.isEmpty(parameters.vht_capab)) {
+      parameters.vht_capab = Array.from(parameters.vht_capab).map(c => `[${c}]`).join("");
+    }
 
     const vendorConfig = pluginConfig.vendor[await platform.getWlanVendor()];
     const vendorExtra = vendorConfig && vendorConfig.extra;
