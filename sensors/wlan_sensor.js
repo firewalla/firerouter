@@ -43,6 +43,11 @@ class WLANSensor extends Sensor {
                 this.log.error(`Failed to get target address for ${this.name}`, err.message);
                 return null;
             });;
+        if (!this.ipAddr) {
+            this.log.error(`Failed to get target address for ${this.name}, abort sending message to fwapc`);
+            return;
+        }
+
         this.client = dgram.createSocket({
             type: "udp4",
             reuseAddr: true
