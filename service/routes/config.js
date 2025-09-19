@@ -369,7 +369,10 @@ router.post('/set',
 router.post('/prepare_env',
   jsonParser,
   async (req, res, next) => {
+    const t1 = Date.now() / 1000;
     await ns.prepareEnvironment().then(() => {
+      const t2 = Date.now() / 1000;
+      log.info(`prepareEnvironment took ${t2 - t1} seconds`);
       res.status(200).json({errors: []});
     }).catch((err) => {
       log.error(req.url, err)
