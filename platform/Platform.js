@@ -259,6 +259,10 @@ class Platform {
         wlanIntfPlugin.log.warn(`${wlanIntfPlugin.name} and ${baseIntf} are not pointing to the same wifi phy, interface ${wlanIntfPlugin.name} will not be deleted`);
     }
   }
+
+  isWLANManagedByAPC() {
+    return false;
+  }
 }
 
 module.exports = Platform;

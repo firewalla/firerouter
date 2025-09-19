@@ -279,6 +279,10 @@ class OrangePlatform extends Platform {
     
     return newMac;
   }
+
+  isWLANManagedByAPC() {
+    return true;
+  }
 }
 
 module.exports = OrangePlatform;
