@@ -952,7 +952,7 @@ class InterfaceBasePlugin extends Plugin {
       return;
     }
 
-    if (this.networkConfig.allowHotplug === true) {
+    if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
       if (!ifRegistered)
         return;
@@ -1631,7 +1631,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
-        if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+        if (this.networkConfig && this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
           pl.acquireApplyLock(async () => {
             platform.clearMacCache(this.name);
             this._reapplyNeeded = true;

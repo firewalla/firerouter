@@ -283,6 +283,12 @@ class OrangePlatform extends Platform {
   isWLANManagedByAPC() {
     return true;
   }
+
+  isHotplugSupported(intf) {
+    const fixedIntfs = ["eth0", "eth1"];
+    // all wlan interfaces are created by firerouter on orange, so they are not hotplug supported
+    return !fixedIntfs.includes(intf) && !intf.startsWith("wlan");
+  }
 }
 
 module.exports = OrangePlatform;

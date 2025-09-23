@@ -263,6 +263,10 @@ class Platform {
   isWLANManagedByAPC() {
     return false;
   }
+
+  isHotplugSupported(intf) {
+    return true;
+  }
 }
 
 module.exports = Platform;
