@@ -66,6 +66,10 @@ class Platform {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/bin`;
   }
 
+  getFilesPath() {
+    return `${r.getFireRouterHome()}/platform/${this.getName()}/files`;
+  }
+
   async ledNormalVisibleStart() {
   }
 
@@ -266,6 +270,16 @@ class Platform {
 
   isHotplugSupported(intf) {
     return true;
+  }
+
+  isPDOSupported() {
+    return false;
+  }
+
+  async loadPDOInfo() {
+  }
+
+  getEffectivePowerMode(pdoInfo, configuredPowerMode) {
   }
 }
 

@@ -235,6 +235,11 @@
       "file_path": "./wlan_conf_update_sensor.js",
       "config": {
       }
+    },
+    {
+      "file_path": "./pdo_sensor.js",
+      "config": {
+      }
     }
   ]
 }

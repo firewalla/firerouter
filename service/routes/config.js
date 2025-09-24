@@ -24,6 +24,8 @@ const ns = require('../../core/network_setup.js');
 const util = require('../../util/util.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
+const sensorLoader = require('../../sensors/sensor_loader.js');
+const constants = require('../../util/constants.js');
 
 const WLAN_FLAG_WEP         = 0b1
 const WLAN_FLAG_WPA         = 0b10
@@ -451,6 +453,40 @@ router.post('/renew_dhcp6_lease',
     }).catch((err) => {
       res.status(400).json({errors: [err.message]});
     });
+  });
+
+router.post('/power_mode',
+  jsonParser,
+  async (req, res, next) => {
+    const powerMode = req.body.powerMode;
+    if (!powerMode) {
+      res.status(400).json({errors: ['"powerMode" is not specified']});
+      return;
+    }
+    if (!constants.SUPPORTED_POWER_MODES.includes(powerMode)) {
+      res.status(400).json({errors: ['Invalid power mode']});
+      return;
+    }
+    const pdoSensor = sensorLoader.getSensor('PDOSensor');
+    if (pdoSensor) {
+      await pdoSensor.setPowerMode(powerMode);
+      res.status(200).json({errors: []});
+    } else {
+      res.status(500).json({errors: ['PDO sensor not found']});
+    }
+  });
+
+router.get('/power_mode',
+  async (req, res, next) => {
+    const pdoSensor = sensorLoader.getSensor('PDOSensor');
+    if (pdoSensor) {
+      const configuredPowerMode = await pdoSensor.getPowerMode();
+      const effectivePowerMode = await pdoSensor.getEffectivePowerMode();
+      const pdoInfo = await pdoSensor.getPDOInfo();
+      res.status(200).json({errors: [], configuredPowerMode, effectivePowerMode, pdoInfo});
+    } else {
+      res.status(500).json({errors: ['PDO sensor not found']});
+    }
   });
 
 router.get('/dhcp_lease/:intf', async (req, res, next) => {
