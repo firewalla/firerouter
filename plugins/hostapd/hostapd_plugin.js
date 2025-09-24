@@ -21,7 +21,9 @@ const ncm = require('../../core/network_config_mgr')
 const platform = require('../../platform/PlatformLoader').getPlatform()
 
 const hostapdServiceFileTemplate = __dirname + "/firerouter_hostapd@.template.service";
+const hostapdCliServiceFileTemplate = __dirname + "/firerouter_hostapd_cli@.template.service";
 const hostapdScript = __dirname + "/hostapd.sh";
+const hostapdCliScript = __dirname + "/hostapd_cli.sh";
 
 const exec = require('child-process-promise').exec;
 
@@ -59,13 +61,25 @@ class HostapdPlugin extends Plugin {
     const targetFile = r.getTempFolder() + "/firerouter_hostapd@.service";
     await fsp.writeFile(targetFile, content);
     await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+
+
+    // install hostapd_cli listener service
+    let cli_content = await fsp.readFile(hostapdCliServiceFileTemplate, {encoding: 'utf8'});
+    cli_content = cli_content.replace(/%HOSTAPD_DIRECTORY%/g, r.getTempFolder());
+    const cli_targetFile = r.getTempFolder() + "/firerouter_hostapd_cli@.service";
+    await fsp.writeFile(cli_targetFile, cli_content);
+    await exec(`sudo cp ${cli_targetFile} /etc/systemd/system`);
   }
 
   static async installHostapdScript() {
     await exec(`cp ${hostapdScript} ${r.getTempFolder()}/hostapd.sh`);
+    await exec(`cp ${hostapdCliScript} ${r.getTempFolder()}/hostapd_cli.sh`);
   }
 
   async flush() {
+    // clean up hostapd_cli listener service
+    await exec(`sudo systemctl stop firerouter_hostapd_cli@${this.name}`).catch((err) => {});
+
     const confPath = this._getConfFilePath();
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
     await fsp.unlink(confPath).catch((err) => {});
@@ -213,10 +227,12 @@ class HostapdPlugin extends Plugin {
 
     const confPath = this._getConfFilePath();
     await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    await exec(`sudo systemctl stop firerouter_hostapd_cli@${this.name}`).catch((err) => {}); // stop the listener first
     await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
     const iwPhy = await fsp.readFile(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (this.networkConfig.enabled !== false) {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
+      await exec(`sudo systemctl start firerouter_hostapd_cli@${this.name}`).catch((err) => {}); // start the listener after hostapd is started
       if (this.networkConfig.bridge) {
         // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
         let addedToBridge = false;
@@ -234,6 +250,7 @@ class HostapdPlugin extends Plugin {
           } else {
             this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
             await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
+            await exec(`sudo systemctl restart firerouter_hostapd_cli@${this.name}`).catch((err) => {});
             retryCount++;
           }
         }

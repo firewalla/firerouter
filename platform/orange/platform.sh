@@ -10,6 +10,10 @@ function get_hostapd_path {
   echo "/usr/local/bin/hostapd"
 }
 
+function get_hostapd_cli_path {
+  echo "/usr/sbin/hostapd_cli"
+}
+
 function map_target_branch {
   case "$1" in
   "release_6_0")
