@@ -14,6 +14,7 @@
  */
 
 const fsp = require('fs').promises;
+const fs = require('fs');
 const Platform = require('../Platform.js');
 const _ = require('lodash');
 const firestatusBaseURL = "http://127.0.0.1:9966";
@@ -21,6 +22,7 @@ const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const constants = require('../../util/constants.js');
 const rclient = require('../../util/redis_manager.js').getRedisClient();
 
 const macCache = {};
@@ -288,6 +290,63 @@ class OrangePlatform extends Platform {
     const fixedIntfs = ["eth0", "eth1"];
     // all wlan interfaces are created by firerouter on orange, so they are not hotplug supported
     return !fixedIntfs.includes(intf) && !intf.startsWith("wlan");
+  }
+
+  isPDOSupported() {
+    return true;
+  }
+
+  async loadPDOInfo() {
+    const pdoInfoFile = `/dev/shm/pdo_info`;
+    let pdoInfo = null;
+    const fileExists = await fsp.access(pdoInfoFile, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      const output = await exec(`sudo ${this.getFilesPath()}/get_pdo.sh`).then(result => result.stdout).catch(() => null);
+      if (!output) {
+        log.error("Failed to get PDO info from script");
+        return {};
+      }
+      await fsp.writeFile(pdoInfoFile, output);
+      pdoInfo = output;
+    } else {
+      pdoInfo = await fsp.readFile(pdoInfoFile, {encoding: "utf8"}).catch(() => null);
+    }
+    if (!pdoInfo) {
+      log.error("Failed to get PDO info from file");
+      return {};
+    }
+    const lines = pdoInfo.split("\n");
+    const result = {};
+    for (const line of lines) {
+      const [key, value] = line.split("=");
+      result[key] = value;
+    }
+    /* sample pdo info
+    PDO_IDX=0
+    VOLTAGE=11400
+    CURRENT=150
+    POWER_TYPE=Fixed
+    */
+    return result;
+  }
+
+  getEffectivePowerMode(pdoInfo, configuredPowerMode) {
+    // limit to power save mode if PDO is not supported or maximum power is less than or equal to 15W
+    if (!_.isObject(pdoInfo))
+      return constants.POWER_MODE_POWERSAVE;
+    if (!_.has(pdoInfo, 'PDO_IDX') || pdoInfo.PDO_IDX == 0)
+      return constants.POWER_MODE_POWERSAVE;
+    const voltage = pdoInfo.VOLTAGE;
+    const current = pdoInfo.CURRENT;
+    if (isNaN(voltage) || isNaN(current))
+      return constants.POWER_MODE_POWERSAVE;
+    if (Number(voltage) / 1000 * Number(current) / 1000 <= 15)
+      return constants.POWER_MODE_POWERSAVE;
+    // reach here if PDO is supported and maximum power is greater than 15W, if configured power mode is ondemand, use performance mode by default
+    if ((configuredPowerMode || constants.POWER_MODE_ONDEMAND) === constants.POWER_MODE_ONDEMAND)
+      return constants.POWER_MODE_PERFORMANCE;
+    // otherwise use configured power mode
+    return configuredPowerMode || constants.POWER_MODE_PERFORMANCE;
   }
 }
 
