@@ -470,7 +470,10 @@ router.post('/power_mode',
     const pdoSensor = sensorLoader.getSensor('PDOSensor');
     if (pdoSensor) {
       await pdoSensor.setPowerMode(powerMode);
-      res.status(200).json({errors: []});
+      const configuredPowerMode = await pdoSensor.getPowerMode();
+      const effectivePowerMode = await pdoSensor.getEffectivePowerMode();
+      const pdoInfo = await pdoSensor.getPDOInfo();
+      res.status(200).json({configuredPowerMode, effectivePowerMode, pdoInfo});
     } else {
       res.status(500).json({errors: ['PDO sensor not found']});
     }
@@ -483,7 +486,7 @@ router.get('/power_mode',
       const configuredPowerMode = await pdoSensor.getPowerMode();
       const effectivePowerMode = await pdoSensor.getEffectivePowerMode();
       const pdoInfo = await pdoSensor.getPDOInfo();
-      res.status(200).json({errors: [], configuredPowerMode, effectivePowerMode, pdoInfo});
+      res.status(200).json({configuredPowerMode, effectivePowerMode, pdoInfo});
     } else {
       res.status(500).json({errors: ['PDO sensor not found']});
     }
