@@ -41,3 +41,11 @@ function led_report_network_down {
 function led_report_network_up {
   curl 'http://127.0.0.1:9966/resolve?name=firerouter&type=network_down'
 }
+
+function get_wpa_supplicant_path {
+  echo "wpa_supplicant"
+}
+
+function get_wpa_cli_path {
+  echo "wpa_cli"
+}
