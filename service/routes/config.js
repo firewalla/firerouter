@@ -321,47 +321,52 @@ router.post('/set',
     }
 
     await lock.acquire(LOCK_NETWORK_CONFIG_NCID, async () => {
-    try {
-    errors = await ncm.validateNcid(newConfig, inTransaction, ignoreNcid);
-    if (errors && errors.length != 0) {
-      log.error("Invalid network config", errors);
-      res.status(400).json({errors: errors});
-    } else {
-      errors = await ncm.tryApplyConfigWithRWLock(newConfig);
-      if (errors && errors.length != 0) {
-        log.error("Failed to apply new network config", errors);
-        res.status(400).json({errors: errors});
-      } else {
-        log.info("New config is applied with no error");
-        if (transactionOp === T_OP_APPEND) {
-          log.info("in transaction context now");
-          inTransaction = true;
-          currentTransID = transID;
-          // create or extend the timeout task
-          if (transactionTask)
-            clearTimeout(transactionTask);
-          transactionTask = setTimeout(async () => {
-            const oldConfig = await ncm.getActiveConfig(false);
-            log.info("Automatically revert back to previous persisted config: " + JSON.stringify(oldConfig));
-            await ncm.tryApplyConfigWithRWLock(oldConfig).catch((err) => {
-              log.error(`Failed to automatically revert to old config`, err.message);
-            });
-            transactionTask = null;
-            inTransaction = false;
-            currentTransID = null;
-          }, T_REVERT_TIMEOUT);
-        }
-        newConfig.ncid = util.generateUUID();
-        log.info("New ncid generated", newConfig.ncid);
-        await ncm.saveConfig(newConfig, inTransaction);
+      try {
+        errors = await ncm.validateNcid(newConfig, inTransaction, ignoreNcid);
+        if (errors && errors.length !== 0) {
+          log.error("Invalid network config", errors);
+          res.status(400).json({ errors: errors });
+        } else {
+          errors = await ncm.tryApplyConfigWithRWLock(newConfig);
+          if (errors && errors.length !== 0) {
+            log.error("Failed to apply new network config", errors);
+            res.status(400).json({ errors: errors });
+          } else {
+            log.info("New config is applied with no error");
+            if (transactionOp === T_OP_APPEND) {
+              log.info("in transaction context now");
+              inTransaction = true;
+              currentTransID = transID;
+              // create or extend the timeout task
+              if (transactionTask) clearTimeout(transactionTask);
+              transactionTask = setTimeout(async () => {
+                const oldConfig = await ncm.getActiveConfig(false);
+                log.info(
+                  "Automatically revert back to previous persisted config: " +
+                    JSON.stringify(oldConfig)
+                );
+                await ncm.tryApplyConfigWithRWLock(oldConfig).catch((err) => {
+                  log.error(
+                    `Failed to automatically revert to old config`,
+                    err.message
+                  );
+                });
+                transactionTask = null;
+                inTransaction = false;
+                currentTransID = null;
+              }, T_REVERT_TIMEOUT);
+            }
+            newConfig.ncid = util.generateUUID();
+            log.info("New ncid generated", newConfig.ncid);
+            await ncm.saveConfig(newConfig, inTransaction);
 
-        res.status(200).json({errors: errors, "ncid": newConfig.ncid});
+            res.status(200).json({ errors: errors, ncid: newConfig.ncid });
+          }
+        }
+      } catch (err) {
+        log.error("Cannot set network config", err.message);
+        res.status(500).json({errors: [err.message]});
       }
-    }
-    } catch (err) {
-      log.error("Cannot set network config", err.message);
-      res.status(500).json({errors: [err.message]});
-    }
     }).catch((err) => {
       log.error("Cannot acquire LOCK_NETWORK_CONFIG_NCID", err.message);
       res.status(500).json({errors: [err.message]});
