@@ -873,6 +873,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async markOutputConnection() {
+    if (!this.isWAN())
+      return;
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
@@ -1552,6 +1554,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getRtId() {
+    if (!this.isWAN())
+      return null;
     if (!this.rtId) {
       this.rtId = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     }
