@@ -83,6 +83,8 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     if (presentInterfaces.length > 0)
       // add interfaces one at a time. Otherwise, if one interface cannot be added to bridge, the interfaces behind it will be skipped
       for (const iface of presentInterfaces) {
+        if (existingIntf.includes(iface))
+          continue;
         await exec(`sudo brctl addif ${this.name} ${iface}`).catch((err) => {
           this.log.error(`Failed to add interface ${iface} to bridge ${this.name}`, err.message);
         })
@@ -92,6 +94,15 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   getDefaultMTU() {
     return 1500;
+  }
+
+  async getSubIntfs() {
+    // return runtime lower interfaces from sysfs brif directory, the effective config may be different from the frcc config due to integrated AP config
+    const brifs = await fsp.readdir(`/sys/class/net/${this.name}/brif`).catch((err) => {
+      this.log.error(`Failed to read brif of bridge ${this.name}`, err.message);
+      return null;
+    });
+    return brifs;
   }
 }
 
