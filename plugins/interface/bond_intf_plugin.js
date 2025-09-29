@@ -73,6 +73,10 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
   getDefaultMTU() {
     return 1500;
   }
+
+  async getSubIntfs() {
+    return this.networkConfig.intf;
+  }
 }
 
 module.exports = BondInterfacePlugin;

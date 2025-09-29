@@ -1553,6 +1553,10 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async getSubIntfs() {
+    return null;
+  }
+
   async _getRtId() {
     if (!this.isWAN())
       return null;
@@ -1563,7 +1567,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1583,7 +1587,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getDns6Nameservers(),
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
-      this.isInterfacePresent()
+      this.isInterfacePresent(),
+      this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -1596,7 +1601,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
   onEvent(e) {
