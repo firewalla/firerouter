@@ -916,7 +916,7 @@ class InterfaceBasePlugin extends Plugin {
   async resetHardwareAddress() {
     if (!this.hasHardwareAddress())
       return;
-    await platform.resetHardwareAddress(this.name);
+    await platform.resetHardwareAddress(this.name, this.networkConfig);
   }
 
   getDefaultMTU() {
