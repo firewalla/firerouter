@@ -24,8 +24,9 @@ const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const constants = require('../../util/constants.js');
 const rclient = require('../../util/redis_manager.js').getRedisClient();
-
-const macCache = {};
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
+const LOCK_INTF_INDEX = "LOCK_INTF_INDEX";
 
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
@@ -89,59 +90,31 @@ class OrangePlatform extends Platform {
     return "wlan0";
   }
 
-  getWifiAPInterface() {
-    return "wlan1";
-  }
-
   async overrideWLANKernelModule() {
-  }
-
-  clearMacCache(iface) {
-    if (macCache[iface])
-      delete macCache[iface];
   }
 
   _isPhysicalInterface(iface) {
     return ["eth0", "eth1"].includes(iface) || iface.startsWith("wlan");
   }
 
-  async getMacByIface(iface) {
+  // get interface permanent MAC address, only applicable to ethernet interfaces and wlan interfaces
+  async getNativeAddress(iface, config) {
     if(!this._isPhysicalInterface(iface)) {
       return null;
     }
-
-    if(macCache[iface]) {
-      return macCache[iface];
+    switch (iface) {
+      case "eth0": {
+        const hexAddr = await this._getHexOffsetAddress(-1);
+        return hexAddr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
+      }
+      case "eth1": {
+        const hexAddr = await this._getHexOffsetAddress(-2);
+        return hexAddr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
+      }
+      default: {
+        return await this._getWLANAddress(iface, config.band);
+      }
     }
-
-    const mac = await this._getMacByIface(iface);
-    macCache[iface] = mac;
-    return mac;
-  }
-
-  async _getMacByIface(iface) {
-    switch(iface) {
-      case "eth0":
-        return await this.getMac(0);
-      case "eth1":
-        return await this.getMac(1);
-      case "wlan0":
-        return await this.getMac(2);
-      case "wlan1":
-        return await this.getMac(3);
-    }
-
-    return;
-  }
-
-  async getMac(index) {
-    const mac = await exec(`seq 0 5 | xargs -I ZZZ -n 1 sudo i2cget -y 1 0x50 0x${index}ZZZ | cut -d 'x' -f 2 | paste -sd ':'`)
-          .then(result => result.stdout.trim())
-          .catch((err) => {
-            log.error(`Failed to get MAC address for index ${index} from EPROM`, err.message);
-            return "";
-          });
-    return mac.toUpperCase();
   }
 
   getModelName() {
@@ -189,41 +162,41 @@ class OrangePlatform extends Platform {
     }
   }
 
-  async resetHardwareAddress(iface) {
+  async resetHardwareAddress(iface, config) {
     if(!this._isPhysicalInterface(iface)) {
       // for non-phy ifaces, use function from base class
-      await super.resetHardwareAddress(iface);
+      await super.resetHardwareAddress(iface, config);
       return;
     }
 
     const activeMac = await this.getActiveMac(iface);
-    const eepromMac = await this.getMacByIface(iface);
-    if(!eepromMac) {
-      log.error("Unable to get eeprom mac for iface", iface);
+    const nativeMac = await this.getNativeAddress(iface, config);
+    if(!nativeMac) {
+      log.error("Unable to get native mac for iface", iface);
       return;
     }
 
-    if ((activeMac && activeMac.toUpperCase()) !== (eepromMac && eepromMac.toUpperCase())) {
+    if ((activeMac && activeMac.toUpperCase()) !== (nativeMac && nativeMac.toUpperCase())) {
       if(errCounter >= maxErrCounter) { // should not happen in production, just a self protection
         log.error(`Skip set hwaddr of ${iface} if too many errors on setting hardware address.`);
         return;
       }
 
-      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, eepromMac);
-      await this._setHardwareAddress(iface, eepromMac);
+      log.info(`Resetting the hwaddr of ${iface} back to factory default:`, nativeMac);
+      await this._setHardwareAddress(iface, nativeMac);
     } else {
       log.info(`no need to reset hwaddr of ${iface}, it's already resetted.`);
     }
   }
 
   async createWLANInterface(wlanIntfPlugin) {
-    const macAddr = await this._getWlanMacAddress(wlanIntfPlugin);
+    const macAddr = wlanIntfPlugin.networkConfig.hwAddr || await this._getWLANAddress(wlanIntfPlugin.name, wlanIntfPlugin.networkConfig.band);
     const phyName = await this._get80211PhyName();
     if (!phyName) {
       throw new Error("Failed to get 802.11 phy name");
     }
     if (!await wlanIntfPlugin.isInterfacePresent()) {
-      await exec(`sudo iw phy ${phyName} interface add ${wlanIntfPlugin.name} type ${await this._getWlanInterfaceType(wlanIntfPlugin)}`);
+      await exec(`sudo iw phy ${phyName} interface add ${wlanIntfPlugin.name} type ${await this._getWLANInterfaceType(wlanIntfPlugin)}`);
     }
     await exec(`sudo ip link set ${wlanIntfPlugin.name} down`).catch((err) => {});
     await exec(`sudo ip link set ${wlanIntfPlugin.name} address ${macAddr}`).catch((err) => {});
@@ -233,7 +206,7 @@ class OrangePlatform extends Platform {
     await exec(`sudo iw dev ${wlanIntfPlugin.name} del`).catch((err) => {});
   }
 
-  async _getWlanInterfaceType(wlanIntfPlugin) {
+  async _getWLANInterfaceType(wlanIntfPlugin) {
     if (wlanIntfPlugin.networkConfig.type)
       return wlanIntfPlugin.networkConfig.type;
     if (wlanIntfPlugin.name === this.getWifiClientInterface())
@@ -248,38 +221,68 @@ class OrangePlatform extends Platform {
     return null;
   }
 
-  async _getWlanMacAddress(wlanIntfPlugin) {
-    if (wlanIntfPlugin.networkConfig.hwAddr)
-      return wlanIntfPlugin.networkConfig.hwAddr;
-    const cachedMac = await rclient.hgetAsync("intfMacs", wlanIntfPlugin.name);
-    if (cachedMac)
-      return cachedMac;
-    const existingMacs = await rclient.hvalsAsync("intfMacs");
-    
-    // Generate a random MAC address with a default prefix
-    // Using a common vendor prefix for locally administered addresses
-    const defaultPrefix = "20:6D:31"; // Locally administered, unicast
-    let newMac;
-    let attempts = 0;
-    const maxAttempts = 100;
-
-    do {
-      newMac = util.generateRandomMacAddress(defaultPrefix);
-      attempts++;
-    } while (existingMacs.includes(newMac) && attempts < maxAttempts);
-
-    if (attempts >= maxAttempts) {
-      log.error("Failed to generate unique MAC address after maximum attempts");
-      // Fallback to a deterministic approach using interface name
-      const hash = require('crypto').createHash('md5').update(wlanIntfPlugin.name).digest('hex');
-      newMac = `${defaultPrefix}:${hash.substring(0, 2)}:${hash.substring(2, 4)}:${hash.substring(4, 6)}`;
+  async _getWLANAddress(intfName, band) {
+    // base is for wlan0, 2.4g uses base + 1, 5g uses base + 2s
+    if (intfName === this.getWifiClientInterface()) {
+      const addr = await this._getHexOffsetAddress(0);
+      return addr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
+    } else {
+      let offset = 0;
+      if (band === "2.4g") {
+        offset = 1;
+      } else if (band === "5g") {
+        offset = 2;
+      }
+      let addr = await this._getHexOffsetAddress(offset);
+      const idx = await this._allocateIntfIndex(intfName, band);
+      if (idx > 0)
+        addr += 0x040000000000 * idx + 0x020000000000;
+      return addr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
     }
+  }
 
-    // Save the generated MAC address to Redis
-    await rclient.hsetAsync("intfMacs", wlanIntfPlugin.name, newMac);
-    log.info(`Generated new MAC address for ${wlanIntfPlugin.name}: ${newMac}`);
-    
-    return newMac;
+  async _getHexOffsetAddress(offset) {
+    const baseAddress = await this._getHexBaseAddress();
+    const addr = parseInt(baseAddress.split(":").join(""), 16)
+    return addr + offset;
+  }
+
+  async _getHexBaseAddress() {
+    let baseAddress = await rclient.getAsync("base_mac_address");
+    if (!baseAddress) {
+      baseAddress = await exec("sudo xxd -u -p -l 6 -s 4 /dev/mtdblock2").then(result => result.stdout.trim().padStart(12, "0").match(/.{1,2}/g).join(":")).catch(() => {
+        return null;
+      });
+      if (!baseAddress || !baseAddress.startsWith("20:6D:31")) {
+        log.info(`Base address is invalid: ${baseAddress}, will generate a random base address.`);
+        baseAddress = util.generateRandomMacAddress("20:6D:31");
+      }
+      await rclient.setAsync("base_mac_address", baseAddress);
+    }
+    return baseAddress;
+  }
+
+  // this function needs to be run sequentially
+  async _allocateIntfIndex(intfName, band = "5g") {
+    return await lock.acquire(LOCK_INTF_INDEX, async () => {
+      let idx = await rclient.hgetAsync(`intf_index_hash:${band}`, intfName);
+      if (idx) {
+        const name = await rclient.hgetAsync(`index_intf_hash:${band}`, idx);
+        if (name === intfName) {
+          return idx;
+        }
+      }
+      const pl = require('../../plugins/plugin_loader.js');
+      for (let i = 0; i < 32; i++) {
+        const name = await rclient.hgetAsync(`index_intf_hash:${band}`, i);
+        if (!name || !pl.getPluginInstance("interface", name)) {
+          await rclient.hsetAsync(`intf_index_hash:${band}`, intfName, i);
+          await rclient.hsetAsync(`index_intf_hash:${band}`, i, intfName);
+          return i;
+        }
+      }
+      throw new Error("Failed to allocate interface index for " + intfName);
+    });
   }
 
   isWLANManagedByAPC() {
