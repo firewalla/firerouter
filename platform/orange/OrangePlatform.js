@@ -228,7 +228,7 @@ class OrangePlatform extends Platform {
       return addr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
     } else {
       let offset = 0;
-      if (band === "2.4g") {
+      if (band === "2.4g" || band == "2g") {
         offset = 1;
       } else if (band === "5g") {
         offset = 2;
@@ -264,6 +264,8 @@ class OrangePlatform extends Platform {
 
   // this function needs to be run sequentially
   async _allocateIntfIndex(intfName, band = "5g") {
+    if (band == "2g")
+      band = "2.4g";
     return await lock.acquire(LOCK_INTF_INDEX, async () => {
       let idx = await rclient.hgetAsync(`intf_index_hash:${band}`, intfName);
       if (idx) {
