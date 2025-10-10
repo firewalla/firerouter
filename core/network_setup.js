@@ -33,19 +33,6 @@ class NetworkSetup {
     return instance;
   }
 
-  async _getDHCPCDDuidFilename() {
-    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
-      return null;
-    });
-    if (version) {
-      if (version.startsWith("6."))
-        return `/etc/dhcpcd.duid`;
-      if (version.startsWith("7."))
-        return `/var/lib/dhcpcd/duid`;
-    }
-    return null;
-  }
-
   async prepareEnvironment() {
     // create dhclient runtime folder
     await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
@@ -71,25 +58,7 @@ class NetworkSetup {
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
-    // save persistent dhcpcd duid file into home directory
-    const duidFilePath = await this._getDHCPCDDuidFilename();
-    if (duidFilePath) {
-      await exec(`sudo rm ${duidFilePath}`).catch((err) => {});
-      await exec(`sudo touch ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
-      await exec(`sudo ln -sf ${r.getRuntimeFolder()}/dhcpcd.duid ${duidFilePath}`).catch((err) => {});
-      /* need to think what is the most suitable default DUID generation mechanism, for now just let dhcpcd to generate DUID
-      let duid = await fsp.readFile(`${r.getRuntimeFolder()}/dhcpcd.duid`, {encoding: 'utf8'}).catch((err) => null);
-      if (!duid) {
-        // generate DUID based on link layer address of eth0, DUID-LL seems compatibile with most DHCPv6 servers
-        const eth0Mac = await fsp.readFile("/sys/class/net/eth0/address", {encoding: "utf8"}).then((content) => content.trim()).catch((err) => null);
-        if (eth0Mac) {
-          // 00:03 is DUID-Type (DUID-LL), 00:01 hardware type (Ethernet), see RFC8415
-          duid = `00:03:00:01:${eth0Mac}`;
-          await exec(`echo ${duid} | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
-        }
-      }
-      */
-    }
+
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_DEFAULT);
