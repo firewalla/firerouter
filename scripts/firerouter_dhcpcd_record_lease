@@ -1,28 +1,89 @@
 #!/bin/bash
 
+check_is_private_address() {
+  if [ -z "$interface" ]; then
+    return 1 
+  fi
+  ipv4_address=$(ip -4 addr show dev "$interface" 2>/dev/null | grep -oP 'inet\s+\K[\d.]+'| head -n 1)
+
+  if [ -z "$ipv4_address" ]; then
+    return 1 
+  else
+    # echo "  IPv4 address for '$interface' : $ipv4_address"
+    first_octet=$(echo "$ipv4_address" | cut -d'.' -f1)
+    second_octet=$(echo "$ipv4_address" | cut -d'.' -f2)
+
+    # A Class private: 10.0.0.0/8
+    if [ "$first_octet" -eq 10 ]; then
+      return 0 
+    fi
+
+    # B Class private: 172.16.0.0/12
+    if [ "$first_octet" -eq 172 ] && [ "$second_octet" -ge 16 ] && [ "$second_octet" -le 31 ]; then
+      return 0 
+    fi
+
+    # C Class private: 192.168.0.0/16
+    if [ "$first_octet" -eq 192 ] && [ "$second_octet" -eq 168 ]; then
+      return 0 
+    fi
+    return 1
+  fi
+  return 1
+}
+
 case $reason in
   ROUTERADVERT)
-    new_addrs="";
-    gw6="";
+    # If the IPv6 address of the upstream router changes, 
+    # we may recieve sevaral groups of nd_* variables, take the last complete ND option set.
+    nd_id=10
+    gw6=""
     vltime="";
-    addr_id=1
-    while [ $addr_id -lt 10 ]; do
-      var_name="nd1_addr$addr_id"
-      eval "addr=\$$var_name"
-      if [ -n "$addr" ]; then
-        new_addrs="$new_addrs$addr,"
-        var_name="nd1_prefix_information${addr_id}_vltime"
-        eval "vltime=\$$var_name"
-      else
-        break;
+    while [ $nd_id -gt 0 ]; do
+      nd_name="nd${nd_id}_from"
+      eval "nd_from_val=\$$nd_name"
+
+      if [ -n "$nd_from_val" ]; then
+        check_is_private_address
+        RETURN_CODE=$?
+        # interface to ISP should not recieve RA which only include "Route Information" from IOT gateway 
+        if [ "$RETURN_CODE" -ne 0 ]; then
+            gw6="$nd_from_val"
+            break
+        fi
+        # otherwise check other value
+        nd_mtu="nd${nd_id}_mtu"
+        eval "nd_mtu_val=\$$nd_mtu"
+        nd_rdnss1_servers="nd${nd_id}_rdnss1_servers"
+        eval "nd_rdnss1_servers_val=\$$nd_rdnss1_servers"
+        nd_addr1="nd${nd_id}_addr1"
+        eval "nd_addr1_val=\$$nd_addr1"
+        if [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ]; then
+            gw6="$nd_from_val"
+            break
+        fi
       fi
-      addr_id=$((addr_id + 1))
+      nd_id=$((nd_id - 1))
     done
 
-    if [ -n "$nd1_from" ]; then
-      gw6="$nd1_from"
+    if [ -n "$gw6" ]; then
+      vltime_name="nd${nd_id}_prefix_information1_vltime"
+      eval "vltime=\$$vltime_name"
+
+      new_addrs=""
+      addr_id=10
+      while [ $addr_id -gt 0 ]; do
+        var_name="nd${nd_id}_addr$addr_id"
+        eval "addr=\$$var_name"
+        if [ -n "$addr" ]; then
+          new_addrs="$addr"
+          break
+        fi
+        addr_id=$((addr_id - 1))
+      done
+
+      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)" > /dev/shm/dhcpcd.ra.$interface
     fi
-    echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)" > /dev/shm/dhcpcd.ra.$interface
     ;;
   BOUND6|REBOOT6|RENEW6|REBIND6)
     pd_id=1
