@@ -17,6 +17,7 @@ const fsp = require('fs').promises;
 const fs = require('fs');
 const Platform = require('../Platform.js');
 const _ = require('lodash');
+const r = require('../../util/firerouter.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
@@ -350,6 +351,62 @@ class OrangePlatform extends Platform {
       return constants.POWER_MODE_PERFORMANCE;
     // otherwise use configured power mode
     return configuredPowerMode || constants.POWER_MODE_PERFORMANCE;
+  }
+
+  async _mergeHostapdConfig(band) {
+    const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
+    const bssConfigs = [];
+    for (const file of files) {
+      if (!file.endsWith(`.conf`)) {
+        continue;
+      }
+      const intf = file.replace(".conf", "");
+      const parameters = await fsp.readFile(`${r.getUserConfigFolder()}/hostapd/band_${band}/${file}`, {encoding: 'utf8'}).then(content => content.split("\n").reduce((result, line) => {
+        const sepIdx = line.indexOf("=");
+        if (sepIdx !== -1) {
+          result[line.slice(0, sepIdx)] = line.slice(sepIdx + 1);
+        }
+        return result;
+      }, {})).catch(() => ({}));
+      delete parameters.interface;
+      if (_.isEmpty(bssConfigs)) {
+        bssConfigs.push(`interface=${intf}`);
+      } else {
+        bssConfigs.push(`bss=${intf}`);
+        bssConfigs.push(`bssid=${await this._getWLANAddress(intf, band)}`);
+      }
+      for (const key of Object.keys(parameters)) {
+        bssConfigs.push(`${key}=${parameters[key]}`);
+      }
+      bssConfigs.push("");
+    }
+    return bssConfigs;
+  }
+
+  async enableHostapd(iface, parameters) {
+    const band = parameters.hw_mode === "g" ? "2.4g" : "5g";
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    const bssConfigs = await this._mergeHostapdConfig(band);
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
+    await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+  }
+
+  async disableHostapd(iface) {
+    for (const band of ["2.4g", "5g"]) {
+      const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
+      if (files.includes(`${iface}.conf`)) {
+        await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`).catch((err) => {});
+        const bssConfigs = await this._mergeHostapdConfig(band);
+        if (_.isEmpty(bssConfigs)) {
+          await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
+          await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
+        } else {
+          await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
+          await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+        }
+        break;
+      }
+    }
   }
 }
 
