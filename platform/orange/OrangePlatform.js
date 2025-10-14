@@ -353,6 +353,14 @@ class OrangePlatform extends Platform {
     // otherwise use configured power mode
     return configuredPowerMode || constants.POWER_MODE_PERFORMANCE;
   }
+
+  getWpaSupplicantGlobalDefaultConfig() {
+    return {};
+  }
+
+  getWpaSupplicantNetworkDefaultConfig() {
+    return {};
+  }
 }
 
 module.exports = OrangePlatform;
