@@ -394,6 +394,8 @@ class OrangePlatform extends Platform {
   }
 
   async disableHostapd(iface) {
+    // this is just for backward compatibility, we don't need to stop firerouter_hostapd@${iface} in future releases
+    await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
     for (const band of ["2.4g", "5g"]) {
       const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
       if (files.includes(`${iface}.conf`)) {
