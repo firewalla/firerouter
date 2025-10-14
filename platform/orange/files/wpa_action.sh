@@ -10,7 +10,7 @@ INTF=$1
 case "$2" in
   CONNECTED)
     redis-cli publish "wpa.connected" "$INTF,$WPA_ID"
-    logger "pse wpa_action.sh: applying current config to apply latest $INTF sta connect event"
+    logger "orange wpa_action.sh: applying current config to apply latest $INTF sta connect event"
     curl -XPOST localhost:8837/v1/config/apply_current_config -o /dev/null || echo "Failed to apply current config to apply latest $INTF sta connect event"
     ;;
   DISCONNECTED)
