@@ -51,8 +51,10 @@ class HostapdPlugin extends Plugin {
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/hostapd`).catch((err) => {});
-    await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
+    await fsp.mkdir(r.getUserConfigFolder() + "/hostapd", {recursive: true}).catch((err) => {});
+    await fsp.mkdir(r.getUserConfigFolder() + "/hostapd/band_2.4g", {recursive: true}).catch((err) => {});
+    await fsp.mkdir(r.getUserConfigFolder() + "/hostapd/band_5g", {recursive: true}).catch((err) => {});
+    await fsp.mkdir(r.getTempFolder(), {recursive: true}).catch((err) => {});
   }
 
   static async installSystemService() {
@@ -80,13 +82,7 @@ class HostapdPlugin extends Plugin {
     // clean up hostapd_cli listener service
     await exec(`sudo systemctl stop firerouter_hostapd_cli@${this.name}`).catch((err) => {});
 
-    const confPath = this._getConfFilePath();
-    await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
-    await fsp.unlink(confPath).catch((err) => {});
-  }
-
-  _getConfFilePath() {
-    return `${r.getUserConfigFolder()}/hostapd/${this.name}.conf`;
+    await platform.disableHostapd(this.name);
   }
 
   async apply() {
@@ -97,7 +93,8 @@ class HostapdPlugin extends Plugin {
     if (!intfPlugin)
       this.fatal(`Cannot find interface plugin ${this.name}`);
     this.subscribeChangeFrom(intfPlugin);
-    if (await intfPlugin.isInterfacePresent() === false) {
+    // if wlan is managed by apc, WLAN interface may be dynamically removed/created by hostapd using multi-bss config
+    if (!platform.isWLANManagedByAPC() && await intfPlugin.isInterfacePresent() === false) {
       this.log.warn(`WLAN interface ${this.name} is not present yet`);
       return;
     }
@@ -224,14 +221,11 @@ class HostapdPlugin extends Plugin {
         parameters[k] = vendorExtra[k]
       })
     }
-
-    const confPath = this._getConfFilePath();
-    await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    await platform.disableHostapd(this.name);
     await exec(`sudo systemctl stop firerouter_hostapd_cli@${this.name}`).catch((err) => {}); // stop the listener first
-    await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
     const iwPhy = await fsp.readFile(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (this.networkConfig.enabled !== false) {
-      await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
+      await platform.enableHostapd(this.name, parameters);
       await exec(`sudo systemctl start firerouter_hostapd_cli@${this.name}`).catch((err) => {}); // start the listener after hostapd is started
       if (!platform.isWLANManagedByAPC()) {
         if (this.networkConfig.bridge) {
@@ -250,7 +244,7 @@ class HostapdPlugin extends Plugin {
               break;
             } else {
               this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
-              await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
+              await platform.enableHostapd(this.name, parameters);
               await exec(`sudo systemctl restart firerouter_hostapd_cli@${this.name}`).catch((err) => {});
               retryCount++;
             }

@@ -17,6 +17,7 @@ const fsp = require('fs').promises;
 const fs = require('fs');
 const Platform = require('../Platform.js');
 const _ = require('lodash');
+const r = require('../../util/firerouter.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
@@ -27,6 +28,9 @@ const rclient = require('../../util/redis_manager.js').getRedisClient();
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 const LOCK_INTF_INDEX = "LOCK_INTF_INDEX";
+const ETH0_BASE = 0xffffa;
+const ETH1_BASE = 0xffff4;
+const WLAN0_BASE = 0x4;
 
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
@@ -104,12 +108,12 @@ class OrangePlatform extends Platform {
     }
     switch (iface) {
       case "eth0": {
-        const hexAddr = await this._getHexOffsetAddress(-1);
-        return hexAddr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
+        const hexAddr = await this._getHexBaseAddress(ETH0_BASE);
+        return hexAddr;
       }
       case "eth1": {
-        const hexAddr = await this._getHexOffsetAddress(-2);
-        return hexAddr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
+        const hexAddr = await this._getHexBaseAddress(ETH1_BASE);
+        return hexAddr;
       }
       default: {
         return await this._getWLANAddress(iface, config.band);
@@ -224,8 +228,8 @@ class OrangePlatform extends Platform {
   async _getWLANAddress(intfName, band) {
     // base is for wlan0, 2.4g uses base + 1, 5g uses base + 2s
     if (intfName === this.getWifiClientInterface()) {
-      const addr = await this._getHexOffsetAddress(0);
-      return addr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
+      const addr = await this._getHexBaseAddress(WLAN0_BASE);
+      return addr;
     } else {
       let offset = 0;
       if (band === "2.4g" || band == "2g") {
@@ -233,7 +237,7 @@ class OrangePlatform extends Platform {
       } else if (band === "5g") {
         offset = 2;
       }
-      let addr = await this._getHexOffsetAddress(offset);
+      let addr = await this._getHexOffsetAddress(WLAN0_BASE, offset);
       const idx = await this._allocateIntfIndex(intfName, band);
       if (idx > 0)
         addr += 0x040000000000 * idx + 0x020000000000;
@@ -241,23 +245,23 @@ class OrangePlatform extends Platform {
     }
   }
 
-  async _getHexOffsetAddress(offset) {
-    const baseAddress = await this._getHexBaseAddress();
+  async _getHexOffsetAddress(base, offset) {
+    const baseAddress = await this._getHexBaseAddress(base);
     const addr = parseInt(baseAddress.split(":").join(""), 16)
     return addr + offset;
   }
 
-  async _getHexBaseAddress() {
-    let baseAddress = await rclient.getAsync("base_mac_address");
+  async _getHexBaseAddress(base) {
+    let baseAddress = await rclient.getAsync(`base_mac_address:${base}`);
     if (!baseAddress) {
-      baseAddress = await exec("sudo xxd -u -p -l 6 -s 4 /dev/mtdblock2").then(result => result.stdout.trim().padStart(12, "0").match(/.{1,2}/g).join(":")).catch(() => {
+      baseAddress = await exec(`sudo xxd -u -p -l 6 -s ${base} /dev/mtdblock2`).then(result => result.stdout.trim().padStart(12, "0").match(/.{1,2}/g).join(":")).catch(() => {
         return null;
       });
       if (!baseAddress || !baseAddress.startsWith("20:6D:31")) {
         log.info(`Base address is invalid: ${baseAddress}, will generate a random base address.`);
         baseAddress = util.generateRandomMacAddress("20:6D:31");
       }
-      await rclient.setAsync("base_mac_address", baseAddress);
+      await rclient.setAsync(`base_mac_address:${base}`, baseAddress);
     }
     return baseAddress;
   }
@@ -360,6 +364,64 @@ class OrangePlatform extends Platform {
 
   getWpaSupplicantNetworkDefaultConfig() {
     return {};
+  }
+
+  async _mergeHostapdConfig(band) {
+    const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
+    const bssConfigs = [];
+    for (const file of files) {
+      if (!file.endsWith(`.conf`)) {
+        continue;
+      }
+      const intf = file.replace(".conf", "");
+      const parameters = await fsp.readFile(`${r.getUserConfigFolder()}/hostapd/band_${band}/${file}`, {encoding: 'utf8'}).then(content => content.split("\n").reduce((result, line) => {
+        const sepIdx = line.indexOf("=");
+        if (sepIdx !== -1) {
+          result[line.slice(0, sepIdx)] = line.slice(sepIdx + 1);
+        }
+        return result;
+      }, {})).catch(() => ({}));
+      delete parameters.interface;
+      if (_.isEmpty(bssConfigs)) {
+        bssConfigs.push(`interface=${intf}`);
+      } else {
+        bssConfigs.push(`bss=${intf}`);
+        bssConfigs.push(`bssid=${await this._getWLANAddress(intf, band)}`);
+      }
+      for (const key of Object.keys(parameters)) {
+        bssConfigs.push(`${key}=${parameters[key]}`);
+      }
+      bssConfigs.push("");
+    }
+    return bssConfigs;
+  }
+
+  async enableHostapd(iface, parameters) {
+    const band = parameters.hw_mode === "g" ? "2.4g" : "5g";
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    const bssConfigs = await this._mergeHostapdConfig(band);
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
+    await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+  }
+
+  async disableHostapd(iface) {
+    // this is just for backward compatibility, we don't need to stop firerouter_hostapd@${iface} in future releases
+    await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
+    for (const band of ["2.4g", "5g"]) {
+      const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
+      if (files.includes(`${iface}.conf`)) {
+        await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`).catch((err) => {});
+        const bssConfigs = await this._mergeHostapdConfig(band);
+        if (_.isEmpty(bssConfigs)) {
+          await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
+          await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
+        } else {
+          await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
+          await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+        }
+        break;
+      }
+    }
   }
 }
 

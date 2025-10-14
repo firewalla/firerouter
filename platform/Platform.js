@@ -304,6 +304,16 @@ class Platform {
       freq_list: APSafeFreqs,
     }
   }
+
+  async enableHostapd(iface, parameters) {
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    await exec(`sudo systemctl restart firerouter_hostapd@${iface}`).catch((err) => {});
+  }
+
+  async disableHostapd(iface) {
+    await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
+    await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`).catch((err) => {});
+  }
 }
 
 module.exports = Platform;
