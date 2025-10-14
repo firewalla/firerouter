@@ -123,7 +123,7 @@ class HostapdPlugin extends Plugin {
 
     Object.assign(parameters, params)
 
-    if (!parameters.channel) {
+    if (!parameters.channel && !platform.isWLANManagedByAPC()) {
       let availableChannels = await HostapdPlugin.getAvailableChannels()
 
       if (parameters.chanlist) {
@@ -233,40 +233,41 @@ class HostapdPlugin extends Plugin {
     if (this.networkConfig.enabled !== false) {
       await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
       await exec(`sudo systemctl start firerouter_hostapd_cli@${this.name}`).catch((err) => {}); // start the listener after hostapd is started
-      if (this.networkConfig.bridge) {
-        // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
-        let addedToBridge = false;
-        let retryCount = 0
-        while (true) {
-          if (retryCount >= 10) {
-            this.log.error(`Failed to add ${this.name} to bridge ${this.networkConfig.bridge}`);
-            break;
-          }
-          await util.delay(1000);
-          addedToBridge = await fsp.access(`/sys/class/net/${this.networkConfig.bridge}/lower_${this.name}`, fs.constants.F_OK).then(() => true).catch((err) => false);
-          if (addedToBridge) {
-            this.log.info(`${this.name} is added to bridge ${this.networkConfig.bridge} by hostapd`);
-            break;
-          } else {
-            this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
-            await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
-            await exec(`sudo systemctl restart firerouter_hostapd_cli@${this.name}`).catch((err) => {});
-            retryCount++;
+      if (!platform.isWLANManagedByAPC()) {
+        if (this.networkConfig.bridge) {
+          // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
+          let addedToBridge = false;
+          let retryCount = 0
+          while (true) {
+            if (retryCount >= 10) {
+              this.log.error(`Failed to add ${this.name} to bridge ${this.networkConfig.bridge}`);
+              break;
+            }
+            await util.delay(1000);
+            addedToBridge = await fsp.access(`/sys/class/net/${this.networkConfig.bridge}/lower_${this.name}`, fs.constants.F_OK).then(() => true).catch((err) => false);
+            if (addedToBridge) {
+              this.log.info(`${this.name} is added to bridge ${this.networkConfig.bridge} by hostapd`);
+              break;
+            } else {
+              this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
+              await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
+              await exec(`sudo systemctl restart firerouter_hostapd_cli@${this.name}`).catch((err) => {});
+              retryCount++;
+            }
           }
         }
-        if (parameters.ap_isolate) {
-          await exec(`echo 1 | sudo tee /sys/class/net/${this.name}/brport/hairpin_mode`).catch((err) => {});
-        }
+        if (iwPhy)
+          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
+            this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+          });
       }
-      if (iwPhy)
-        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
-          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
-        });
     } else {
-      if (iwPhy)
-        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
-          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
-        });
+      if (!platform.isWLANManagedByAPC()) {
+        if (iwPhy)
+          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
+            this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+          });
+      }
     }
   }
 
