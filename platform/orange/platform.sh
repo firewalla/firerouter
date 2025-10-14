@@ -49,3 +49,7 @@ function get_wpa_supplicant_path {
 function get_wpa_cli_path {
   echo "wpa_cli"
 }
+
+function get_wpa_action_script_path {
+  echo "${FW_PLATFORM_CUR_DIR}/files/wpa_action.sh"
+}
