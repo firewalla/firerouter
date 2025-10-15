@@ -4,5 +4,6 @@ After=network.target
 
 [Service]
 Restart=always
+RestartSec=3
 ExecStart=/bin/bash %HOSTAPD_DIRECTORY%/hostapd.sh %i
 RemainAfterExit=true

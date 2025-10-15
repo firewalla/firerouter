@@ -48,6 +48,10 @@ function get_hostapd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
 }
 
+function get_hostapd_options {
+  echo ""
+}
+
 function get_wpa_action_script_path {
   echo "/home/pi/firerouter/scripts/wpa_action.sh"
 }
