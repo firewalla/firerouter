@@ -10,6 +10,11 @@ function get_hostapd_path {
   echo "/usr/local/bin/hostapd"
 }
 
+function get_hostapd_options {
+  # orange supports hostapd -s option to log output to syslog instead of stdout
+  echo "-s"
+}
+
 function get_hostapd_cli_path {
   echo "/usr/sbin/hostapd_cli"
 }
