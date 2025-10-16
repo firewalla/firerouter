@@ -248,45 +248,119 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async getEssid() {
-    const carrier = await this.carrierState();
-    const operstate = await this.operstateState();
-    let essid = null;
-    // iwgetid will still return the essid during authentication process, when operstate is dormant
-    // need to make sure the authentication is passed and operstate is up
-    if (carrier === "1" && operstate === "up") {
-      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
-      if (iwgetidAvailable) {
-        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-      } else {
-        essid = await exec(`iw dev ${this.name} info | grep "ssid "`)
-          .then(result => {
-            const line = result.stdout.trim();
-            return line.substring(line.indexOf("ssid ") + 5);
-          }).catch(() => null);
-        if (essid && essid.length)
-          essid = util.parseEscapedString(essid);
-      }
-    }
-    return essid;
+    const wpaStatus = await this.getWpaStatus();
+    return wpaStatus.ssid;
   }
 
-  async getFrequency() {
-    const result = await exec(`iwconfig ${this.name} | grep Frequency | tr -s ' ' | cut -d' ' -f3`).catch(() => {})
-    if (!result) return null
-    return Number(result.stdout.substring(10)) * 1000
+  async getWpaStatus() {
+    // wpa_cli is interoperable on both station and ap interface
+    const lines = await exec(`sudo ${await platform.getWpaCliBinPath()} -p ${this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`} -i ${this.name} status`)
+      .then(result => result.stdout.trim().split('\n')).catch(() => []);
+    const status = {};
+    /*
+      for station interface:
+      bssid=20:6d:31:61:01:98
+      freq=2437
+      ssid=TEST
+      id=0
+      mode=station
+      wifi_generation=4
+      pairwise_cipher=CCMP
+      group_cipher=CCMP
+      key_mgmt=WPA2-PSK
+      wpa_state=COMPLETED
+      ip_address=192.168.242.60
+      address=20:6d:31:fa:2a:90
+      uuid=23c32869-798e-53d8-bfc2-7d611cfc0e47
+      ieee80211ac=1
+
+      for ap interface:
+      state=ENABLED
+      phy=phy0
+      freq=5180
+      num_sta_non_erp=0
+      num_sta_no_short_slot_time=0
+      num_sta_no_short_preamble=0
+      olbc=0
+      num_sta_ht_no_gf=0
+      num_sta_no_ht=0
+      num_sta_ht_20_mhz=0
+      num_sta_ht40_intolerant=0
+      olbc_ht=1
+      ht_op_mode=0x11
+      hw_mode=a
+      country_code=US
+      country3=0x20
+      cac_time_seconds=60
+      cac_time_left_seconds=N/A
+      channel=36
+      edmg_enable=0
+      edmg_channel=0
+      secondary_channel=1
+      ieee80211n=1
+      ieee80211ac=1
+      ieee80211ax=1
+      ieee80211be=1
+      beacon_int=100
+      dtim_period=2
+      eht_oper_chwidth=2
+      eht_oper_centr_freq_seg0_idx=50
+      he_oper_chwidth=2
+      he_oper_centr_freq_seg0_idx=50
+      he_oper_centr_freq_seg1_idx=0
+      vht_oper_chwidth=2
+      vht_oper_centr_freq_seg0_idx=50
+      vht_oper_centr_freq_seg1_idx=0
+      vht_caps_info=338979f6
+      rx_vht_mcs_map=fffa
+      tx_vht_mcs_map=fffa
+      ht_caps_info=09ef
+      ht_mcs_bitmask=ffff0000000000000000
+      supported_rates=0c 12 18 24 30 48 60 6c
+      max_txpower=23
+      bss[0]=wlan5g_6f5b51
+      bssid[0]=20:6d:31:80:00:22
+      ssid[0]=o6-5g
+      num_sta[0]=0
+      bss[1]=wlan5g_c5144d
+      bssid[1]=26:6d:31:80:00:22
+      ssid[1]=o6-5g-2
+      num_sta[1]=0
+    */
+    let bssIndex = 0;
+    for (const line of lines) {
+      const sepIndex = line.indexOf('=');
+      if (sepIndex === -1) continue;
+      const key = line.substring(0, sepIndex);
+      const value = line.substring(sepIndex + 1);
+      switch (key) {
+        case "freq":
+          status.freq = Number(value);
+          break;
+        default:
+          status[key] = value;
+      }
+      if (key.startsWith('bss[')) {
+        bssIndex = Number(key.substring(4, key.indexOf(']')));
+      }
+    }
+    if (!this.isWAN())
+      status.ssid = status[`ssid[${bssIndex}]`];
+    return status;
   }
 
   async state() {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
-    const essid = await this.getEssid();
+    const wpaStatus = await this.getWpaStatus();
+    const essid = wpaStatus.ssid;
     state.essid = essid;
     state.carrier = (this.isWAN()
       ? await this.readyToConnect().catch(() => false)
       : state.essid && state.carrier
     ) ? 1 : 0
     if (state.carrier && state.essid) {
-      state.freq = await this.getFrequency()
+      state.freq = wpaStatus.freq
       state.channel = util.freqToChannel(state.freq)
     }
     state.vendor = vendor;
