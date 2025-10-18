@@ -28,8 +28,8 @@ const rclient = require('../../util/redis_manager.js').getRedisClient();
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 const LOCK_INTF_INDEX = "LOCK_INTF_INDEX";
-const ETH0_BASE = 0xffffa;
-const ETH1_BASE = 0xffff4;
+const ETH0_BASE = 0xffff4;
+const ETH1_BASE = 0xffffa;
 const WLAN0_BASE = 0x4;
 
 let errCounter = 0;
