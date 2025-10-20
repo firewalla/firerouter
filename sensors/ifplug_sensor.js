@@ -83,7 +83,7 @@ class IfPlugSensor extends Sensor {
       });
     }, 60000)
 
-    sclient.on("message", (channel, message) => {
+    sclient.on("message", async(channel, message) => {
       switch (channel) {
         case "ifup": {
           const iface = message;
@@ -102,9 +102,10 @@ class IfPlugSensor extends Sensor {
           }
           // filter out VPN interface
           if (intfPlugin && intfPlugin.constructor.name === "PhyInterfacePlugin") {
+            const labels = {"current_speed": await intfPlugin.linkSpeed()};
             ifStates[iface] = 1;
             this.log.info("ifStates:",ifStates);
-            era.addStateEvent(EventConstants.EVENT_ETHER_STATE, iface, 0);
+            era.addStateEvent(EventConstants.EVENT_ETHER_STATE, iface, 0, labels);
           }
           this.toggleLedNormalVisible().catch((err) => {
             this.log.error("Failed to toggle led visible", err.message);

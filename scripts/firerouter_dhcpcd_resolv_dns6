@@ -109,7 +109,7 @@ add_resolv_conf()
 	done
 
 	echo "${conf}" > $resolv_conf_file
-	new_dns6_md5=`md5sum $resolv_conf_file  | cut -d" " -f1`
+	new_dns6_md5=`cat $resolv_conf_file | egrep -v -e ^# | md5sum | cut -d" " -f1`
 	if [ "$dns6_md5" != "$new_dns6_md5" ];then
 		redis-cli -n 1 publish "dhcpcd6.dns_change" "$interface"
 	fi
@@ -135,7 +135,7 @@ remove_resolv_conf()
 md5_resolv_conf()
 {
 	if [ -s $resolv_conf_file ]; then
-		dns6_md5=`md5sum $resolv_conf_file  | cut -d" " -f1`
+		dns6_md5=`cat $resolv_conf_file | egrep -v -e ^# | md5sum | cut -d" " -f1`
 	fi
 }
 
