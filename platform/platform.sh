@@ -80,6 +80,10 @@ function remap_eth_interfaces {
   return
 }
 
+function before_firereset {
+  return
+}
+
 case "$UNAME" in
   "x86_64")
     if [[ -e /etc/firewalla-release ]]; then
