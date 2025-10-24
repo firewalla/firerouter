@@ -35,6 +35,8 @@ const WLAN0_BASE = 0x4;
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
+const hostapdRestartTasks = {};
+
 class OrangePlatform extends Platform {
   getName() {
     return "orange";
@@ -391,9 +393,7 @@ class OrangePlatform extends Platform {
   async enableHostapd(iface, parameters) {
     const band = parameters.hw_mode === "g" ? "2.4g" : "5g";
     await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
-    const bssConfigs = await this._mergeHostapdConfig(band);
-    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
-    await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+    this.scheduleHostapdRestart(band);
   }
 
   async disableHostapd(iface) {
@@ -403,17 +403,29 @@ class OrangePlatform extends Platform {
       const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
       if (files.includes(`${iface}.conf`)) {
         await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`).catch((err) => {});
-        const bssConfigs = await this._mergeHostapdConfig(band);
-        if (_.isEmpty(bssConfigs)) {
-          await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
-          await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
-        } else {
-          await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
-          await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
-        }
+        this.scheduleHostapdRestart(band);
         break;
       }
     }
+  }
+
+  scheduleHostapdRestart(band) {
+    // use a timer to avoid restarting hostapd too frequently
+    if (hostapdRestartTasks[band]) {
+      clearTimeout(hostapdRestartTasks[band]);
+    }
+    hostapdRestartTasks[band] = setTimeout(async () => {
+      const bssConfigs = await this._mergeHostapdConfig(band);
+      if (_.isEmpty(bssConfigs)) {
+        await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
+        log.info(`Removed hostapd config on band ${band}, stopping hostapd service`);
+        await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
+      } else {
+        await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
+        log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
+        await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+      }
+    }, 3000);
   }
 }
 
