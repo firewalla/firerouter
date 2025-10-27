@@ -74,7 +74,7 @@ class WlanConfUpdateSensor extends Sensor {
             return;
           }
           currentConfig.ncid = util.generateUUID();
-          log.info("New ncid generated", currentConfig.ncid);
+          this.log.info("New ncid generated", currentConfig.ncid);
           await ncm.saveConfig(currentConfig, false);
         }
       }
