@@ -80,17 +80,23 @@ class RoutingPlugin extends Plugin {
           if (!af || af == 4) {
             // remove DNS specific routes
             if (_.isObject(this._dnsRoutes)) {
-              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]).filter(i => i.af == 4))
-                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
-              this._dnsRoutes = Object.entries(this._dnsRoutes).reduce((routes, item) => { if (item[1].af == 6) routes[item[0]] = item[1]; return routes }, {});
+              for (const inf of Object.keys(this._dnsRoutes)) {
+                for (const dnsRoute of this._dnsRoutes[inf].filter(i => i.af == 4)) {
+                  await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
+                }
+                this._dnsRoutes[inf] = this._dnsRoutes[inf].filter(i => i.af != 4);
+              }
             } else { this._dnsRoutes = {} }
           }
           if (!af || af == 6) {
             // remove DNS specific routes
             if (_.isObject(this._dnsRoutes)) {
-              for (const dnsRoute of Object.keys(this._dnsRoutes).map(key => this._dnsRoutes[key]).filter(i => i.af == 6))
-                await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
-              this._dnsRoutes = Object.entries(this._dnsRoutes).reduce((routes, item) => { if (item[1].af != 6) routes[item[0]] = item[1]; return routes }, {});
+              for (const inf of Object.keys(this._dnsRoutes)) {
+                for (const dnsRoute of this._dnsRoutes[inf].filter(i => i.af == 6)) {
+                  await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName :"main", dnsRoute.af).catch((err) => { });
+                }
+                this._dnsRoutes[inf] = this._dnsRoutes[inf].filter(i => i.af != 6);
+              }
             } else {this._dnsRoutes = {}}
           }
           break;
@@ -541,8 +547,8 @@ class RoutingPlugin extends Plugin {
                     await this.upsertRouteToTable(dns6IP, gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => {
                       this.log.error(`Failed to add route ipv6 to ${routing.RT_GLOBAL_DEFAULT} for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
                     });
-                     // update all dns routes via the same interface but with new metrics in main table
-                     await this.upsertRouteToTable(dns6IP, gw6, viaIntf, "main", metric, 6).then(() => {
+                    // update all dns routes via the same interface but with new metrics in main table
+                    await this.upsertRouteToTable(dns6IP, gw6, viaIntf, "main", metric, 6).then(() => {
                       this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, "main", 6);
                     }).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
@@ -685,12 +691,12 @@ class RoutingPlugin extends Plugin {
             }
           }
           if (multiPathDesc.length > 0) {
-            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 4, ...multiPathDesc).catch((err) => { });
-            await routing.addMultiPathRouteToTable("default", "main", 4, ...multiPathDesc).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 4, 1, ...multiPathDesc).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", "main", 4, 1, ...multiPathDesc).catch((err) => { });
           }
           if (multiPathDesc6.length > 0) {
-            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 6, ...multiPathDesc6).catch((err) => { });
-            await routing.addMultiPathRouteToTable("default", "main", 6, ...multiPathDesc6).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", routing.RT_GLOBAL_DEFAULT, 6, 1, ...multiPathDesc6).catch((err) => { });
+            await routing.addMultiPathRouteToTable("default", "main", 6, 1, ...multiPathDesc6).catch((err) => { });
           }
 
           break;
