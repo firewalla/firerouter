@@ -30,6 +30,7 @@ const lock = new AsyncLock();
 const LOCK_INTF_INDEX = "LOCK_INTF_INDEX";
 const ETH0_BASE = 0xffff4;
 const ETH1_BASE = 0xffffa;
+const LOCK_ETHERNET_RESET = "LOCK_ETHERNET_RESET";
 const WLAN0_BASE = 0x4;
 
 let errCounter = 0;
@@ -90,6 +91,48 @@ class OrangePlatform extends Platform {
     await this.setEthernetOffload("eth1","sg","scatter-gather","on");
     await this.setEthernetOffload("eth1","tso","TCP segmentation offload","on");
     await this.setEthernetOffload("eth1","gso","generic segmentation offload","on");
+  }
+
+  async resetEthernet() {
+    await lock.acquire(LOCK_ETHERNET_RESET, async () => {
+      // Check if mtketh_reset file exists, check timestamp, and run reset if more than 15 minutes have passed
+      const mtkethResetFile = "/dev/shm/mtketh_reset";
+      const currentTime = Math.floor(Date.now() / 1000); // current time in seconds
+      const coolDownSeconds = 30 * 60;
+
+      let shouldReset = false;
+      const fileExists = await fsp.access(mtkethResetFile, fs.constants.F_OK).then(() => true).catch(() => false);
+
+      if (!fileExists) {
+        shouldReset = true;
+      } else {
+        // Read timestamp from file
+        const prevTs = await fsp.readFile(mtkethResetFile, {encoding: "utf8"}).catch(() => null);
+        if (prevTs) {
+          const lastResetTime = parseInt(prevTs.trim(), 10);
+          if (!isNaN(lastResetTime) && (currentTime - lastResetTime) > coolDownSeconds) {
+            shouldReset = true;
+          }
+        } else {
+          // If we can't read the file, reset anyway
+          shouldReset = true;
+        }
+      }
+
+      if (shouldReset) {
+        log.info("Resetting ethernet");
+        // these commands will trigger workqueue work to reset the dma ring
+        await exec(`sudo bash -c "echo 2 > /sys/kernel/debug/mtketh/reset; echo 1 > /sys/kernel/debug/mtketh/reset"`).catch((err) => {
+          log.error("Failed to run mtketh reset commands", err.message);
+        });
+        // Record current timestamp in the file
+        await fsp.writeFile(mtkethResetFile, currentTime.toString()).catch((err) => {
+          log.error("Failed to write mtketh_reset file", err.message);
+        });
+      }
+    }).catch((err) => {
+      log.error("Failed to reset ethernet", err.message);
+    });
   }
 
   getWifiClientInterface() {

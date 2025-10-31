@@ -104,6 +104,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     });
     return brifs;
   }
+
+  isEthernetBasedInterface() {
+    return true;
+  }
 }
 
 module.exports = BridgeInterfacePlugin;

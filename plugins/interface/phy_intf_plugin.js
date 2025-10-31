@@ -64,6 +64,10 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     return 1500;
   }
 
+  isEthernetBasedInterface() {
+    return true;
+  }
+
 }
 
 module.exports = PhyInterfacePlugin;
