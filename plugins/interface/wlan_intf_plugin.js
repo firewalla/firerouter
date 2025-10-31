@@ -35,25 +35,6 @@ const _ = require('lodash');
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
-const APSafeFreqs = [
-  2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
-  5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
-]
-
-const defaultGlobalConfig = {
-  bss_expiration_age: 630,
-  bss_expiration_scan_count: 5,
-
-  // sets freq_list globally limits the frequencies being scaned
-  freq_list: APSafeFreqs,
-  pmf: 1,
-}
-
-const defaultNetworkConfig = {
-  // sets freq_list again on each network limits the frequencies being used for connection
-  freq_list: APSafeFreqs,
-}
-
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
@@ -180,7 +161,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
 
-    const globalConfig = Object.assign({}, defaultGlobalConfig)
+    const globalConfig = Object.assign({}, platform.getWpaSupplicantGlobalDefaultConfig())
     const iwPhy = await fs.readFileAsync(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (iwPhy) {
        // use exponential scan only if WWLAN is configured
@@ -204,7 +185,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     for (const network of networks) {
       entries.push("network={");
-      const networkConfig = Object.assign({}, defaultNetworkConfig, network)
+      const networkConfig = Object.assign({}, platform.getWpaSupplicantNetworkDefaultConfig(), network)
       for (const key in networkConfig) {
         const value = await util.generateWpaSupplicantConfig(key, networkConfig);
         entries.push(`\t${key}=${value}`);

@@ -21,6 +21,11 @@ const r = require('../util/firerouter')
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
 
+const APSafeFreqs = [
+  2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
+  5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
+]
+
 class Platform {
   getName() {
   }
@@ -280,6 +285,24 @@ class Platform {
   }
 
   getEffectivePowerMode(pdoInfo, configuredPowerMode) {
+  }
+
+  getWpaSupplicantGlobalDefaultConfig() {
+    return {
+      bss_expiration_age: 630,
+      bss_expiration_scan_count: 5,
+
+      // sets freq_list globally limits the frequencies being scaned
+      freq_list: APSafeFreqs,
+      pmf: 1,
+    }
+  }
+
+  getWpaSupplicantNetworkDefaultConfig() {
+    return {
+      // sets freq_list again on each network limits the frequencies being used for connection
+      freq_list: APSafeFreqs,
+    }
   }
 
   async enableHostapd(iface, parameters) {

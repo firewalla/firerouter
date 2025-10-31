@@ -360,6 +360,14 @@ class OrangePlatform extends Platform {
     return configuredPowerMode || constants.POWER_MODE_PERFORMANCE;
   }
 
+  getWpaSupplicantGlobalDefaultConfig() {
+    return {};
+  }
+
+  getWpaSupplicantNetworkDefaultConfig() {
+    return {};
+  }
+
   async _mergeHostapdConfig(band) {
     const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
     const bssConfigs = [];
