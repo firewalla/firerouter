@@ -57,6 +57,10 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
   async getSubIntfs() {
     return [this.networkConfig.intf];
   }
+
+  isEthernetBasedInterface() {
+    return true;
+  }
 }
 
 module.exports = VLANInterfacePlugin;

@@ -167,6 +167,9 @@ class Platform {
   async configEthernet() {
   }
 
+  async resetEthernet() {
+  }
+
   async overrideWLANKernelModule() {
   }
 

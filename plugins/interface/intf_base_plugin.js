@@ -1718,6 +1718,11 @@ class InterfaceBasePlugin extends Plugin {
           currentStatus.successCount++;
           currentStatus.failureCount = 0;
         } else {
+          if (this.isEthernetBasedInterface()) {
+            platform.resetEthernet().catch((err) => {
+              this.log.error(`Failed to reset ethernet on ${this.name}`, err.message);
+            });
+          }
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
           const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
@@ -1773,6 +1778,10 @@ class InterfaceBasePlugin extends Plugin {
   async publishWANStateChange(changeDesc) {
     this.log.info("publish WAN state change", changeDesc);
     await pclient.publishAsync(Message.MSG_FR_WAN_STATE_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  isEthernetBasedInterface() {
+    return false;
   }
 }
 
