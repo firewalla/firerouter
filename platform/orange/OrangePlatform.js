@@ -94,6 +94,8 @@ class OrangePlatform extends Platform {
   }
 
   async resetEthernet() {
+    // unnecessary at the moment
+    return;
     await lock.acquire(LOCK_ETHERNET_RESET, async () => {
       // Check if mtketh_reset file exists, check timestamp, and run reset if more than 15 minutes have passed
       const mtkethResetFile = "/dev/shm/mtketh_reset";
