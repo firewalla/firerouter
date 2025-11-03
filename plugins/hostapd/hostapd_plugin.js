@@ -98,6 +98,10 @@ class HostapdPlugin extends Plugin {
       this.log.warn(`WLAN interface ${this.name} is not present yet`);
       return;
     }
+    // primary interface will be used as main interface in hostapd config, others will be bss interfaces
+    if (_.get(intfPlugin.networkConfig, "primary", false)) {
+      parameters.primary = true;
+    }
     if (this.networkConfig.bridge) {
       const bridgeIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.bridge);
       if (!bridgeIntfPlugin)
