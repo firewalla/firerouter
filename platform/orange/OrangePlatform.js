@@ -416,6 +416,7 @@ class OrangePlatform extends Platform {
   async _mergeHostapdConfig(band) {
     const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
     const bssConfigs = [];
+    const interfaceConfigs = [];
     for (const file of files) {
       if (!file.endsWith(`.conf`)) {
         continue;
@@ -429,18 +430,24 @@ class OrangePlatform extends Platform {
         return result;
       }, {})).catch(() => ({}));
       delete parameters.interface;
-      if (_.isEmpty(bssConfigs)) {
-        bssConfigs.push(`interface=${intf}`);
+      let isPrimary = false;
+      if (parameters.primary) {
+        isPrimary = true;
+        delete parameters.primary;
+      }
+      const configs = isPrimary ? interfaceConfigs : bssConfigs;
+      if (isPrimary) {
+        configs.push(`interface=${intf}`);
       } else {
-        bssConfigs.push(`bss=${intf}`);
-        bssConfigs.push(`bssid=${await this._getWLANAddress(intf, band)}`);
+        configs.push(`bss=${intf}`);
+        configs.push(`bssid=${await this._getWLANAddress(intf, band)}`);
       }
       for (const key of Object.keys(parameters)) {
-        bssConfigs.push(`${key}=${parameters[key]}`);
+        configs.push(`${key}=${parameters[key]}`);
       }
-      bssConfigs.push("");
+      configs.push("");
     }
-    return bssConfigs;
+    return interfaceConfigs.concat(bssConfigs);
   }
 
   async enableHostapd(iface, parameters) {
