@@ -7,7 +7,12 @@ function get_pppoe_rps_cpus {
 }
 
 function get_hostapd_path {
-  echo "/usr/local/bin/hostapd"
+  # backward compatibility for old hostapd binary
+  if [[ -e /usr/local/bin/hostapd ]]; then
+    echo "/usr/local/bin/hostapd"
+  else
+    echo "/usr/sbin/hostapd"
+  fi
 }
 
 function get_hostapd_options {
