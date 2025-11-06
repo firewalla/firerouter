@@ -612,7 +612,11 @@ class NetworkConfigManager {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
         const iface = ifaces[name];
-        const wanType = iface.meta && iface.meta.type;
+        const meta = iface.meta || {};
+        if (!meta.uuid)
+          meta.uuid = uuid.v4();
+        iface.meta = meta;
+        const wanType = meta.type;
         if (wanType === "wan")
           wanIntfs.push(name);
         if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
@@ -661,15 +665,38 @@ class NetworkConfigManager {
 
   async tryApplyConfig(config, dryRun = false) {
     const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
-
-    const errors = await ns.setup(config, dryRun);
+    // convert new config to integrated AP config
+    const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
+      log.error(`Failed to convert effective config`, err.message);
+      return config;
+    });
+    const errors = await ns.setup(convertedConfig, dryRun);
     if (errors && errors.length != 0) {
       log.error("Failed to apply network config, rollback to previous setup", errors);
-      await ns.setup(currentConfig).catch((err) => {
+      // convert current config to integrated AP config
+      const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
+        log.error(`Failed to convert effective config`, err.message);
+        return currentConfig;
+      });
+      await ns.setup(convertedCurrentConfig).catch((err) => {
         log.error("Failed to rollback network config", err);
       });
     }
     return errors;
+  }
+
+  async convertIntegratedAPConfig(config) {
+    if (!platform.isWLANManagedByAPC()) {
+      return config;
+    }
+    const fwapcExecPath = r.getFwapcExecPath();
+    const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
+    await fsp.writeFile(tempFile, JSON.stringify(config));
+    const response = await exec(`${fwapcExecPath} ciap ${tempFile}`);
+    const data = JSON.parse(response.stdout);
+    await fsp.unlink(tempFile).catch((err) => {});
+    log.debug(`Converted effective config`, data);
+    return data;
   }
 
   async validateNcid(networkConfig, inTransaction = false, skipNcid = false) {

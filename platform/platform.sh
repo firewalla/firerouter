@@ -48,6 +48,18 @@ function get_hostapd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
 }
 
+function get_hostapd_options {
+  echo ""
+}
+
+function get_wpa_action_script_path {
+  echo "/home/pi/firerouter/scripts/wpa_action.sh"
+}
+
+function get_hostapd_cli_path {
+  echo ""
+}
+
 function get_wpa_supplicant_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
 }
@@ -65,6 +77,10 @@ function record_eth_interfaces {
 }
 
 function remap_eth_interfaces {
+  return
+}
+
+function before_firereset {
   return
 }
 
@@ -108,6 +124,10 @@ case "$UNAME" in
       purple)
         source $FW_PLATFORM_DIR/purple/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/purple
+        ;;
+      orange)
+        source $FW_PLATFORM_DIR/orange/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/orange
         ;;
       *)
         unset FW_PLATFORM_CUR_DIR

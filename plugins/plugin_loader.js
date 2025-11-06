@@ -116,6 +116,11 @@ function _isConfigEqual(c1, c2) {
     delete c1Copy["extra"];
   if (c2Copy.hasOwnProperty("extra"))
     delete c2Copy["extra"];
+  if (!_.has(c1Copy, ["meta", "type"]) && !_.has(c2Copy, ["meta", "type"])) {
+    // ignore meta if both configs have no type, i.e., different uuids in interface configs are treated as the same config in this case
+    delete c1Copy.meta;
+    delete c2Copy.meta;
+  }
 
   return _.isEqual(c1Copy, c2Copy);
 }
