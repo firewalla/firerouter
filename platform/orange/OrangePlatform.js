@@ -33,12 +33,51 @@ const ETH1_BASE = 0xffffa;
 const LOCK_ETHERNET_RESET = "LOCK_ETHERNET_RESET";
 const WLAN0_BASE = 0x4;
 
+
+LOCK_AP_STATE_AUTOMATA = "LOCK_AP_STATE_AUTOMATA";
+const EVENT_WPA_AUTHENTICATING = "EVENT_WPA_AUTHENTICATING";
+const EVENT_WPA_DISCONNECTED = "EVENT_WPA_DISCONNECTED";
+const EVENT_WPA_CONNECTED = "EVENT_WPA_CONNECTED";
+const EVENT_AP_SILENCE_TIMEOUT = "EVENT_AP_SILENCE_TIMEOUT";
+
+const STATE_AP_SILENCE = "STATE_AP_SILENCE";
+const STATE_NORMAL = "STATE_NORMAL";
+
+const BAND_24G = "2.4g";
+const BAND_5G = "5g";
+
+const LOG_TAG_STA_AP = "[STA_AP]";
+
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
 const hostapdRestartTasks = {};
 
 class OrangePlatform extends Platform {
+
+  constructor() {
+    super();
+    this.apStateAutomata = {wpaSupplicantPID: null, bands: {}};
+    this.apStateAutomata.bands[BAND_24G] = {
+      state: STATE_NORMAL,
+      silenceStartTs: null,
+      silenceEndTs: null,
+      attemptedSSIDs: new Set(),
+    };
+    this.apStateAutomata.bands[BAND_5G] = {
+      state: STATE_NORMAL,
+      silenceStartTs: null,
+      silenceEndTs: null,
+      attemptedSSIDs: new Set(),
+    }
+    this.apPause = {};
+    this.apStateAutomataTask = setInterval(() => {
+      this.checkAPStateAutomata().catch((err) => {
+        log.error("Failed to check AP state automata", err.message);
+      });
+    }, 2000);
+  }
+
   getName() {
     return "orange";
   }
@@ -451,7 +490,7 @@ class OrangePlatform extends Platform {
   }
 
   async enableHostapd(iface, parameters) {
-    const band = parameters.hw_mode === "g" ? "2.4g" : "5g";
+    const band = parameters.hw_mode === "g" ? BAND_24G : BAND_5G;
     await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
     this.scheduleHostapdRestart(band);
   }
@@ -459,7 +498,7 @@ class OrangePlatform extends Platform {
   async disableHostapd(iface) {
     // this is just for backward compatibility, we don't need to stop firerouter_hostapd@${iface} in future releases
     await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
-    for (const band of ["2.4g", "5g"]) {
+    for (const band of [BAND_24G, BAND_5G]) {
       const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
       if (files.includes(`${iface}.conf`)) {
         await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}/${iface}.conf`).catch((err) => {});
@@ -482,10 +521,212 @@ class OrangePlatform extends Platform {
         await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
       } else {
         await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
-        log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
-        await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+        if (this.apPause[band]) {
+          log.info(`AP on band ${band} is paused, stop it`);
+          await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
+          return;
+        } else {
+          log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
+          await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+        }
       }
-    }, 3000);
+    }, 2000);
+  }
+
+  pauseAP(band) {
+    this.apPause[band] = true;
+    this.scheduleHostapdRestart(band);
+  }
+
+  resumeAP(band) {
+    delete this.apPause[band];
+    this.scheduleHostapdRestart(band);
+  }
+
+  async processWpaSupplicantLog(line, config) {
+    // Nov  5 14:57:37 localhost wpa_supplicant[1562300]: wlan0: SME: Trying to authenticate with 20:6d:31:fa:2a:91 (SSID='xxxxxxx' freq=5765 MHz)
+    if (line.includes('SME: Trying to authenticate with')) {
+      const match = line.match(/wpa_supplicant(\[[0-9]+\]): wlan0: SME: Trying to authenticate with ([0-9a-f:]+) \(SSID='([^']+)' freq=([0-9]+) MHz\)/);
+      if (match) {
+        const pid = match[1];
+        const bssid = match[2];
+        const ssid = match[3];
+        const freq = Number(match[4]);
+        this.onEvent(EVENT_WPA_AUTHENTICATING, {pid, ssid, freq, bssid});
+      }
+      return;
+    }
+    // Nov  5 00:38:47 localhost wpa_supplicant[3326147]: wlan0: CTRL-EVENT-CONNECTED - Connection to 20:6d:31:61:01:99 completed [id=0 id_str=]
+    if (line.includes('CTRL-EVENT-CONNECTED - Connection to')) {
+      const match = line.match(/wpa_supplicant(\[[0-9]+\]): wlan0: CTRL-EVENT-CONNECTED - Connection to ([0-9a-f:]+) completed \[id=([0-9]+) id_str=\]/);
+      if (match) {
+        const pid = match[1];
+        const bssid = match[2];
+        const id = match[3];
+        this.onEvent(EVENT_WPA_CONNECTED, {pid, bssid, id});
+      }
+      return;
+    }
+  }
+
+  async onEvent(event, data) {
+    await lock.acquire(LOCK_AP_STATE_AUTOMATA, async () => {
+      switch (event) {
+        case EVENT_WPA_AUTHENTICATING: {
+          // wpa supplicant pid is changed, maybe config is updated
+          const {pid, bssid, ssid, freq} = data;
+          const channel = util.freqToChannel(freq);
+          if (!channel) {
+            log.error(`${LOG_TAG_STA_AP} Failed to convert frequency ${freq} to channel`);
+            return;
+          }
+          const band = freq >= 5000 ? BAND_5G : BAND_24G;
+          if (pid !== this.apStateAutomata.wpaSupplicantPID) {
+            log.info(`${LOG_TAG_STA_AP} wpa_supplicant pid changed, clearing attempted SSIDs cache`);
+            this.apStateAutomata.bands[BAND_24G].attemptedSSIDs.clear();
+            this.apStateAutomata.bands[BAND_5G].attemptedSSIDs.clear();
+          }
+          this.apStateAutomata.wpaSupplicantPID = pid;
+          const stateAutomata = this.apStateAutomata.bands[band];
+          switch (stateAutomata.state) {
+            case STATE_AP_SILENCE: {
+              if (!stateAutomata.attemptedSSIDs.has(`${ssid}`)) {
+                // extend silence period by 30 seconds for each new SSID authentication attempt
+                log.info(`${LOG_TAG_STA_AP} Extending silence period on band ${band} by 30 seconds for SSID ${ssid} authentication attempt`);
+                stateAutomata.silenceEndTs = Date.now() + 30000;
+              }
+              stateAutomata.attemptedSSIDs.add(`${ssid}`);
+              break;
+            }
+            case STATE_NORMAL: {
+              const pl = require('../../plugins/plugin_loader.js');
+              const hostapds = pl.getPluginInstances("hostapd");
+              if (_.isEmpty(hostapds)) {
+                return;
+              }
+              if (stateAutomata.attemptedSSIDs.has(`${ssid}`)) {
+                log.info(`${LOG_TAG_STA_AP} SSID ${ssid} has been attempted on band ${band} before, skip it to avoid consecutive failed attempts`);
+                return;
+              }
+              log.info(`${LOG_TAG_STA_AP} New authentication attempt for SSID ${ssid} on band ${band} with channel ${channel}, checking if AP is configured on the same channel`);
+              for (const key of Object.keys(hostapds)) {
+                const hostapd = hostapds[key];
+                const parameters = _.get(hostapd, 'networkConfig.params', {});
+                if (parameters.channel === channel) {
+                  log.info(`${LOG_TAG_STA_AP} AP band ${band} is already configured on channel ${channel}, same as SSID ${ssid}`);
+                  return;
+                }
+              }
+              log.info(`${LOG_TAG_STA_AP} AP band ${band} is not configured on the same channel ${channel} as SSID ${ssid}, entering silence period`);
+              stateAutomata.state = STATE_AP_SILENCE;
+              stateAutomata.silenceStartTs = Date.now();
+              stateAutomata.silenceEndTs = Date.now() + 30000;
+              this.pauseAP(band);
+              break;
+            }
+          }
+          break;
+        }
+        case EVENT_WPA_CONNECTED: {
+          const {pid, bssid} = data;
+          log.info(`${LOG_TAG_STA_AP} WPA connection established, clearing attempted SSIDs cache`);
+          this.apStateAutomata.bands[BAND_24G].attemptedSSIDs.clear();
+          this.apStateAutomata.bands[BAND_5G].attemptedSSIDs.clear();
+          this.apStateAutomata.wpaSupplicantPID = pid;
+
+          for (const band of [BAND_24G, BAND_5G]) {
+            const stateAutomata = this.apStateAutomata.bands[band];
+            if (stateAutomata.state === STATE_AP_SILENCE) {
+              log.info(`${LOG_TAG_STA_AP} WPA connection established, silence period on band ${band} will end in 5 seconds`);
+              stateAutomata.silenceEndTs = Date.now() + 5000;
+            }
+          }
+          break;
+        }
+      }
+    }).catch((err) => {
+      log.error(`${LOG_TAG_STA_AP} Failed to process AP state automata event`, err.message);
+    });
+  }
+
+  async checkAPStateAutomata() {
+    await lock.acquire(LOCK_AP_STATE_AUTOMATA, async () => {
+      const ncm = require('../../core/network_config_mgr.js');
+      for (const band of [BAND_24G, BAND_5G]) {
+        const stateAutomata = this.apStateAutomata.bands[band];
+        if (stateAutomata.state === STATE_AP_SILENCE) {
+          if (Date.now() >= stateAutomata.silenceEndTs) {
+            stateAutomata.state = STATE_NORMAL;
+            let needReapplyConfig = true;
+            const pl = require('../../plugins/plugin_loader.js');
+            const wlanIntf = pl.getPluginInstance("interface", this.getWifiClientInterface());
+            if (!wlanIntf) {
+              this.resumeAP(band);
+              continue;
+            }
+            const hostapds = pl.getPluginInstances("hostapd");
+            if (_.isEmpty(hostapds)) {
+              this.resumeAP(band);
+              continue;
+            }
+            const {freq} = await wlanIntf.getWpaStatus();
+            const channel = freq && util.freqToChannel(freq) || null;
+            if (!channel) {
+              // restore original config on AP interfaces, so need to reapply current config
+              log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, sta is not connected, need to reapply current config and resume AP`);
+              needReapplyConfig = true;
+            } else {
+              for (const key of Object.keys(hostapds)) {
+                const hostapd = hostapds[key];
+                const parameters = _.get(hostapd, 'networkConfig.params', {});
+                const hostapd_band = parameters.hw_mode === "g" ? BAND_24G : BAND_5G;
+                if (hostapd_band !== band) {
+                  continue;
+                } else {
+                  if (parameters.channel === channel) {
+                    log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, AP configured channel is same as STA's channel ${channel}, resumeing AP`);
+                    needReapplyConfig = false;
+                  } else {
+                    log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, AP configured channel ${parameters.channel} is not same as STA's channel ${channel}, need to reapply current config and resume AP`);
+                    needReapplyConfig = true;
+                  }
+                  break;
+                }
+              }
+            }
+            if (needReapplyConfig) {
+              await ncm.acquireConfigRWLock(async () => {
+                const currentConfig = await ncm.getActiveConfig();
+                if (currentConfig) {
+                  await ncm.tryApplyConfig(currentConfig).catch((err) => {
+                    log.error(`${LOG_TAG_STA_AP} Failed to reapply current config`, err.message);
+                  });
+                }
+              });
+            }
+            this.resumeAP(band);
+          }
+        }
+      }
+    }).catch((err) => {
+      log.error(`${LOG_TAG_STA_AP} Failed to check AP state automata`, err.message);
+    });
+  }
+  
+  needResetLinkBeforeSwitchWifi() {
+    return false;
+  }
+
+  async setDFSScanState(state) {
+    const phyName = await this._get80211PhyName();
+    if (!phyName) {
+      return;
+    }
+    const value = state ? 1 : 0;
+    log.info(`Set DFS scan state to ${value} on phy ${phyName}`);
+    await exec(`echo ${value} | sudo tee /sys/kernel/debug/ieee80211/${phyName}/scan_dfs_relax`).catch((err) => {
+      log.error(`Failed to set DFS scan state to ${value} on phy ${phyName}`, err.message);
+    });
   }
 }
 
