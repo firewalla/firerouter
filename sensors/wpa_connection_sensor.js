@@ -18,7 +18,6 @@ const Sensor = require("./sensor.js");
 const r = require('../util/firerouter.js');
 const event = require('../core/event.js');
 const pl = require('../plugins/plugin_loader.js');
-const rclientDB0 = require('../util/redis_manager.js').getPrimaryDBRedisClient()
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const exec = require('child-process-promise').exec;
 const platformLoader = require('../platform/PlatformLoader.js');
@@ -32,34 +31,12 @@ const _ = require('lodash');
 class WPAConnectionSensor extends Sensor {
 
   async watchLog(line) {
-    // #define WLAN_REASON_UNSPECIFIED 1
-    if (line.includes('CTRL-EVENT-ASSOC-REJECT status_code=1')) {
-      // ignore reject events within a minute as it could coming from multiple SSIDs
-      const now = Date.now() / 1000
-      if (!this.rejects.length || now - this.config.reject_threshold_min_interval > this.rejects[this.rejects.length-1]) {
-        this.rejects.push(now)
-        this.log.debug('added reject event', this.rejects)
-        while (this.rejects[0] < now - this.config.reject_threshold_time_seconds) {
-          const removed = this.rejects.shift()
-          this.log.debug('removed reject', removed)
-        }
-        if (this.rejects.length >= this.config.reject_threshold_count) {
-          this.log.info('Threshold hit, reloading kernel module ...')
-          // sleep to allow IfPresenceSensor to catch the event
-          await exec('sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
-          this.rejects = []
-          await rclientDB0.incrAsync('sys:wlan:kernelReload')
-        }
-      }
-    } else if (line.includes('CTRL-EVENT-CONNECTED')) {
-      // reset counter
-      this.rejects = []
-      this.log.debug('connected event received, rejects cleard', this.rejects)
+    if (platform && typeof platform.processWpaSupplicantLog === 'function') {
+      await platform.processWpaSupplicantLog(line, this.config);
     }
   }
 
   async run() {
-    this.rejects = []
     this.logWatcher = new LogReader(this.config.log_file, true)
     this.logWatcher.on('line', this.watchLog.bind(this))
     this.logWatcher.watch()
