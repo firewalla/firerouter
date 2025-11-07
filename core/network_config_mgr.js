@@ -115,6 +115,9 @@ class NetworkConfigManager {
           }
           const wpaCliPath = await platform.getWpaCliBinPath();
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
+          const isWPAComplate = async () => {
+            return await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+          };
           const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
             // TODO: taking care of SSID with '\t'?
             const [id, ssid, bssid, flags] = line.split('\t', 4);
@@ -134,9 +137,18 @@ class NetworkConfigManager {
             return []
           });
           const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
+          const state = await isWPAComplate();
+          if (_.get(currentNetwork, 'ssid') === ssid && state === true) {
+            log.info(`WPA state is already complete on current SSID ${ssid}, no need to switch`);
+            done(null, []);
+            return;
+          }
+          await platform.setDFSScanState(true);
           // refresh interface link state to relinquish resources due to potential driver bug
-          await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-          await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+          if (platform.needResetLinkBeforeSwitchWifi()) {
+            await exec(`sudo ip link set ${intf} down`).catch((err) => {});
+            await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+          }
           let selectedNetwork = networks.find(n => n.ssid === ssid || n.ssidHex === ssidHex); // in case of non-ascii characters, need to compare with hex string
           if (!selectedNetwork) {
             log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
@@ -165,10 +177,11 @@ class NetworkConfigManager {
           const t1 = Date.now() / 1000;
           let t2 = null;
           const checkTask = setInterval(async () => {
-            const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+            const state = await isWPAComplate();
             if (state === true) {
               if (!testOnly) {
                 clearInterval(checkTask);
+                log.info(`WPA state complete on new SSID ${ssid}, enabling other networks`);
                 for (const network of networks) {
                   // select_network will disable all other ssids, re-enable other ssid
                   if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
@@ -179,13 +192,16 @@ class NetworkConfigManager {
               }
             } else {
               t2 = Date.now() / 1000;
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} bssid_ignore clear`).catch((err) => { });
             }
             // if timeout exceeded or test only is set and connection is successful, switch back to previous setup
-            if (t2 - t1 > 15 || state === true && testOnly) {
+            if (t2 - t1 > 30 || state === true && testOnly) {
               clearInterval(checkTask);
               // refresh interface link state to relinquish resources due to potential driver bug
-              await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-              await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+              if (platform.needResetLinkBeforeSwitchWifi()) {
+                await exec(`sudo ip link set ${intf} down`).catch((err) => {});
+                await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+              }
               // restore config from configuration file
               await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} reconfigure`).catch((err) => { });
               if (currentNetwork) // switch back to previous ssid
@@ -207,6 +223,7 @@ class NetworkConfigManager {
           done(null, [err])
         }
       }, (err, ret) => {
+        platform.setDFSScanState(false);
         if (err)
           reject(err);
         else
@@ -306,6 +323,7 @@ class NetworkConfigManager {
   }
 
   async getWlanAvailable(intf) {
+    await platform.setDFSScanState(true);
     const iwScan = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
     iwScan.on('error', err => {
       log.error('Error running wpa_cli', err.message)
@@ -403,6 +421,7 @@ class NetworkConfigManager {
       const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
+    await platform.setDFSScanState(false);
 
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }
