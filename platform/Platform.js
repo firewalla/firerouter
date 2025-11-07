@@ -317,6 +317,18 @@ class Platform {
     await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
     await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`).catch((err) => {});
   }
+
+  async processWpaSupplicantLog(line, config) {
+    // Base implementation - can be overridden by platform-specific implementations
+  }
+
+  needResetLinkBeforeSwitchWifi() {
+    return true;
+  }
+
+  async setDFSScanState(state) {
+
+  }
 }
 
 module.exports = Platform;
