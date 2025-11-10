@@ -456,7 +456,8 @@ class NetworkConfigManager {
       deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '15s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
+    await platform.setDFSScanState(true);
+    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
@@ -575,12 +576,18 @@ class NetworkConfigManager {
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
-    await deferred.promise
-    log.verbose('returning')
-
-    const final = results.filter(r => !selfWlanMacs.includes(r.mac))
-    log.info(`Found ${final.length} SSIDs`)
-    return final
+    return new Promise((resolve, reject) => {
+      deferred.promise.then(() => {
+        log.verbose('returning')
+        const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+        log.info(`Found ${final.length} SSIDs`)
+        resolve(final)
+      }).catch((err) => {
+        reject(err)
+      }).finally(() => {
+        platform.setDFSScanState(false);
+      });
+    });
   }
 
   async getAvailableChannelsHostapd() {
