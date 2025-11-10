@@ -728,6 +728,10 @@ class OrangePlatform extends Platform {
       log.error(`Failed to set DFS scan state to ${value} on phy ${phyName}`, err.message);
     });
   }
+
+  getWpaSupplicantDefaultConfig() {
+    return ["scan_res_valid_for_connect=10"];
+  }
 }
 
 module.exports = OrangePlatform;
