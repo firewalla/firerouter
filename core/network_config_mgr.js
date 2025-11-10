@@ -456,7 +456,7 @@ class NetworkConfigManager {
       deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '15s', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
+    const wpaCli = spawn('sudo', ['timeout', '15s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
