@@ -480,7 +480,7 @@ class NetworkConfigManager {
     // readline will wait for that and cause a 5s delay
     wpaCli.stdout.on('data', data => {
       if (!data) return
-      const lines = data.toString().split('\n')
+      const lines = data.toString().split('\n').map(line => line.trim())
       for (const line of lines) try {
         log.debug(state, line)
 
@@ -506,7 +506,7 @@ class NetworkConfigManager {
           continue
         }
 
-        if (line.startsWith('bssid / frequency')) {
+        if (line.match(/^(> )?bssid \/ frequency/)) {
           log.verbose('result header seen, state => parsingResult')
           state = 'parsingResult'
           continue
