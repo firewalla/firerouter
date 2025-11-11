@@ -456,7 +456,8 @@ class NetworkConfigManager {
       deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '15s', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
+    await platform.setDFSScanState(true);
+    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
@@ -480,7 +481,7 @@ class NetworkConfigManager {
     // readline will wait for that and cause a 5s delay
     wpaCli.stdout.on('data', data => {
       if (!data) return
-      const lines = data.toString().split('\n')
+      const lines = data.toString().split('\n').map(line => line.trim())
       for (const line of lines) try {
         log.debug(state, line)
 
@@ -506,7 +507,7 @@ class NetworkConfigManager {
           continue
         }
 
-        if (line.startsWith('bssid / frequency')) {
+        if (line.match(/^(> )?bssid \/ frequency/)) {
           log.verbose('result header seen, state => parsingResult')
           state = 'parsingResult'
           continue
@@ -575,12 +576,18 @@ class NetworkConfigManager {
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
-    await deferred.promise
-    log.verbose('returning')
-
-    const final = results.filter(r => !selfWlanMacs.includes(r.mac))
-    log.info(`Found ${final.length} SSIDs`)
-    return final
+    return new Promise((resolve, reject) => {
+      deferred.promise.then(() => {
+        log.verbose('returning')
+        const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+        log.info(`Found ${final.length} SSIDs`)
+        resolve(final)
+      }).catch((err) => {
+        reject(err)
+      }).finally(() => {
+        platform.setDFSScanState(false);
+      });
+    });
   }
 
   async getAvailableChannelsHostapd() {
@@ -711,7 +718,8 @@ class NetworkConfigManager {
     const fwapcExecPath = r.getFwapcExecPath();
     const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
     await fsp.writeFile(tempFile, JSON.stringify(config));
-    const response = await exec(`${fwapcExecPath} ciap ${tempFile}`);
+    // turn off log output on stdout to avoid inteference with JSON parsing
+    const response = await exec(`FW_LOG=OFF ${fwapcExecPath} ciap ${tempFile}`);
     const data = JSON.parse(response.stdout);
     await fsp.unlink(tempFile).catch((err) => {});
     log.debug(`Converted effective config`, data);

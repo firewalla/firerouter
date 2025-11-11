@@ -157,7 +157,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
     // Seconds to consider old scan results valid for association
-    entries.push("scan_res_valid_for_connect=10");
+    entries.push(...platform.getWpaSupplicantDefaultConfig());
 
     const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
     const networks = wpaSupplicant.networks || [];
