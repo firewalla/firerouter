@@ -329,6 +329,10 @@ class Platform {
   async setDFSScanState(state) {
 
   }
+
+  getWpaSupplicantDefaultConfig() {
+    return [];
+  }
 }
 
 module.exports = Platform;
