@@ -263,6 +263,8 @@ class RoutingPlugin extends Plugin {
       }
       const state = await intfPlugin.state();
       const metric = this._wanStatus[intf].seq + 1 + (this._wanStatus[intf].ready ? 0 : 100);
+      const type = this.networkConfig.default.type || "single";
+      const active = this._wanStatus[intf].active;
 
       if ( !af || af == 4 ) {
         if (state && state.ip4s) {
@@ -280,7 +282,7 @@ class RoutingPlugin extends Plugin {
         }
       }
 
-      if ( !af || af == 6 ) {
+      if ( (!af || af == 6 ) && (active === true || type !== 'primary_standby')) {
         if (state && state.ip6) {
           await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_LOCAL, 6).catch((err) => {this.log.warn(err.message)});
           await routing.removeDeviceRouteRule(intf, routing.RT_GLOBAL_DEFAULT, 6).catch((err) => {this.log.warn(err.message)});
@@ -330,7 +332,7 @@ class RoutingPlugin extends Plugin {
         }
       }
 
-      if ( !af || af == 6 ) {
+      if ( (!af || af == 6 ) && (active === true || type !== 'primary_standby')) {
         const gw6 = await routing.getInterfaceGWIP(intf, 6);
         if (gw6) {
           await this.upsertRouteToTable("default", gw6, intf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
@@ -470,17 +472,29 @@ class RoutingPlugin extends Plugin {
         await this._removeMainRoutes(af);
       }
 
+      // add an unreachable route with lower preference in routing table to prevent traffic from falling through to other WAN's routing table
+      if (type == "primary_standby") {
+        await routing.addRouteToTable("default", null, null, routing.RT_GLOBAL_DEFAULT, 65536, 6, false, "unreachable").catch((err) => {});
+      }
+
       switch (type) {
         case "single":
         case "primary_standby": {
           let activeIntfFound = false;
+          let lastActiveIntf = null;
+          let currentActiveIntf = null;
           for (const viaIntf of Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq)) { // sort by seq in ascending order
             const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
             const state = await viaIntfPlugin.state();
             const ready = this._wanStatus[viaIntf].ready;
+            if (this._wanStatus[viaIntf].active === true) {
+              lastActiveIntf = viaIntf;
+            }
             this._wanStatus[viaIntf].active = ready && !activeIntfFound;
-            if (this._wanStatus[viaIntf].active === true)
+            if (this._wanStatus[viaIntf].active === true) {
               activeIntfFound = true;
+              currentActiveIntf = viaIntf;
+            }
             // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
             const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100);
             if (!af || af == 4) {
@@ -496,7 +510,7 @@ class RoutingPlugin extends Plugin {
                 this.log.error("Failed to get ip4 of global default interface " + viaIntf);
               }
             }
-            if (!af || af == 6) {
+            if ((!af || af == 6) && (this._wanStatus[viaIntf].active === true || type !== 'primary_standby')) { // only add IPv6 default router for primary WAN for primary_standby mode
               if (state && state.ip6) {
                 for (const ip6Addr of state.ip6) {
                   const addr = new Address6(ip6Addr);
@@ -536,7 +550,7 @@ class RoutingPlugin extends Plugin {
             }
 
             const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
-            if (!af || af == 6) {
+            if ((!af || af == 6) && (this._wanStatus[viaIntf].active === true || type !== 'primary_standby')) { // only add IPv6 default router for primary WAN for primary_standby mode
               if (gw6 && (ready || type === "single")) { // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
                 await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 await this.upsertRouteToTable("default", gw6, viaIntf, "main", metric, 6).catch((err) => { });
@@ -561,6 +575,16 @@ class RoutingPlugin extends Plugin {
               }
             }
           }
+
+          if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
+            // remove ipv6 default route from last active interface
+            if (lastActiveIntf && lastActiveIntf !== currentActiveIntf) {
+              const gw6 = await routing.getInterfaceGWIP(lastActiveIntf, 6);
+              await routing.removeRouteFromTable("default", gw6, lastActiveIntf, routing.RT_GLOBAL_DEFAULT, 6).catch((err) => { });
+              await routing.removeRouteFromTable("default", gw6, lastActiveIntf, "main", 6).catch((err) => { });
+            }
+          }
+
           break;
         }
         case "load_balance": {

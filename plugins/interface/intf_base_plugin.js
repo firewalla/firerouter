@@ -873,6 +873,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async markOutputConnection() {
+    if (!this.isWAN())
+      return;
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
@@ -914,7 +916,7 @@ class InterfaceBasePlugin extends Plugin {
   async resetHardwareAddress() {
     if (!this.hasHardwareAddress())
       return;
-    await platform.resetHardwareAddress(this.name);
+    await platform.resetHardwareAddress(this.name, this.networkConfig);
   }
 
   getDefaultMTU() {
@@ -952,7 +954,7 @@ class InterfaceBasePlugin extends Plugin {
       return;
     }
 
-    if (this.networkConfig.allowHotplug === true) {
+    if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
       if (!ifRegistered)
         return;
@@ -1551,7 +1553,13 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async getSubIntfs() {
+    return null;
+  }
+
   async _getRtId() {
+    if (!this.isWAN())
+      return null;
     if (!this.rtId) {
       this.rtId = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     }
@@ -1559,7 +1567,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1579,7 +1587,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getDns6Nameservers(),
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
-      this.isInterfacePresent()
+      this.isInterfacePresent(),
+      this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -1592,7 +1601,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
   onEvent(e) {
@@ -1631,7 +1640,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
-        if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+        if (this.networkConfig && this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
           pl.acquireApplyLock(async () => {
             platform.clearMacCache(this.name);
             this._reapplyNeeded = true;
@@ -1650,7 +1659,12 @@ class InterfaceBasePlugin extends Plugin {
             await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
               this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
             });
-            // this.propagateConfigChanged(true);
+            this.propagateConfigChanged(true);
+            this._reapplyNeeded = false;
+            pl.scheduleReapply();
+            return pl.publishIfaceChangeApplied();
+          }).catch((err) => {
+            this.log.error(`Failed to apply DNSv6 settings on ${this.name}`, err.message);
           });
         }
         break;
@@ -1709,6 +1723,11 @@ class InterfaceBasePlugin extends Plugin {
           currentStatus.successCount++;
           currentStatus.failureCount = 0;
         } else {
+          if (this.isEthernetBasedInterface()) {
+            platform.resetEthernet().catch((err) => {
+              this.log.error(`Failed to reset ethernet on ${this.name}`, err.message);
+            });
+          }
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
           const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
@@ -1764,6 +1783,10 @@ class InterfaceBasePlugin extends Plugin {
   async publishWANStateChange(changeDesc) {
     this.log.info("publish WAN state change", changeDesc);
     await pclient.publishAsync(Message.MSG_FR_WAN_STATE_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  isEthernetBasedInterface() {
+    return false;
   }
 }
 

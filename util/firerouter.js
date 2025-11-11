@@ -155,6 +155,19 @@ function getFirewallaUserConfigFolder() {
   return getFirewallaHiddenFolder() + "/config";
 }
 
+function getFwapcExecPath() {
+  if (isDevelopmentVersion()) {
+    // if run/fwapc exists, use this, otherwise use default
+    const fs = require('fs');
+    const path = require('path');
+    const devFwapcPath = path.join(getFirewallaHiddenFolder(), 'run', 'fwapc');
+    if (fs.existsSync(devFwapcPath)) {
+      return devFwapcPath;
+    }
+  }
+  return `${getFirewallaHiddenFolder()}/run/assets/fwapc`;
+}
+
 function getInterfaceResolvConfPath(iface) {
   return `${getRuntimeFolder()}/${iface}.resolv.conf`;
 }
@@ -260,6 +273,7 @@ module.exports = {
   getFireRouterHome:getFireRouterHome,
   getFirewallaHome,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
+  getFwapcExecPath,
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
   getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
   getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
