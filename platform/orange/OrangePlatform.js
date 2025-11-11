@@ -567,6 +567,12 @@ class OrangePlatform extends Platform {
       }
       return;
     }
+
+    // Nov 11 09:00:06 localhost wpa_supplicant[1235280]: wlan0: CTRL-EVENT-SCAN-FAILED ret=-16 retry=1
+    if (line.includes('CTRL-EVENT-SCAN-FAILED ret=-16')) {
+      await this.setDFSScanState(true);
+      return;
+    }
   }
 
   async onEvent(event, data) {
