@@ -567,6 +567,12 @@ class OrangePlatform extends Platform {
       }
       return;
     }
+
+    // Nov 11 09:00:06 localhost wpa_supplicant[1235280]: wlan0: CTRL-EVENT-SCAN-FAILED ret=-16 retry=1
+    if (line.includes('CTRL-EVENT-SCAN-FAILED ret=-16')) {
+      await this.setDFSScanState(true);
+      return;
+    }
   }
 
   async onEvent(event, data) {
@@ -671,9 +677,10 @@ class OrangePlatform extends Platform {
             }
             const {freq} = await wlanIntf.getWpaStatus();
             const channel = freq && util.freqToChannel(freq) || null;
-            if (!channel) {
+            const staBand = channel && (channel >= 1 && channel <= 14 ? BAND_24G : BAND_5G) || null;
+            if (!channel || staBand !== band) {
               // restore original config on AP interfaces, so need to reapply current config
-              log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, sta is not connected, need to reapply current config and resume AP`);
+              log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, sta is not connected on this band, need to reapply current config and resume AP`);
               needReapplyConfig = true;
             } else {
               for (const key of Object.keys(hostapds)) {

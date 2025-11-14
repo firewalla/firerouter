@@ -50,11 +50,15 @@ class WPAConnectionSensor extends Sensor {
           case "wpa.connected": {
             eventType = event.EVENT_WPA_CONNECTED;
             wpaState = true;
+            // disable DFS scan when a new connection is established
+            await platform.setDFSScanState(false);
             break;
           }
           case "wpa.disconnected": {
             eventType = event.EVENT_WPA_DISCONNECTED;
             wpaState = false;
+            // enable DFS scan when a connection is lost
+            await platform.setDFSScanState(true);
             break;
           }
           default:
