@@ -333,6 +333,10 @@ class Platform {
   getWpaSupplicantDefaultConfig() {
     return [];
   }
+
+  getWpaCliScanResultCommand() {
+    return 'scan_result';
+  }
 }
 
 module.exports = Platform;

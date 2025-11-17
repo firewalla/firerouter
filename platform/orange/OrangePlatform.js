@@ -737,7 +737,14 @@ class OrangePlatform extends Platform {
   }
 
   getWpaSupplicantDefaultConfig() {
-    return ["scan_res_valid_for_connect=10"];
+    return [
+      "scan_res_valid_for_connect=10",
+      "bss_max_count=400"
+    ];
+  }
+
+  getWpaCliScanResultCommand() {
+    return 'all_bss';
   }
 }
 
