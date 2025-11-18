@@ -476,6 +476,7 @@ class NetworkConfigManager {
     const results = []
 
     let state = 'waitForResult'
+    const scanResultCommand = platform.getWpaCliScanResultCommand();
 
     // not using readline here as the final prompt after result won't be followed by line feed
     // readline will wait for that and cause a 5s delay
@@ -501,8 +502,8 @@ class NetworkConfigManager {
         if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
           waitForScan = false
           log.info('scan done, getting result')
-          wpaCli.stdin.writable && wpaCli.stdin.write('scan_result\n', () => {
-            log.verbose('scan_result written')
+          wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
+            log.verbose(scanResultCommand + ' written')
           })
           continue
         }
@@ -531,6 +532,10 @@ class NetworkConfigManager {
             }
 
             const split = line.split('\t');
+            if (split.length < 4) { 
+              log.verbose('ignoring line', line)
+              break
+            }
 
             const mac = split.shift().toUpperCase()
             const freq = parseInt(split.shift())
@@ -562,8 +567,8 @@ class NetworkConfigManager {
       // only write after previous one finishes
       if (!waitForScan) {
         log.info('not waitForScan, getting result')
-        wpaCli.stdin.write('scan_result\n', () => {
-          log.info('scan_result written')
+        wpaCli.stdin.write(scanResultCommand + '\n', () => {
+          log.info(scanResultCommand + ' written')
         })
       }
     })
