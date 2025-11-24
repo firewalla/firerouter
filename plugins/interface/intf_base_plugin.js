@@ -205,6 +205,10 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhcpcd`;
   }
 
+  _getDhcpcdRaFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.ra`;
+  }
+
   async _getDHCPCDLease6Filename() {
     const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
@@ -1046,8 +1050,9 @@ class InterfaceBasePlugin extends Plugin {
 
   async getOrigDNS6Nameservers() {
     if (!this.isIPv6Enabled()) return [];
-    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
-    return dns6 || [];
+    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    const dns6Ra = await fs.readFileAsync(this._getDhcpcdRaFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    return _.uniq([...dns6, ...dns6Ra]) || [];
   }
 
   async getPrefixDelegations() {
