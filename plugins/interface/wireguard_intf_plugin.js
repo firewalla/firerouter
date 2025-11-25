@@ -347,6 +347,8 @@ class WireguardMeshAutomata {
     this.effectiveAllowedIPs = {};
     this.dnsCache = new LRU({ maxAge: 300 * 1000 });
     this.domainZoneCache = new LRU({ maxAge: 3600 * 1000 });
+    this.wireguardType = "wireguard";
+    this.wgCmd = "wg";
     const ipv4 = this.config.ipv4;
     const cidr = new Address4(ipv4);
     for (const peer of this.config.peers) {

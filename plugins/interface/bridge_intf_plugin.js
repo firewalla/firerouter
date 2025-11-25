@@ -25,8 +25,8 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isFlushNeeded(newConfig) {
     // flush is needed if attributes other than intf and stp are changed
-    const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "intf" && k !== "stp"));
-    const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "intf" && k !== "stp"));
+    const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "stp"));
+    const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "stp"));
     return !_.isEqual(c1, c2);
   }
 
