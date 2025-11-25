@@ -60,6 +60,10 @@ class Platform {
     return null;
   }
 
+  getAPScanInterface() {
+    return this.getWifiClientInterface();
+  }
+
   async getWpaCliBinPath() {
     return null;
   }

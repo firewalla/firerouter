@@ -430,24 +430,19 @@ class NetworkConfigManager {
   async getWlansViaWpaSupplicant(waitForScan = false) {
     log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
     const pluginLoader = require('../plugins/plugin_loader.js')
-    const plugins = pluginLoader.getPluginInstances('interface')
-    if (!plugins) {
-      log.warn('No interface found, probably still initializing')
-      return []
+    const apScanInterface = platform.getAPScanInterface();
+    const intfPlugin = pluginLoader.getPluginInstance('interface', apScanInterface);
+    if (!intfPlugin) {
+      log.warn(`AP scan interface ${apScanInterface} is not found in network config`);
+      return [];
     }
-    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
-    const targetWlan = Object.values(plugins).find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
-    if (!targetWlan) {
-      log.warn('No wlan interface configured for wpa_supplicant')
-      return []
-    }
-    if (await targetWlan.isInterfacePresent() === false) {
-      log.warn(`WLAN interface ${targetWlan.name} is not present yet`);
+    if (await intfPlugin.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${apScanInterface} is not present yet`);
       return [];
     }
 
     const wpaCliPath = await platform.getWpaCliBinPath();
-    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
 
     // manually create a promise to return right after result parsing is finished, without waiting for process exit
     const deferred = {}
@@ -457,7 +452,7 @@ class NetworkConfigManager {
     })
 
     await platform.setDFSScanState(true);
-    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
+    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
