@@ -6,7 +6,14 @@
 # Also, resolvconf can configure local nameservers such as bind
 # or dnsmasq. This is important as the libc resolver isn't that powerful.
 
-resolv_conf_file="/run/resolvconf/interface/$interface.dhcpcd"
+resolv_conf_file_dhcp="/run/resolvconf/interface/$interface.dhcpcd"
+resolv_conf_file_ra="/run/resolvconf/interface/$interface.dhcpcd.ra"
+
+resolv_conf_file=$resolv_conf_file_dhcp
+if [ "$reason" = ROUTERADVERT ]; then
+	resolv_conf_file=$resolv_conf_file_ra
+fi
+
 NL="
 "
 : ${resolvconf:=resolvconf}
@@ -139,6 +146,12 @@ md5_resolv_conf()
 	fi
 }
 
+cleanup_resolv_conf()
+{
+	[ -f "$resolv_conf_file_dhcp" ] && rm "$resolv_conf_file_dhcp"
+	[ -f "$resolv_conf_file_ra" ] && rm "$resolv_conf_file_ra"
+}
+
 md5_resolv_conf
 # For ease of use, map DHCP6 names onto our DHCP4 names
 case "$reason" in
@@ -152,4 +165,5 @@ if $if_up || [ "$reason" = ROUTERADVERT ]; then
 	add_resolv_conf
 elif $if_down; then
 	remove_resolv_conf
+	cleanup_resolv_conf
 fi
