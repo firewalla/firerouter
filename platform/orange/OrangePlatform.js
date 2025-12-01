@@ -180,6 +180,10 @@ class OrangePlatform extends Platform {
     return "wlan0";
   }
 
+  getAPScanInterface() {
+    return "wlan_ap_scan";
+  }
+
   async overrideWLANKernelModule() {
   }
 
@@ -195,11 +199,11 @@ class OrangePlatform extends Platform {
     switch (iface) {
       case "eth0": {
         const hexAddr = await this._getHexBaseAddress(ETH0_BASE);
-        return hexAddr;
+        return hexAddr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
       }
       case "eth1": {
         const hexAddr = await this._getHexBaseAddress(ETH1_BASE);
-        return hexAddr;
+        return hexAddr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
       }
       default: {
         return await this._getWLANAddress(iface, config.band);
@@ -299,7 +303,7 @@ class OrangePlatform extends Platform {
   async _getWLANInterfaceType(wlanIntfPlugin) {
     if (wlanIntfPlugin.networkConfig.type)
       return wlanIntfPlugin.networkConfig.type;
-    if (wlanIntfPlugin.name === this.getWifiClientInterface())
+    if (wlanIntfPlugin.name === this.getWifiClientInterface() || wlanIntfPlugin.name === this.getAPScanInterface())
       return "managed";
     return "__ap";
   }
@@ -313,9 +317,12 @@ class OrangePlatform extends Platform {
 
   async _getWLANAddress(intfName, band) {
     // base is for wlan0, 2.4g uses base + 1, 5g uses base + 2s
-    if (intfName === this.getWifiClientInterface()) {
-      const addr = await this._getHexBaseAddress(WLAN0_BASE);
-      return addr;
+    if (intfName === this.getWifiClientInterface() || intfName === this.getAPScanInterface()) {
+      let addr = await this._getHexBaseAddress(WLAN0_BASE);
+      if (intfName === this.getAPScanInterface()) {
+        addr += 0x060000000000;
+      }
+      return addr.toString(16).padStart(12, "0").match(/.{1,2}/g).join(":").toUpperCase();
     } else {
       let offset = 0;
       if (band === "2.4g" || band == "2g") {
@@ -332,8 +339,7 @@ class OrangePlatform extends Platform {
   }
 
   async _getHexOffsetAddress(base, offset) {
-    const baseAddress = await this._getHexBaseAddress(base);
-    const addr = parseInt(baseAddress.split(":").join(""), 16)
+    const addr = await this._getHexBaseAddress(base);
     return addr + offset;
   }
 
@@ -349,7 +355,7 @@ class OrangePlatform extends Platform {
       }
       await rclient.setAsync(`base_mac_address:${base}`, baseAddress);
     }
-    return baseAddress;
+    return parseInt(baseAddress.split(":").join(""), 16);
   }
 
   // this function needs to be run sequentially
@@ -567,6 +573,12 @@ class OrangePlatform extends Platform {
       }
       return;
     }
+
+    // Nov 11 09:00:06 localhost wpa_supplicant[1235280]: wlan0: CTRL-EVENT-SCAN-FAILED ret=-16 retry=1
+    if (line.includes('CTRL-EVENT-SCAN-FAILED ret=-16')) {
+      await this.setDFSScanState(true);
+      return;
+    }
   }
 
   async onEvent(event, data) {
@@ -671,9 +683,10 @@ class OrangePlatform extends Platform {
             }
             const {freq} = await wlanIntf.getWpaStatus();
             const channel = freq && util.freqToChannel(freq) || null;
-            if (!channel) {
+            const staBand = channel && (channel >= 1 && channel <= 14 ? BAND_24G : BAND_5G) || null;
+            if (!channel || staBand !== band) {
               // restore original config on AP interfaces, so need to reapply current config
-              log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, sta is not connected, need to reapply current config and resume AP`);
+              log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended, sta is not connected on this band, need to reapply current config and resume AP`);
               needReapplyConfig = true;
             } else {
               for (const key of Object.keys(hostapds)) {
@@ -730,7 +743,14 @@ class OrangePlatform extends Platform {
   }
 
   getWpaSupplicantDefaultConfig() {
-    return ["scan_res_valid_for_connect=10"];
+    return [
+      "scan_res_valid_for_connect=10",
+      "bss_max_count=400"
+    ];
+  }
+
+  getWpaCliScanResultCommand() {
+    return 'all_bss';
   }
 }
 

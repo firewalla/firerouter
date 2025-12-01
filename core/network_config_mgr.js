@@ -430,24 +430,19 @@ class NetworkConfigManager {
   async getWlansViaWpaSupplicant(waitForScan = false) {
     log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
     const pluginLoader = require('../plugins/plugin_loader.js')
-    const plugins = pluginLoader.getPluginInstances('interface')
-    if (!plugins) {
-      log.warn('No interface found, probably still initializing')
-      return []
+    const apScanInterface = platform.getAPScanInterface();
+    const intfPlugin = pluginLoader.getPluginInstance('interface', apScanInterface);
+    if (!intfPlugin) {
+      log.warn(`AP scan interface ${apScanInterface} is not found in network config`);
+      return [];
     }
-    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
-    const targetWlan = Object.values(plugins).find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
-    if (!targetWlan) {
-      log.warn('No wlan interface configured for wpa_supplicant')
-      return []
-    }
-    if (await targetWlan.isInterfacePresent() === false) {
-      log.warn(`WLAN interface ${targetWlan.name} is not present yet`);
+    if (await intfPlugin.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${apScanInterface} is not present yet`);
       return [];
     }
 
     const wpaCliPath = await platform.getWpaCliBinPath();
-    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
 
     // manually create a promise to return right after result parsing is finished, without waiting for process exit
     const deferred = {}
@@ -457,7 +452,7 @@ class NetworkConfigManager {
     })
 
     await platform.setDFSScanState(true);
-    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
+    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
@@ -476,6 +471,7 @@ class NetworkConfigManager {
     const results = []
 
     let state = 'waitForResult'
+    const scanResultCommand = platform.getWpaCliScanResultCommand();
 
     // not using readline here as the final prompt after result won't be followed by line feed
     // readline will wait for that and cause a 5s delay
@@ -501,8 +497,8 @@ class NetworkConfigManager {
         if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
           waitForScan = false
           log.info('scan done, getting result')
-          wpaCli.stdin.writable && wpaCli.stdin.write('scan_result\n', () => {
-            log.verbose('scan_result written')
+          wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
+            log.verbose(scanResultCommand + ' written')
           })
           continue
         }
@@ -531,6 +527,10 @@ class NetworkConfigManager {
             }
 
             const split = line.split('\t');
+            if (split.length < 4) { 
+              log.verbose('ignoring line', line)
+              break
+            }
 
             const mac = split.shift().toUpperCase()
             const freq = parseInt(split.shift())
@@ -562,8 +562,8 @@ class NetworkConfigManager {
       // only write after previous one finishes
       if (!waitForScan) {
         log.info('not waitForScan, getting result')
-        wpaCli.stdin.write('scan_result\n', () => {
-          log.info('scan_result written')
+        wpaCli.stdin.write(scanResultCommand + '\n', () => {
+          log.info(scanResultCommand + ' written')
         })
       }
     })
