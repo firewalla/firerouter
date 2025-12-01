@@ -210,7 +210,12 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getDHCPCDLease6Filename() {
-    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+    let dhcpcdBinPath = platform.getBinaryPath() + '/dhcpcd';
+    // this.log.debug(`checking if dhcpcd binary exists: ${dhcpcdBinPath}`);
+    if (!await fs.accessAsync(dhcpcdBinPath, fs.constants.F_OK).then(() => true).catch((err) => false)) {
+      dhcpcdBinPath = 'dhcpcd';
+    }
+    const version = await exec(`${dhcpcdBinPath} --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
       return null;
     });
