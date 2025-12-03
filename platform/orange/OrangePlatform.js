@@ -577,6 +577,7 @@ class OrangePlatform extends Platform {
     // Nov 11 09:00:06 localhost wpa_supplicant[1235280]: wlan0: CTRL-EVENT-SCAN-FAILED ret=-16 retry=1
     if (line.includes('CTRL-EVENT-SCAN-FAILED ret=-16')) {
       await this.setDFSScanState(true);
+      await this.skipDFSCAC();
       return;
     }
   }
@@ -604,8 +605,8 @@ class OrangePlatform extends Platform {
             case STATE_AP_SILENCE: {
               if (!stateAutomata.attemptedSSIDs.has(`${ssid}`)) {
                 // extend silence period by 30 seconds for each new SSID authentication attempt
-                log.info(`${LOG_TAG_STA_AP} Extending silence period on band ${band} by 30 seconds for SSID ${ssid} authentication attempt`);
-                stateAutomata.silenceEndTs = Date.now() + 30000;
+                log.info(`${LOG_TAG_STA_AP} Extending silence period on band ${band} by 45 seconds for SSID ${ssid} authentication attempt`);
+                stateAutomata.silenceEndTs = Date.now() + 45000;
               }
               stateAutomata.attemptedSSIDs.add(`${ssid}`);
               break;
@@ -632,7 +633,7 @@ class OrangePlatform extends Platform {
               log.info(`${LOG_TAG_STA_AP} AP band ${band} is not configured on the same channel ${channel} as SSID ${ssid}, entering silence period`);
               stateAutomata.state = STATE_AP_SILENCE;
               stateAutomata.silenceStartTs = Date.now();
-              stateAutomata.silenceEndTs = Date.now() + 30000;
+              stateAutomata.silenceEndTs = Date.now() + 45000;
               this.pauseAP(band);
               break;
             }
@@ -740,6 +741,25 @@ class OrangePlatform extends Platform {
     await exec(`echo ${value} | sudo tee /sys/kernel/debug/ieee80211/${phyName}/scan_dfs_relax`).catch((err) => {
       log.error(`Failed to set DFS scan state to ${value} on phy ${phyName}`, err.message);
     });
+  }
+
+  async skipDFSCAC() {
+    const phyName = await this._get80211PhyName();
+    if (!phyName) {
+      return;
+    }
+    log.info(`Skip DFS CAC on phy ${phyName}`);
+    await exec(`echo 1 | sudo tee /sys/kernel/debug/ieee80211/${phyName}/dfs_skip_cac`).catch((err) => {
+      log.error(`Failed to skip DFS CAC on phy ${phyName}`, err.message);
+    });
+  }
+
+  async prepareSwitchWifi() {
+    await this.setDFSScanState(true);
+    await this.skipDFSCAC();
+    for (const band of [BAND_24G, BAND_5G]) {
+      this.apStateAutomata.bands[band].attemptedSSIDs.clear();
+    }
   }
 
   getWpaSupplicantDefaultConfig() {
