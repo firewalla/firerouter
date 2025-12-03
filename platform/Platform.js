@@ -384,6 +384,14 @@ class Platform {
 
   }
 
+  async skipDFSCAC() {
+
+  }
+
+  async prepareSwitchWifi() {
+
+  }
+
   getWpaSupplicantDefaultConfig() {
     return [];
   }

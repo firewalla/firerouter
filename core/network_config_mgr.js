@@ -143,7 +143,7 @@ class NetworkConfigManager {
             done(null, []);
             return;
           }
-          await platform.setDFSScanState(true);
+          await platform.prepareSwitchWifi();
           // refresh interface link state to relinquish resources due to potential driver bug
           if (platform.needResetLinkBeforeSwitchWifi()) {
             await exec(`sudo ip link set ${intf} down`).catch((err) => {});
