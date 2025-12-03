@@ -206,15 +206,22 @@ class RoutingPlugin extends Plugin {
     if (!intfPlugins) {
       return;
     }
-    if (!af || af == 4) {
-      for (const intf of intfPlugins) {
-        if (this._dnsRoutes && _.isArray(this._dnsRoutes[intf.name])) {
-          for (const dnsRoute of this._dnsRoutes[intf.name]){
-            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: "main", 4).catch((err) => {
-              this.log.warn('fail to remove dns route from table main, err:', err.message)
+
+    for (const intf of intfPlugins) {
+      if (this._dnsRoutes && _.isArray(this._dnsRoutes[intf.name])) {
+        let applied = [];
+        for (const dnsRoute of this._dnsRoutes[intf.name]) {
+          if (!af || (af && dnsRoute.af == af)) {
+            applied.push(dnsRoute);
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: "main", dnsRoute.af).catch((err) => {
+              this.log.warn(`fail to remove dns route from table ${dnsRoute.tableName || "main"}, err:`, err.message)
             })
           }
-          delete (this._dnsRoutes, intf.name);
+        }
+        if (!af) {
+          delete this._dnsRoutes[intf.name];
+        } else {
+          this._dnsRoutes[intf.name] = this._dnsRoutes[intf.name].filter(i => !applied.includes(i));
         }
       }
     }
@@ -461,7 +468,7 @@ class RoutingPlugin extends Plugin {
         const deadWANIntfs = this.getUnreadyWANPlugins();
         await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_DEFAULT, af);
         await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_LOCAL, af);
-        await this._removeDeviceDnsRouting(deadWANIntfs, af, "main");
+        await this._removeDeviceDnsRouting(deadWANIntfs, af);
         await this._removeDeviceDefaultRouting(deadWANIntfs, "main", af);
       } else {
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
