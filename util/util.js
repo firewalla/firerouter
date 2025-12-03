@@ -144,6 +144,9 @@ async function generateWpaSupplicantConfig(key, values) {
     case "wep_key1":
     case "wep_key2":
     case "wep_key3":
+    case "identity":
+    case "phase2":
+    case "sae_password":
       // use hex string for ssid/eap password in case of special characters
       value = getHexStrArray(value).join("");
       break;
@@ -158,11 +161,8 @@ async function generateWpaSupplicantConfig(key, values) {
     case "private_key2":
       value = `"${storage.getSavedFilePath(value)}"`;
       break;
-    case "identity":
     case "anonymous_identity":
     case "phase1":
-    case "phase2":
-    case "sae_password":
     case "private_key_passwd":
     case "private_key2_passwd":
       value = `"${value}"`;
