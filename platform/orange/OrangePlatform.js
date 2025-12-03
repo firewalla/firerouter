@@ -577,6 +577,7 @@ class OrangePlatform extends Platform {
     // Nov 11 09:00:06 localhost wpa_supplicant[1235280]: wlan0: CTRL-EVENT-SCAN-FAILED ret=-16 retry=1
     if (line.includes('CTRL-EVENT-SCAN-FAILED ret=-16')) {
       await this.setDFSScanState(true);
+      await this.skipDFSCAC();
       return;
     }
   }
@@ -740,6 +741,25 @@ class OrangePlatform extends Platform {
     await exec(`echo ${value} | sudo tee /sys/kernel/debug/ieee80211/${phyName}/scan_dfs_relax`).catch((err) => {
       log.error(`Failed to set DFS scan state to ${value} on phy ${phyName}`, err.message);
     });
+  }
+
+  async skipDFSCAC() {
+    const phyName = await this._get80211PhyName();
+    if (!phyName) {
+      return;
+    }
+    log.info(`Skip DFS CAC on phy ${phyName}`);
+    await exec(`echo 1 | sudo tee /sys/kernel/debug/ieee80211/${phyName}/dfs_skip_cac`).catch((err) => {
+      log.error(`Failed to skip DFS CAC on phy ${phyName}`, err.message);
+    });
+  }
+
+  async prepareSwitchWifi() {
+    await this.setDFSScanState(true);
+    await this.skipDFSCAC();
+    for (const band of [BAND_24G, BAND_5G]) {
+      this.apStateAutomata.bands[band].attemptedSSIDs.clear();
+    }
   }
 
   getWpaSupplicantDefaultConfig() {
