@@ -77,6 +77,11 @@ class InterfaceBasePlugin extends Plugin {
       const lease6Filename = await this._getDHCPCDLease6Filename();
       if (lease6Filename)
         await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+
+      await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
+      await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
+      await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
+
       // regenerate ipv6 link local address based on EUI64
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
@@ -201,8 +206,13 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
   }
 
-  _getDhcpcdFilePath() {
+
+  _getDeprecatedDhcpcdFilePath() {
     return `/run/resolvconf/interface/${this.name}.dhcpcd`;
+  }
+
+  _getDhcpcdFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.v6`;
   }
 
   _getDhcpcdRaFilePath() {
@@ -210,7 +220,12 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getDHCPCDLease6Filename() {
-    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+    let dhcpcdBinPath = platform.getBinaryPath() + '/dhcpcd';
+    // this.log.debug(`checking if dhcpcd binary exists: ${dhcpcdBinPath}`);
+    if (!await fs.accessAsync(dhcpcdBinPath, fs.constants.F_OK).then(() => true).catch((err) => false)) {
+      dhcpcdBinPath = 'dhcpcd';
+    }
+    const version = await exec(`${dhcpcdBinPath} --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
       return null;
     });
