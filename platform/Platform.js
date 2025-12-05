@@ -16,7 +16,8 @@
 'use strict';
 
 const log = require('../util/logger.js')(__filename);
-const fsp = require('fs').promises
+const fs = require('fs');
+const fsp = fs.promises
 const r = require('../util/firerouter')
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
@@ -57,6 +58,10 @@ class Platform {
 
   getWifiClientInterface() {
     return null;
+  }
+
+  getAPScanInterface() {
+    return this.getWifiClientInterface();
   }
 
   async getWpaCliBinPath() {
@@ -177,6 +182,55 @@ class Platform {
   }
 
   async installWLANTools() {
+  }
+
+  async installKernelModule(module_name) {
+    const installed = await this.isKernelModuleInstalled(module_name);
+    if (installed) return;
+    // below code seems not needed
+    const codename = await exec(`lsb_release -cs`).then((result) => result.stdout.trim())
+      .catch((err) => {
+        log.error("Failed to get codename of OS distribution", err.message);
+        return null;
+      });
+    if (!codename)
+      return;
+    // end of below code seems not needed
+
+    const koPath = await this.getKoPath(module_name);
+    const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);
+    if (koExists){
+      await exec(`sudo insmod ${koPath}`).catch((err) => {
+        log.error(`Failed to install ${module_name}.ko`, err.message);
+      });
+    }
+  }
+
+  async isKernelModuleInstalled(module_name) {
+    if (!this.installedModules) {
+      this.installedModules = {};
+    }
+    if (this.installedModules[module_name]) {
+      return this.installedModules[module_name];
+    }
+    const cmdResult = await exec(`lsmod | grep ${module_name} | awk '{print $1}'`);
+    const results = cmdResult.stdout.toString().trim().split('\n');
+    for (const result of results) {
+      if (result == module_name) {
+        this.installedModules[module_name] = true;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async getKernelModulesPath() {
+    const kernelRelease = await exec("uname -r").then(result => result.stdout.trim());
+    return `${r.getFireRouterHome()}/platform/${this.getName()}/files/kernel_modules/${kernelRelease}`;
+  }
+
+  async getKoPath(module_name) {
+    return `${await this.getKernelModulesPath()}/${module_name}.ko`;
   }
 
   getModelName() {
@@ -328,6 +382,22 @@ class Platform {
 
   async setDFSScanState(state) {
 
+  }
+
+  async skipDFSCAC() {
+
+  }
+
+  async prepareSwitchWifi() {
+
+  }
+
+  getWpaSupplicantDefaultConfig() {
+    return [];
+  }
+
+  getWpaCliScanResultCommand() {
+    return 'scan_result';
   }
 }
 

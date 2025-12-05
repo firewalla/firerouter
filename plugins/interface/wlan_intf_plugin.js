@@ -157,7 +157,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
     // Seconds to consider old scan results valid for association
-    entries.push("scan_res_valid_for_connect=10");
+    entries.push(...platform.getWpaSupplicantDefaultConfig());
 
     const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
     const networks = wpaSupplicant.networks || [];
@@ -320,6 +320,9 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         case "freq":
           status.freq = Number(value);
           break;
+        case "ssid":
+          status.ssid = util.parseEscapedString(value);
+          break;
         default:
           status[key] = value;
       }
@@ -328,7 +331,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     if (!this.isWAN())
-      status.ssid = status[`ssid[${bssIndex}]`];
+      status.ssid = util.parseEscapedString(status[`ssid[${bssIndex}]`]);
     return status;
   }
 
