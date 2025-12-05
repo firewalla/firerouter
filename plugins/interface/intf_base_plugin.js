@@ -77,6 +77,11 @@ class InterfaceBasePlugin extends Plugin {
       const lease6Filename = await this._getDHCPCDLease6Filename();
       if (lease6Filename)
         await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+
+      await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
+      await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
+      await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
+
       // regenerate ipv6 link local address based on EUI64
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
@@ -201,12 +206,26 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
   }
 
-  _getDhcpcdFilePath() {
+
+  _getDeprecatedDhcpcdFilePath() {
     return `/run/resolvconf/interface/${this.name}.dhcpcd`;
   }
 
+  _getDhcpcdFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.v6`;
+  }
+
+  _getDhcpcdRaFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.ra`;
+  }
+
   async _getDHCPCDLease6Filename() {
-    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+    let dhcpcdBinPath = platform.getBinaryPath() + '/dhcpcd';
+    // this.log.debug(`checking if dhcpcd binary exists: ${dhcpcdBinPath}`);
+    if (!await fs.accessAsync(dhcpcdBinPath, fs.constants.F_OK).then(() => true).catch((err) => false)) {
+      dhcpcdBinPath = 'dhcpcd';
+    }
+    const version = await exec(`${dhcpcdBinPath} --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
       return null;
     });
@@ -873,6 +892,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async markOutputConnection() {
+    if (!this.isWAN())
+      return;
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
@@ -914,7 +935,7 @@ class InterfaceBasePlugin extends Plugin {
   async resetHardwareAddress() {
     if (!this.hasHardwareAddress())
       return;
-    await platform.resetHardwareAddress(this.name);
+    await platform.resetHardwareAddress(this.name, this.networkConfig);
   }
 
   getDefaultMTU() {
@@ -952,7 +973,7 @@ class InterfaceBasePlugin extends Plugin {
       return;
     }
 
-    if (this.networkConfig.allowHotplug === true) {
+    if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
       if (!ifRegistered)
         return;
@@ -1044,8 +1065,9 @@ class InterfaceBasePlugin extends Plugin {
 
   async getOrigDNS6Nameservers() {
     if (!this.isIPv6Enabled()) return [];
-    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
-    return dns6 || [];
+    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    const dns6Ra = await fs.readFileAsync(this._getDhcpcdRaFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    return _.uniq([...dns6, ...dns6Ra]) || [];
   }
 
   async getPrefixDelegations() {
@@ -1551,7 +1573,13 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async getSubIntfs() {
+    return null;
+  }
+
   async _getRtId() {
+    if (!this.isWAN())
+      return null;
     if (!this.rtId) {
       this.rtId = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     }
@@ -1559,7 +1587,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1579,7 +1607,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getDns6Nameservers(),
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
-      this.isInterfacePresent()
+      this.isInterfacePresent(),
+      this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     if (ip4 && ip4.length > 0 && !ip4.includes("/"))
@@ -1592,7 +1621,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
   onEvent(e) {
@@ -1631,7 +1660,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
-        if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+        if (this.networkConfig && this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
           pl.acquireApplyLock(async () => {
             platform.clearMacCache(this.name);
             this._reapplyNeeded = true;
@@ -1650,7 +1679,12 @@ class InterfaceBasePlugin extends Plugin {
             await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
               this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
             });
-            // this.propagateConfigChanged(true);
+            this.propagateConfigChanged(true);
+            this._reapplyNeeded = false;
+            pl.scheduleReapply();
+            return pl.publishIfaceChangeApplied();
+          }).catch((err) => {
+            this.log.error(`Failed to apply DNSv6 settings on ${this.name}`, err.message);
           });
         }
         break;
@@ -1709,6 +1743,11 @@ class InterfaceBasePlugin extends Plugin {
           currentStatus.successCount++;
           currentStatus.failureCount = 0;
         } else {
+          if (this.isEthernetBasedInterface()) {
+            platform.resetEthernet().catch((err) => {
+              this.log.error(`Failed to reset ethernet on ${this.name}`, err.message);
+            });
+          }
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
           const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
@@ -1764,6 +1803,10 @@ class InterfaceBasePlugin extends Plugin {
   async publishWANStateChange(changeDesc) {
     this.log.info("publish WAN state change", changeDesc);
     await pclient.publishAsync(Message.MSG_FR_WAN_STATE_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  isEthernetBasedInterface() {
+    return false;
   }
 }
 

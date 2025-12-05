@@ -144,6 +144,9 @@ async function generateWpaSupplicantConfig(key, values) {
     case "wep_key1":
     case "wep_key2":
     case "wep_key3":
+    case "identity":
+    case "phase2":
+    case "sae_password":
       // use hex string for ssid/eap password in case of special characters
       value = getHexStrArray(value).join("");
       break;
@@ -158,11 +161,8 @@ async function generateWpaSupplicantConfig(key, values) {
     case "private_key2":
       value = `"${storage.getSavedFilePath(value)}"`;
       break;
-    case "identity":
     case "anonymous_identity":
     case "phase1":
-    case "phase2":
-    case "sae_password":
     case "private_key_passwd":
     case "private_key2_passwd":
       value = `"${value}"`;
@@ -263,6 +263,29 @@ function generateUUID() {
   return uuid.v4().replace(/-/g,"").substring(ts.length) + ts;
 }
 
+/**
+ * Generate a random MAC address with a three-byte prefix
+ * @param {string} prefix - Three-byte MAC prefix (e.g., "00:11:22")
+ * @returns {string} Random MAC address with the specified prefix
+ */
+function generateRandomMacAddress(prefix = "20:6D:31") {
+  // Validate prefix format (should be 3 bytes in XX:XX:XX format)
+  const prefixPattern = /^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})$/;
+  if (!prefixPattern.test(prefix)) {
+    throw new Error('Invalid MAC prefix format. Expected format: XX:XX:XX');
+  }
+
+  // Generate 3 random bytes for the remaining part
+  const randomBytes = [];
+  for (let i = 0; i < 3; i++) {
+    randomBytes.push(Math.floor(Math.random() * 256).toString(16).padStart(2, '0'));
+  }
+
+  // Combine prefix with random bytes
+  const randomMac = `${prefix}:${randomBytes.join(':')}`;
+  return randomMac.toUpperCase();
+}
+
 module.exports = {
   extend: extend,
   getPreferredBName: getPreferredBName,
@@ -273,6 +296,7 @@ module.exports = {
   generatePSK: generatePSK,
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
   generateUUID,
+  generateRandomMacAddress,
   parseEscapedString,
   parseHexString,
   freqToChannel,
