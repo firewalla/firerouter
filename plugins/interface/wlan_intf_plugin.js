@@ -214,6 +214,12 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       await exec('echo 4 > /proc/net/rtl8821cu/log_level').catch(()=>{})
     }
 
+    if (this.networkConfig.wds && platform.isWDSSupported()) {
+      await exec(`sudo iw dev ${this.name} set 4addr on`).catch((err) => {});
+    } else {
+      await exec(`sudo iw dev ${this.name} set 4addr off`).catch((err) => {});
+    }
+
     if (this.networkConfig.wpaSupplicant) {
 
       await this.writeConfigFile()
