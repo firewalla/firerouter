@@ -772,6 +772,10 @@ class OrangePlatform extends Platform {
   getWpaCliScanResultCommand() {
     return 'all_bss';
   }
+
+  isWDSSupported() {
+    return true;
+  }
 }
 
 module.exports = OrangePlatform;
