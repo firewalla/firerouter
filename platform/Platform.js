@@ -399,6 +399,10 @@ class Platform {
   getWpaCliScanResultCommand() {
     return 'scan_result';
   }
+
+  isWDSSupported() {
+    return false;
+  }
 }
 
 module.exports = Platform;
