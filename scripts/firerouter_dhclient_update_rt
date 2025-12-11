@@ -1,0 +1,63 @@
+#!/bin/sh
+
+execute_and_log() {
+  if [ -z "$1" ]; then
+    return 1
+  fi
+  command="$*"
+  # echo "command: $command" >> /tmp/dhclient.log
+  eval "$command"
+}
+
+add_route() {
+  iface="$1"
+  dhcp_server="$2"
+  gateway="$3"
+
+  if [ -z "$iface" ] || [ -z "$dhcp_server" ] || [ -z "$gateway" ]; then
+    return 0
+  fi
+
+  for rt_table in $rt_tables; do
+    execute_and_log "sudo ip route replace $dhcp_server via $gateway dev $iface table $rt_table"
+  done
+}
+
+delete_route() {
+  dhcp_server="$1"
+  for rt_table in $rt_tables; do
+    execute_and_log "sudo ip route del $dhcp_server table $rt_table"
+  done
+}
+
+echo "Reason: $reason" >> /tmp/dhclient.log
+
+if [ -z "$rt_tables" ]; then
+  rt_tables="main"
+fi
+
+iface="$interface"
+dhcp_server="${new_dhcp_server_identifier}"
+gateway="$(echo "$new_routers" | awk '{print $1}')"
+
+case "$reason" in
+  BOUND|REBOOT)
+    add_route "$iface" "$dhcp_server" "$gateway"
+    ;;
+  RENEW|REBIND)
+    old_dhcp_server="${old_dhcp_server_identifier}"
+    old_gateway="$(echo "$old_routers" | awk '{print $1}')"
+
+    if [ "$old_dhcp_server" = "$dhcp_server" ] && [ "$old_gateway" = "$gateway" ]; then
+      return 0
+    fi
+
+    add_route "$iface" "$dhcp_server" "$gateway"
+    ;;
+  EXPIRE|FAIL|STOP)
+    dhcp_server="${old_dhcp_server_identifier}"
+    if [ -n "$dhcp_server" ]; then
+      delete_route "$dhcp_server"
+    fi
+    ;;
+esac
