@@ -67,21 +67,26 @@ class InterfaceBasePlugin extends Plugin {
         this.log.error(`Failed to flush ip address of ${this.name}`, err);
       });
       // make sure to stop dhclient no matter if dhcp is enabled
-      await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+      if (this.networkConfig.dhcp) {
+        await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+      }
     }
     if (!af || af == 6) {
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
-      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
-      await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
-      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
-      const lease6Filename = await this._getDHCPCDLease6Filename();
-      if (lease6Filename)
-        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
-
-      await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
-      await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
-      await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
-
+      if (this.networkConfig.dhcp6) {
+        await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      }
+      if (this.isWAN() || this.isLAN()) {
+        await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+        // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+        const lease6Filename = await this._getDHCPCDLease6Filename();
+        if (lease6Filename)
+          await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+  
+        await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
+        await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
+        await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
+      }
       // regenerate ipv6 link local address based on EUI64
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
@@ -103,38 +108,47 @@ class InterfaceBasePlugin extends Plugin {
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
 
       // remove cached router-advertisement ipv6 address file
-      await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+      if (this.networkConfig.dhcp6) {
+        await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+      }
         
-      // flush related routing tables
-      await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
-      await routing.flushRoutingTable(`${this.name}_default`).catch((err) => {});
+      if (this.isWAN() || this.isLAN()) {
+        // flush related routing tables
+        await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
+        await routing.flushRoutingTable(`${this.name}_default`).catch((err) => {});
 
-      // remove related policy routing rules
-      await routing.removeInterfaceRoutingRules(this.name);
-      await routing.removeInterfaceGlobalRoutingRules(this.name);
-      await routing.removeInterfaceGlobalLocalRoutingRules(this.name);
+        // remove related policy routing rules
+        await routing.removeInterfaceRoutingRules(this.name).catch((err) => {});
+        await routing.removeInterfaceGlobalRoutingRules(this.name).catch((err) => {});
+        if (this.isLAN())
+          await routing.removeInterfaceGlobalLocalRoutingRules(this.name).catch((err) => {});
+      }
 
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
-        // restore reverse path filtering settings
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {});
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
+          // restore reverse path filtering settings
+          exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {})
+        ]);
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
-        });
-        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
-        });
-        await this.unmarkOutputConnection(rtid).catch((err) => {
-          this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
-        });
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {}),
+          exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          this.unmarkOutputConnection(rtid).catch((err) => {
+            this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
+          })
+        ]);
       }
       // remove from lan_roubable anyway
       if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
@@ -178,8 +192,12 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp) {
         await fs.unlinkAsync(this._getDHClientConfigPath()).catch((err) => {});
       }
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { });
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
+      if (this.isWAN() || this.isLAN()) {
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { }),
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { }),
+        ]);
+      }
     }
 
     // This is a special logic that hwAddr will NOT be reset to factory during FLUSH
@@ -341,16 +359,20 @@ class InterfaceBasePlugin extends Plugin {
       await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
-      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`);
-      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6);
-      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
-        this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
-      });
-      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-        this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
-      });
+      await Promise.all(
+        [
+          routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`),
+          routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6),
+          routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`),
+          routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6),
+          exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
+            this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+          })
+        ]
+      );
     }
   }
 
@@ -760,8 +782,10 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.isWAN()) {
       // considered as WAN interface, accessbile to "wan_routable"
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
+      await Promise.all([
+        routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
+        routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
+      ]);
     }
     if (this.isLAN()) {
       // considered as LAN interface, add to "lan_routable" and "wan_routable"
