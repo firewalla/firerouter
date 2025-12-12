@@ -1679,9 +1679,6 @@ class InterfaceBasePlugin extends Plugin {
             await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
               this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
             });
-            this.propagateConfigChanged(true);
-            this._reapplyNeeded = false;
-            pl.scheduleReapply();
             return pl.publishIfaceChangeApplied();
           }).catch((err) => {
             this.log.error(`Failed to apply DNSv6 settings on ${this.name}`, err.message);

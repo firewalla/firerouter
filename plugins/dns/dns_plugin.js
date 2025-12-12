@@ -246,6 +246,7 @@ class DNSPlugin extends Plugin {
     const eventType = event.getEventType(e);
     switch (eventType) {
       case event.EVENT_WAN_SWITCHED:
+      case event.EVENT_DNS6_CHANGE:
       case event.EVENT_IP_CHANGE: {
         this._reapplyNeeded = true;
         pl.scheduleReapply();
