@@ -776,6 +776,10 @@ class OrangePlatform extends Platform {
   isWDSSupported() {
     return true;
   }
+
+  async setWifiDynamicDebug() {
+    await exec(`echo -n 'module mac80211 -p' | sudo tee /sys/kernel/debug/dynamic_debug/control`).catch((err) => { });
+  }
 }
 
 module.exports = OrangePlatform;
