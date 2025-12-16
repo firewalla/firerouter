@@ -779,6 +779,19 @@ class OrangePlatform extends Platform {
 
   async setWifiDynamicDebug() {
     await exec(`echo -n 'module mac80211 -p' | sudo tee /sys/kernel/debug/dynamic_debug/control`).catch((err) => { });
+    /*
+      MT76_DBG_DEV = BIT(0),
+      MT76_DBG_BSS = BIT(1),
+      MT76_DBG_STA = BIT(2),
+      MT76_DBG_CHAN = BIT(3),
+      MT76_DBG_MLD = BIT(4),
+      MT76_DBG_TXRX = BIT(5),
+      MT76_DBG_SCAN = BIT(6),
+      MT76_DBG_TEST = BIT(7),
+
+      MT76_DBG_ALL = 0xffffffff,
+     */
+    await exec(`echo 152 | sudo tee /sys/module/mt7996e/parameters/mt76_debug_mask`).catch((err) => { });
   }
 }
 
