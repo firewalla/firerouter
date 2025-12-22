@@ -176,6 +176,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     const v4Subnets = this.networkConfig.ipv4s ? this.networkConfig.ipv4s.map(addr => new Address4(addr)) : [new Address4(this.networkConfig.ipv4)];
     let v6Subnets = [];
     if (this.networkConfig.ipv6) {
+      const ipv6 = this.networkConfig.ipv6;
       v6Subnets.push(...(_.isArray(ipv6) ? ipv6.map(addr => new Address6(addr)) : [new Address6(ipv6)]));
     }
     if (_.isArray(this.networkConfig.peers)) {

@@ -41,6 +41,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await platform.overrideWLANKernelModule();
     await platform.reloadWLANKernelModule();
     await platform.installWLANTools();
+    await platform.setWifiDynamicDebug();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
