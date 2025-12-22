@@ -779,6 +779,9 @@ class OrangePlatform extends Platform {
 
   async setWifiDynamicDebug() {
     await exec(`echo -n 'module mac80211 -p' | sudo tee /sys/kernel/debug/dynamic_debug/control`).catch((err) => { });
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-mt7996e.conf /etc/rsyslog.d/`).catch((err) => { });
+    const pl = require('../../plugins/plugin_loader.js');
+    pl.scheduleRestartRsyslog();
   }
 }
 
