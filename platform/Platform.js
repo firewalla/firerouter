@@ -403,6 +403,10 @@ class Platform {
   isWDSSupported() {
     return false;
   }
+
+  async setWifiDynamicDebug() {
+    return;
+  }
 }
 
 module.exports = Platform;
