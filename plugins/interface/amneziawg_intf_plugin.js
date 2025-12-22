@@ -58,12 +58,8 @@ class AmneziawgInterfacePlugin extends WireguardInterfacePlugin {
   }
 
   getDefaultMTU() {
-    // in case wireguard is 1412:
-    // Obfuscation mode (H1–H4/S1–S2, etc. enabled)    +4~8 bytes
-    // High obfuscation (with JC/JMIN/JMAX enabled + random padding)  +8~16 bytes
-    // Leave an 8-byte safety margin to prevent PMTU ICMP anomalies.
-    // 1412 - 8 - 16 - 8 = 1380
-    return 1380;
+    // since official amneziawg client (both mac and windows) is using 1376 as MTU, we use the same value here
+    return 1376;
   }
 
 
