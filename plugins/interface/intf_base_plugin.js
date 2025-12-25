@@ -1131,13 +1131,19 @@ class InterfaceBasePlugin extends Plugin {
     return ip6s;
   }
 
+  isIPv6ULA(ip) {
+    if (!ip) return false;
+    const normalized = ip.toLowerCase();
+    return normalized.startsWith('fc') || normalized.startsWith('fd');
+  }
+
   async getRoutableIPv6Addresses() {
     const ip6s = await this.getIPv6Addresses();
     if(_.isEmpty(ip6s)) {
       return ip6s;
     }
 
-    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6) || this.isIPv6ULA(ip6));
   }
 
   async getHardwareAddress() {
