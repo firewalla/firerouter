@@ -1104,7 +1104,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv4Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
     // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
     const staticIpv4s = {};
@@ -1122,7 +1122,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
     // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
     let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
