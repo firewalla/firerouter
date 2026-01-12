@@ -277,6 +277,12 @@ class NetworkConfigManager {
 
     this.wanTestResult[iface] = result.ts;
 
+    if (result.active) {
+      // if the wan is active after live check, immediately set the wan connectivity status to true on this wan to speed up the status update
+      const event = require('./event.js');
+      intfPlugin.onEvent(event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: iface, active: true, forceState: true, failures: []}));
+    }
+
     return result;
   }
 
