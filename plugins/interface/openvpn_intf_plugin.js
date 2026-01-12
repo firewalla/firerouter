@@ -144,7 +144,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
-        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+        this.log.debug(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
         return null;
       });
     if (localIp) {
