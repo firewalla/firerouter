@@ -21,6 +21,15 @@ sudo iptables -w -t nat -F FR_WIREGUARD
 sudo iptables -w -t nat -N FR_AMNEZIA_WG &> /dev/null
 sudo iptables -w -t nat -F FR_AMNEZIA_WG
 
+# save FR_SNAT to FR_SNAT_TMP temporarily to avoid no snat during firerouter setup
+sudo iptables -w -t nat -F FR_SNAT_TMP &> /dev/null
+sudo iptables -w -t nat -C POSTROUTING -j FR_SNAT_TMP &>/dev/null && sudo iptables -w -t nat -D POSTROUTING -j FR_SNAT_TMP &>/dev/null
+sudo iptables -w -t nat -X FR_SNAT_TMP &> /dev/null
+sudo iptables -w -t nat -E FR_SNAT FR_SNAT_TMP &>/dev/null
+if sudo iptables -w -t nat -L FR_SNAT_TMP &>/dev/null; then
+  sudo iptables -w -t nat -A POSTROUTING -j FR_SNAT_TMP &>/dev/null
+fi
+
 sudo iptables -w -t nat -N FR_POSTROUTING &> /dev/null
 sudo iptables -w -t nat -F FR_POSTROUTING
 sudo iptables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING
