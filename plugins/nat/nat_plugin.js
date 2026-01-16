@@ -23,9 +23,6 @@ const _  = require('lodash');
 
 class NatPlugin extends Plugin {
 
-  // Stores the status of srcSubnets that are active for each WAN port.
-  static subnetsState = {};
-
   constructor(name) {
     super(name);
     this._ip4s = [];
@@ -152,10 +149,10 @@ class NatPlugin extends Plugin {
       this.log.error("Cannot find interface plugin " + iif);
     }
   }
-
-
-
-
 }
+
+// Stores the status of srcSubnets that are active for each WAN port.
+// put here to compatibility with Node.js 10 on gold v1 u18
+NatPlugin.subnetsState = {};
 
 module.exports = NatPlugin;
