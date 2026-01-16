@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -1453,7 +1453,7 @@ class InterfaceBasePlugin extends Plugin {
     const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
 
     if (sendEvent)
-      era.addStateEvent(EventConstants.EVENT_DNS_STATE, af == 4 ? nameserver : `${nameserver}:[${srcIP}]`, dnsResult ? 0 : 1, {
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
         "wan_intf_name":wanName,
         "wan_intf_uuid":wanUUID,
         "wan_intf_address":srcIP,
