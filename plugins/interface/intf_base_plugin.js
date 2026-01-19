@@ -55,6 +55,9 @@ const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 5;
 const DUID_RECORD_MAX = 10;
 
+const IP6_NUM_DISCARD_DEPRECATED = 100;
+const IP6_NUM_MAX = 1000;
+
 class InterfaceBasePlugin extends Plugin {
 
   async isInterfacePresent() {
@@ -1124,10 +1127,18 @@ class InterfaceBasePlugin extends Plugin {
   async getIPv6Addresses() {
     if (!_.get(this.networkConfig, "enabled", false))
       return null;
-    // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
-    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
-    if (ip6s)
-      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    // there may be link-local ipv6 on interface, which is not available in static ipv6 config,
+    // always try to get ipv6 addresses from ip addr output
+    let ip6s = await exec(`ip addr show dev ${this.name}`, {encoding: "utf8"})
+      .then(result => result.stdout.trim() || null).catch(err => null);
+    if (!ip6s) return null;
+
+    ip6s = ip6s.split("\n").filter(l => l.length > 0 && l.includes("inet6 "))
+    if (ip6s.length > IP6_NUM_DISCARD_DEPRECATED)
+      ip6s = ip6s.filter(l => !l.includes("deprecated"));
+    if (ip6s.length > IP6_NUM_MAX)
+      ip6s = ip6s.slice(0, IP6_NUM_MAX);
+    ip6s = ip6s.map(l => l.trim().split(" ")[1]);
     return ip6s;
   }
 
@@ -1629,7 +1640,7 @@ class InterfaceBasePlugin extends Plugin {
       this._getRtId(),
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
-      exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
+      this.getIPv6Addresses(),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDns4Nameservers(),
@@ -1641,10 +1652,6 @@ class InterfaceBasePlugin extends Plugin {
       this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-    if (ip4 && ip4.length > 0 && !ip4.includes("/"))
-      ip4 = `${ip4}/32`;
-    if (ip6)
-      ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
