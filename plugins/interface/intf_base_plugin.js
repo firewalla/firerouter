@@ -48,6 +48,7 @@ Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const sysctl = require('../../util/sysctl.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const DHCP_RESTART_INTERVAL = 4;
@@ -402,6 +403,10 @@ class InterfaceBasePlugin extends Plugin {
 
     if(disabled) {
       return;
+    }
+
+    if (this.isLAN()) {
+      await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
     }
 
     if (this.networkConfig.dhcp6) {

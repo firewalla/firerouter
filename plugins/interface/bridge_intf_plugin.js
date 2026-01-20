@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -18,6 +18,8 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const sysctl = require('../../util/sysctl.js');
+
 const fsp = require('fs').promises;
 const _ = require('lodash');
 
@@ -90,6 +92,13 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         })
       }
     return true;
+  }
+
+  async applyIpv6Settings() {
+    if (this.isWAN() && this.isIPv6Enabled()) {
+      await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
+    }
+    await super.applyIpv6Settings();
   }
 
   getDefaultMTU() {
