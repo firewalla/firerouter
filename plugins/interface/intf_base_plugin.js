@@ -1134,6 +1134,9 @@ class InterfaceBasePlugin extends Plugin {
     if (!ip6s) return null;
 
     ip6s = ip6s.split("\n").filter(l => l.length > 0 && l.includes("inet6 "))
+    // a protection for massive number of IPs
+    // once number of IPs exceeds the threshold, no longer guarantee everything works in Firewalla
+    // but this should not cause any disaster
     if (ip6s.length > IP6_NUM_DISCARD_DEPRECATED)
       ip6s = ip6s.filter(l => !l.includes("deprecated"));
     if (ip6s.length > IP6_NUM_MAX)
