@@ -405,9 +405,7 @@ class InterfaceBasePlugin extends Plugin {
       return;
     }
 
-    if (this.isLAN()) {
-      await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
-    }
+    await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
 
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
