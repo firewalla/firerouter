@@ -365,6 +365,8 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(
         [
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_announce`, 1).catch((err) => {}),
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_ignore`, 2).catch((err) => {}),
           routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`),
           routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6),
           routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`),
