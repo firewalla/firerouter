@@ -322,7 +322,7 @@ router.post('/set',
       }
   
       try {
-        errors = await ncm.validateNcid(newConfig, inTransaction, ignoreNcid);
+        errors = await ncm.validateNcidOrReqId(newConfig, inTransaction, ignoreNcid);
         if (errors && errors.length !== 0) {
           log.error("Invalid network config", errors);
           res.status(400).json({ errors: errors });

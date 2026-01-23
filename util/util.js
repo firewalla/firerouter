@@ -32,58 +32,6 @@ function extend(target) {
   return target;
 }
 
-function getPreferredName(hostObject) {
-  if (hostObject == null) {
-    return null
-  }
-
-  if (hostObject.name) {
-    return hostObject.name // always use user customized name first
-  }
-
-  return getPreferredBName(hostObject);
-}
-
-
-function getPreferredBName(hostObject) {
-
-  if (hostObject == null) {
-    return null;
-  }
-
-  if (hostObject.cloudName) {
-    return hostObject.cloudName
-  }
-
-  if (hostObject.spoofMeName) {
-    return hostObject.spoofMeName
-  }
-
-  if (hostObject.dhcpName) {
-    return hostObject.dhcpName
-  }
-
-  if (hostObject.bonjourName) {
-    return hostObject.bonjourName
-  }
-
-  if (hostObject.bname) {
-    return hostObject.bname
-  }
-
-  if (hostObject.pname) {
-    return hostObject.pname
-  }
-  if (hostObject.hostname) {
-    return hostObject.hostname
-  }
-  if (hostObject.macVendor != null) {
-    let name = hostObject.macVendor
-    return name
-  }
-  return hostObject.ipv4Addr
-}
-
 function delay(t) {
   return new Promise(function (resolve) {
     setTimeout(resolve, t);
@@ -288,8 +236,6 @@ function generateRandomMacAddress(prefix = "20:6D:31") {
 
 module.exports = {
   extend: extend,
-  getPreferredBName: getPreferredBName,
-  getPreferredName: getPreferredName,
   delay: delay,
   wrapIptables: wrapIptables,
   getHexStrArray: getHexStrArray,
