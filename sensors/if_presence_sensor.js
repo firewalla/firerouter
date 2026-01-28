@@ -23,6 +23,7 @@ const ncm = require('../core/network_config_mgr.js');
 const r = require('../util/firerouter.js');
 const Message = require('../core/Message.js');
 const EventConstants = require('../event/EventConstants.js');
+const platform = require('../platform/PlatformLoader.js').getPlatform();
 let scheduleUpdateWatchersTask = null;
 
 class IfPresenceSensor extends Sensor {
@@ -53,7 +54,7 @@ class IfPresenceSensor extends Sensor {
     const interfaces = await ncm.getInterfaces();
     for (const intf of Object.keys(interfaces)) {
       const config = interfaces[intf].config;
-      if (config.allowHotplug === true) {
+      if (config.allowHotplug === true && platform.isHotplugSupported(intf)) {
         const listener = (curr, prev) => {
           if (curr.isDirectory() !== prev.isDirectory() || curr.ctimeMs > prev.ctimeMs) {
             const intfPlugin = pl.getPluginInstance("interface", intf);
@@ -83,6 +84,9 @@ class IfPresenceSensor extends Sensor {
         else
           delete this.activeIntfs[intf];
         era.addStateEvent(EventConstants.EVENT_IF_HOTPLUG_STATE, intf, ifExists ? 0 : 1)
+      } else {
+        if (config.allowHotplug === true)
+          this.log.info(`${intf} is not hotplug supported on this platform, skipping`);
       }
     }
   }
