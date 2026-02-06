@@ -255,3 +255,33 @@ describe('Test Routing WAN', function(){
   });
 
 });
+
+describe('Test Routing DNS', function(){
+  this.timeout(30000);
+
+  before(async() => {
+    this.plugin = new RoutingPlugin('routing');
+  });
+
+  it('should remove dns routes', async() => {
+    this.plugin._dnsRoutes = {
+      "eth0": [
+        {dest: "192.168.1.10", gw: "192.168.1.1", viaIntf: "eth0", tableName: "main", af: 4},
+        {dest: "192.168.20.13", gw: "192.168.20.1", viaIntf: "eth0", tableName: "eth0_default", af: 4},
+        {dest: "2001:4860:4860::8888", gw: "fe80::20c:29ff:fe16:fa78", viaIntf: "eth0", tableName: "main", af: 6},
+        {dest: "2409:871e:d00:40::1", gw: "fe80::20c:29ff:fe16:fa78", viaIntf: "eth0", tableName: "eth0_default", af: 6},
+      ],
+      "eth1": [
+        {dest: "192.168.10.254", gw: "192.168.10.1", viaIntf: "eth1", tableName: "main", af: 4},
+        {dest: "192.168.1.1", gw: "192.168.1.1", viaIntf: "eth1", tableName: "eth1_default", af: 4},
+        {dest: "2001:558:feed::1", gw: "fe80::226d:31ff:fe51:8", viaIntf: "eth1", tableName: "main", af: 6},
+        {dest: "2409:871e:2700:21::/64", gw: "fe80::226d:31ff:fe51:8", viaIntf: "eth1", tableName: "eth1_default", af: 6},
+      ]
+    };
+    await this.plugin._removeDeviceDnsRouting([{name: "eth0"}]);
+    expect(this.plugin._dnsRoutes["eth0"]).to.be.null;
+    expect(this.plugin._dnsRoutes["eth1"]).to.not.be.empty;
+    await this.plugin._removeDeviceDnsRouting([{name: "eth1"}], 6);
+    expect(this.plugin._dnsRoutes["eth1"].length).to.equals(2);
+  });
+});

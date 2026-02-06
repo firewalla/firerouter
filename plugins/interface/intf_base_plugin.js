@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -48,12 +48,16 @@ Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const sysctl = require('../../util/sysctl.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const DHCP_RESTART_INTERVAL = 4;
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 5;
 const DUID_RECORD_MAX = 10;
+
+const IP6_NUM_DISCARD_DEPRECATED = 100;
+const IP6_NUM_MAX = 1000;
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -67,16 +71,26 @@ class InterfaceBasePlugin extends Plugin {
         this.log.error(`Failed to flush ip address of ${this.name}`, err);
       });
       // make sure to stop dhclient no matter if dhcp is enabled
-      await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+      if (this.networkConfig.dhcp) {
+        await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+      }
     }
     if (!af || af == 6) {
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
-      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
-      await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
-      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
-      const lease6Filename = await this._getDHCPCDLease6Filename();
-      if (lease6Filename)
-        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+      if (this.networkConfig.dhcp6) {
+        await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      }
+      if (this.isWAN() || this.isLAN()) {
+        await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+        // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+        const lease6Filename = await this._getDHCPCDLease6Filename();
+        if (lease6Filename)
+          await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+  
+        await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
+        await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
+        await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
+      }
       // regenerate ipv6 link local address based on EUI64
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
@@ -98,38 +112,47 @@ class InterfaceBasePlugin extends Plugin {
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
 
       // remove cached router-advertisement ipv6 address file
-      await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+      if (this.networkConfig.dhcp6) {
+        await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+      }
         
-      // flush related routing tables
-      await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
-      await routing.flushRoutingTable(`${this.name}_default`).catch((err) => {});
+      if (this.isWAN() || this.isLAN()) {
+        // flush related routing tables
+        await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
+        await routing.flushRoutingTable(`${this.name}_default`).catch((err) => {});
 
-      // remove related policy routing rules
-      await routing.removeInterfaceRoutingRules(this.name);
-      await routing.removeInterfaceGlobalRoutingRules(this.name);
-      await routing.removeInterfaceGlobalLocalRoutingRules(this.name);
+        // remove related policy routing rules
+        await routing.removeInterfaceRoutingRules(this.name).catch((err) => {});
+        await routing.removeInterfaceGlobalRoutingRules(this.name).catch((err) => {});
+        if (this.isLAN())
+          await routing.removeInterfaceGlobalLocalRoutingRules(this.name).catch((err) => {});
+      }
 
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
-        // restore reverse path filtering settings
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {});
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
+          // restore reverse path filtering settings
+          exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {})
+        ]);
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
-        });
-        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
-        });
-        await this.unmarkOutputConnection(rtid).catch((err) => {
-          this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
-        });
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {}),
+          exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          this.unmarkOutputConnection(rtid).catch((err) => {
+            this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
+          })
+        ]);
       }
       // remove from lan_roubable anyway
       if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
@@ -173,8 +196,12 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp) {
         await fs.unlinkAsync(this._getDHClientConfigPath()).catch((err) => {});
       }
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { });
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
+      if (this.isWAN() || this.isLAN()) {
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { }),
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { }),
+        ]);
+      }
     }
 
     // This is a special logic that hwAddr will NOT be reset to factory during FLUSH
@@ -201,12 +228,26 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
   }
 
-  _getDhcpcdFilePath() {
+
+  _getDeprecatedDhcpcdFilePath() {
     return `/run/resolvconf/interface/${this.name}.dhcpcd`;
   }
 
+  _getDhcpcdFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.v6`;
+  }
+
+  _getDhcpcdRaFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.ra`;
+  }
+
   async _getDHCPCDLease6Filename() {
-    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+    let dhcpcdBinPath = platform.getBinaryPath() + '/dhcpcd';
+    // this.log.debug(`checking if dhcpcd binary exists: ${dhcpcdBinPath}`);
+    if (!await fs.accessAsync(dhcpcdBinPath, fs.constants.F_OK).then(() => true).catch((err) => false)) {
+      dhcpcdBinPath = 'dhcpcd';
+    }
+    const version = await exec(`${dhcpcdBinPath} --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
       return null;
     });
@@ -322,16 +363,22 @@ class InterfaceBasePlugin extends Plugin {
       await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
-      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`);
-      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6);
-      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
-        this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
-      });
-      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-        this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
-      });
+      await Promise.all(
+        [
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_announce`, 1).catch((err) => {}),
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_ignore`, 2).catch((err) => {}),
+          routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`),
+          routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6),
+          routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`),
+          routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6),
+          exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
+            this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+          })
+        ]
+      );
     }
   }
 
@@ -359,6 +406,8 @@ class InterfaceBasePlugin extends Plugin {
     if(disabled) {
       return;
     }
+
+    await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
 
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
@@ -741,8 +790,10 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.isWAN()) {
       // considered as WAN interface, accessbile to "wan_routable"
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
+      await Promise.all([
+        routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
+        routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
+      ]);
     }
     if (this.isLAN()) {
       // considered as LAN interface, add to "lan_routable" and "wan_routable"
@@ -873,6 +924,8 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async markOutputConnection() {
+    if (!this.isWAN())
+      return;
     const ip4s = await this.getIPv4Addresses();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     if (ip4s && rtid) {
@@ -914,7 +967,7 @@ class InterfaceBasePlugin extends Plugin {
   async resetHardwareAddress() {
     if (!this.hasHardwareAddress())
       return;
-    await platform.resetHardwareAddress(this.name);
+    await platform.resetHardwareAddress(this.name, this.networkConfig);
   }
 
   getDefaultMTU() {
@@ -952,7 +1005,7 @@ class InterfaceBasePlugin extends Plugin {
       return;
     }
 
-    if (this.networkConfig.allowHotplug === true) {
+    if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
       if (!ifRegistered)
         return;
@@ -1044,8 +1097,9 @@ class InterfaceBasePlugin extends Plugin {
 
   async getOrigDNS6Nameservers() {
     if (!this.isIPv6Enabled()) return [];
-    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
-    return dns6 || [];
+    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    const dns6Ra = await fs.readFileAsync(this._getDhcpcdRaFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    return _.uniq([...dns6, ...dns6Ra]) || [];
   }
 
   async getPrefixDelegations() {
@@ -1058,7 +1112,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv4Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
     // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
     const staticIpv4s = {};
@@ -1076,13 +1130,30 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
-    // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
-    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
-    if (ip6s)
-      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    // there may be link-local ipv6 on interface, which is not available in static ipv6 config,
+    // always try to get ipv6 addresses from ip addr output
+    let ip6s = await exec(`ip addr show dev ${this.name}`, {encoding: "utf8"})
+      .then(result => result.stdout.trim() || null).catch(err => null);
+    if (!ip6s) return null;
+
+    ip6s = ip6s.split("\n").filter(l => l.length > 0 && l.includes("inet6 "))
+    // a protection for massive number of IPs
+    // once number of IPs exceeds the threshold, no longer guarantee everything works in Firewalla
+    // but this should not cause any disaster
+    if (ip6s.length > IP6_NUM_DISCARD_DEPRECATED)
+      ip6s = ip6s.filter(l => !l.includes("deprecated"));
+    if (ip6s.length > IP6_NUM_MAX)
+      ip6s = ip6s.slice(0, IP6_NUM_MAX);
+    ip6s = ip6s.map(l => l.trim().split(" ")[1]);
     return ip6s;
+  }
+
+  isIPv6ULA(ip) {
+    if (!ip) return false;
+    const normalized = ip.toLowerCase();
+    return normalized.startsWith('fc') || normalized.startsWith('fd');
   }
 
   async getRoutableIPv6Addresses() {
@@ -1091,7 +1162,7 @@ class InterfaceBasePlugin extends Plugin {
       return ip6s;
     }
 
-    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6) || this.isIPv6ULA(ip6));
   }
 
   async getHardwareAddress() {
@@ -1401,7 +1472,7 @@ class InterfaceBasePlugin extends Plugin {
     const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
 
     if (sendEvent)
-      era.addStateEvent(EventConstants.EVENT_DNS_STATE, af == 4 ? nameserver : `${nameserver}:[${srcIP}]`, dnsResult ? 0 : 1, {
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
         "wan_intf_name":wanName,
         "wan_intf_uuid":wanUUID,
         "wan_intf_address":srcIP,
@@ -1551,7 +1622,13 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
+  async getSubIntfs() {
+    return null;
+  }
+
   async _getRtId() {
+    if (!this.isWAN())
+      return null;
     if (!this.rtId) {
       this.rtId = await routing.createCustomizedRoutingTable(`${this.name}_default`);
     }
@@ -1559,7 +1636,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -1571,7 +1648,7 @@ class InterfaceBasePlugin extends Plugin {
       this._getRtId(),
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
-      exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
+      this.getIPv6Addresses(),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDns4Nameservers(),
@@ -1579,20 +1656,17 @@ class InterfaceBasePlugin extends Plugin {
       this.getDns6Nameservers(),
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
-      this.isInterfacePresent()
+      this.isInterfacePresent(),
+      this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-    if (ip4 && ip4.length > 0 && !ip4.includes("/"))
-      ip4 = `${ip4}/32`;
-    if (ip6)
-      ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
   onEvent(e) {
@@ -1631,7 +1705,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       case event.EVENT_IF_PRESENT:
       case event.EVENT_IF_DISAPPEAR: {
-        if (this.networkConfig && this.networkConfig.allowHotplug === true) {
+        if (this.networkConfig && this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
           pl.acquireApplyLock(async () => {
             platform.clearMacCache(this.name);
             this._reapplyNeeded = true;
@@ -1650,7 +1724,9 @@ class InterfaceBasePlugin extends Plugin {
             await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
               this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
             });
-            // this.propagateConfigChanged(true);
+            return pl.publishIfaceChangeApplied();
+          }).catch((err) => {
+            this.log.error(`Failed to apply DNSv6 settings on ${this.name}`, err.message);
           });
         }
         break;
@@ -1709,6 +1785,11 @@ class InterfaceBasePlugin extends Plugin {
           currentStatus.successCount++;
           currentStatus.failureCount = 0;
         } else {
+          if (this.isEthernetBasedInterface()) {
+            platform.resetEthernet().catch((err) => {
+              this.log.error(`Failed to reset ethernet on ${this.name}`, err.message);
+            });
+          }
           currentStatus.successCount = 0;
           currentStatus.failureCount++;
           const failureMultipliers = currentStatus.failureCount / DHCP_RESTART_INTERVAL;
@@ -1764,6 +1845,10 @@ class InterfaceBasePlugin extends Plugin {
   async publishWANStateChange(changeDesc) {
     this.log.info("publish WAN state change", changeDesc);
     await pclient.publishAsync(Message.MSG_FR_WAN_STATE_CHANGED, JSON.stringify(changeDesc)).catch((err) => {});
+  }
+
+  isEthernetBasedInterface() {
+    return false;
   }
 }
 
