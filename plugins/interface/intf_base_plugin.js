@@ -1065,11 +1065,14 @@ class InterfaceBasePlugin extends Plugin {
     const result = _.pick(Object.assign({}, this._wanConnState), "ready");
     result.pendingTest = this._pendingTest || false;
     result.active = false;
+    result.inUse = false;
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
       const state = routingPlugin.getWANConnState(this.name);
-      if (state)
+      if (state){
         result.active = state.active || false;
+        result.inUse = state.inUse || false;
+      }
     }
     return result;
   }

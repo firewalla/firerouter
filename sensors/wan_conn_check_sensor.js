@@ -112,7 +112,8 @@ class WanConnCheckSensor extends Sensor {
       const active = result.active;
       const forceState = result.forceState;
       const failures = result.failures;
-      const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures});
+      const carrier = result.carrier;
+      const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures, carrier: carrier});
       event.suppressLogging(e);
       if (!active)
         this.log.warn(`Wan connectivity test failed on ${wanIntfPlugin.name}, failures: ${JSON.stringify(failures)}`);

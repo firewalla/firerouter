@@ -33,6 +33,7 @@ const exec = require('child-process-promise').exec;
 const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
 const WireguardInterfacePlugin = require('../interface/wireguard_intf_plugin.js');
+const InterfaceBasePlugin = require('../interface/intf_base_plugin.js');
 
 class RoutingPlugin extends Plugin {
 
@@ -486,20 +487,38 @@ class RoutingPlugin extends Plugin {
           let activeIntfFound = false;
           let lastActiveIntf = null;
           let currentActiveIntf = null;
+          let inUseIntfFound = false;
           for (const viaIntf of Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq)) { // sort by seq in ascending order
             const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
             const state = await viaIntfPlugin.state();
             const ready = this._wanStatus[viaIntf].ready;
+            const carrier = state.carrier || 0;
             if (this._wanStatus[viaIntf].active === true) {
               lastActiveIntf = viaIntf;
             }
             this._wanStatus[viaIntf].active = ready && !activeIntfFound;
-            if (this._wanStatus[viaIntf].active === true) {
+            if (this._wanStatus[viaIntf].active) {
               activeIntfFound = true;
               currentActiveIntf = viaIntf;
             }
+            // the active intf is the inUse intf, if no active intf, the first carrier==1 intf is the inUse intf
+            if (activeIntfFound) {
+              if (this._wanStatus[viaIntf].active) {
+                for (const k of Object.keys(this._wanStatus)) {
+                  if (k !== viaIntf) this._wanStatus[k].inUse = false;
+                }
+                this._wanStatus[viaIntf].inUse = true;
+              } else {
+                this._wanStatus[viaIntf].inUse = false;
+              }
+            } else {
+              this._wanStatus[viaIntf].inUse = (carrier == '1' && !inUseIntfFound);
+              if (this._wanStatus[viaIntf].inUse) {
+                inUseIntfFound = true;
+              }
+            }
             // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
-            const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100);
+            const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0: 10);
             if (!af || af == 4) {
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
@@ -579,6 +598,11 @@ class RoutingPlugin extends Plugin {
             }
           }
 
+          if (!inUseIntfFound) {
+            const firstIntf = Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq)[0];
+            if (firstIntf) this._wanStatus[firstIntf].inUse = true;
+          }
+
           if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
             // remove ipv6 default route from last active interface
             if (lastActiveIntf && lastActiveIntf !== currentActiveIntf) {
@@ -598,8 +622,12 @@ class RoutingPlugin extends Plugin {
             const ready = this._wanStatus[viaIntf].ready;
             const weight = this._wanStatus[viaIntf].weight || 50;
             const state = await viaIntfPlugin.state();
+            const carrier = state.carrier || 0;
             this._wanStatus[viaIntf].active = ready;
-            const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100);
+            this._wanStatus[viaIntf].carrier = carrier;
+            this._wanStatus[viaIntf].inUse = (this._wanStatus[viaIntf].active === true);
+
+            const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0: 10);
             if (!af || af == 4) {
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
@@ -715,6 +743,17 @@ class RoutingPlugin extends Plugin {
               } else {
                 this.log.info("Failed to get IPv6 gateway of global default interface " + viaIntf);
               }
+            }
+          }
+          if (!Object.keys(this._wanStatus).some((i) => this._wanStatus[i].active === true)) {
+            for (const k of Object.keys(this._wanStatus)) {
+              this._wanStatus[k].inUse = false;
+            }
+            const firstCarrierIntf = Object.keys(this._wanStatus)
+              .sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq)
+              .find((i) => this._wanStatus[i].carrier == '1');
+            if (firstCarrierIntf) {
+              this._wanStatus[firstCarrierIntf].inUse = true;
             }
           }
           if (multiPathDesc.length > 0) {
@@ -959,6 +998,14 @@ class RoutingPlugin extends Plugin {
     });
   }
 
+  getInUseWANPlugins() {
+    if (!this._wanStatus) return null;
+    return Object.keys(this._wanStatus)
+      .filter((i) => this._wanStatus[i].inUse === true)
+      .sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq)
+      .map((i) => this._wanStatus[i].plugin);
+  }
+
   getActiveWANPlugins() {
     if (this._wanStatus)
       return Object.keys(this._wanStatus).filter(i => this._wanStatus[i].active).sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq).map(i => this._wanStatus[i].plugin);
@@ -997,7 +1044,8 @@ class RoutingPlugin extends Plugin {
           seq: this._wanStatus[i].seq,
           ready: this._wanStatus[i].ready,
           active: this._wanStatus[i].active,
-          pendingTest: this._wanStatus[i].pendingTest
+          pendingTest: this._wanStatus[i].pendingTest,
+          inUse: this._wanStatus[i].inUse,
         };
       });
       return result;
@@ -1010,6 +1058,7 @@ class RoutingPlugin extends Plugin {
       return {
         ready: this._wanStatus[name].ready,
         active: this._wanStatus[name].active,
+        inUse: this._wanStatus[name].inUse,
       };
     }
     return null;
@@ -1086,6 +1135,11 @@ class RoutingPlugin extends Plugin {
           this.log.error(`Cannot find interface plugin ${intf} from wan_conn_check event`);
           return;
         }
+        let carrierChanged = false;
+        if(payload.carrier !== undefined && (payload.carrier !== currentStatus.carrier)) {
+          carrierChanged = true;
+          currentStatus.carrier = payload.carrier;
+        }
         currentStatus.pendingTest = false;
         let changeActiveWanNeeded = false;
         let changeDesc = null;
@@ -1140,9 +1194,26 @@ class RoutingPlugin extends Plugin {
               this.log.error("Failed to enrich WAN status", err.message);
             });
           }
+        } else if (carrierChanged && type === "primary_standby") {
+          if (currentStatus.carrier) {
+            // is plugged
+            const activeWanStatus = Object.values(this._wanStatus).filter(s => s.active).sort((a, b) => a.seq - b.seq);
+            if (_.isEmpty(activeWanStatus)) {
+              const inUseIntfs = Object.values(this._wanStatus).filter(s => s.inUse).sort((a, b) => a.seq - b.seq);
+              const failback = !!(this.networkConfig.default && this.networkConfig.default.failback);
+              const shouldSwitch = _.isEmpty(inUseIntfs) ||
+                (failback && inUseIntfs.length > 0 && currentStatus.seq < inUseIntfs[0].seq);
+              if (shouldSwitch)
+                this.scheduleApplyActiveGlobalDefaultRouting({intf:intf, ready: intfPlugin.isReady(),wanSwitched: true,failures: failures});
+            }
+          } else {
+            // is unplugged
+            if (currentStatus.inUse === true)
+              this.scheduleApplyActiveGlobalDefaultRouting({intf:intf, ready: intfPlugin.isReady(),wanSwitched: true,failures: failures});
+          }
         }
       }
-      default:
+      default: 
     }
   }
 
@@ -1218,7 +1289,8 @@ class RoutingPlugin extends Plugin {
             wan_intf_uuid: ifacePlugin.networkConfig.meta.uuid,
             seq: wanStatus[i].seq,
             ready: wanStatus[i].ready,
-            active: wanStatus[i].active
+            active: wanStatus[i].active,
+            inUse: wanStatus[i].inUse
           };
           const ip4s = await ifacePlugin.getIPv4Addresses();
           if (ip4s) {
