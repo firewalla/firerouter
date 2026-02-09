@@ -82,6 +82,7 @@ class WanConnCheckSensor extends Sensor {
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain, null, true);
       this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
         this.log.error("Got error when checking http, err:", err.message);
+        return null;
       });
 
       if (!result)
@@ -89,6 +90,13 @@ class WanConnCheckSensor extends Sensor {
       if (pl.isApplyInProgress()) {
         this.log.info("A network config is being applied, discard WAN connectivity test result");
         return;
+      }
+      const httpResult = _.get(wanIntfPlugin.getWanStatus(), "http");
+      if (httpResult && httpResult.ts >= Date.now() / 1000 - 60 && httpResult.statusCode >= 300 && httpResult.statusCode < 400) {
+        if (!result.active) {
+          this.log.info(`${wanIntfPlugin.name} has captive portal enabled, consider it as connected although connectivity test failed`);
+          result.active = true;
+        }
       }
       const lastAppliedTimestamp = pl.getLastAppliedTimestamp();
       if (lastAppliedTimestamp > t1) {
