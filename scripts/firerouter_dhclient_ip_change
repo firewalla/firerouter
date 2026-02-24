@@ -17,7 +17,7 @@ case "$reason" in
   TIMEOUT)
     if [ "$exit_status" = "0" ]; then
       ip_changed="1"
-      record_needed = "1"
+      record_needed="1"
     fi
     ;;
 esac
