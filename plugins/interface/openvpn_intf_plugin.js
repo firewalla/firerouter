@@ -141,10 +141,15 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async getIPv4Addresses() {
     const ip4s = []
+    // check if file /sys/class/net/${this.name} exists
+    const fileExists = await fs.accessAsync(`/sys/class/net/${this.name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return ip4s;
+    }
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
-        this.log.debug(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
+        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
         return null;
       });
     if (localIp) {
@@ -159,6 +164,11 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async getIPv6Addresses() {
     const ip6s = []
+    // check if file /sys/class/net/${this.name} exists
+    const fileExists = await fs.accessAsync(`/sys/class/net/${this.name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return ip6s;
+    }
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local6`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
