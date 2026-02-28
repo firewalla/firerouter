@@ -27,6 +27,7 @@ const ip = require('ip');
 const _ = require('lodash');
 Promise.promisifyAll(fs);
 const Address6 = require('ip-address').Address6;
+const Plugin = require('../plugin.js');
 
 class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
   // this is a semi-stub now, it is not used to bring up to shutdown interface
@@ -131,7 +132,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
       case event.EVENT_IF_UP: 
       case event.EVENT_IF_DOWN: {
         this._reapplyNeeded = true;
-        this.propagateConfigChanged(true);
+        this.propagateConfigChanged(Plugin.CHANGE_FULL);
         pl.scheduleReapply();
         break;
       }

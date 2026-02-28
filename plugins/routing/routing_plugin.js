@@ -1107,7 +1107,7 @@ class RoutingPlugin extends Plugin {
           ) && intfPlugin.isStaticIP()) {
             pl.acquireApplyLock(async () => {
               this._reapplyNeeded = true;
-              this.propagateConfigChanged(true);
+              this.propagateConfigChanged(Plugin.CHANGE_FULL);
               pl.scheduleReapply();
             }).catch((err) => {});
           }

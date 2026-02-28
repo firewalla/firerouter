@@ -28,6 +28,21 @@ class Plugin {
     return true;
   }
 
+  /**
+   * Returns true if a full flush() is needed before apply(), if this function returns false, flushFast() will be called instead.
+   *
+   */
+  isFullFlushNeeded(newConfig) {
+    return true;
+  }
+
+  /**
+   * This function will be called if isFullFlushNeeded() returns false.
+   * So make sure this function and isFullFlushNeeded() are logically consistent.
+   */
+  async flushFast() {
+  }
+
   static async preparePlugin() {
 
   }
@@ -100,17 +115,33 @@ class Plugin {
     this.changePublishers = [];
   }
 
-  propagateConfigChanged(changed) {
-    this.onConfigChanged(changed);
-    if (changed === true) {
+  /**
+   * Propagate config change to this plugin and all change subscribers.
+   * @param {string|boolean} changeType - Plugin.CHANGE_NONE (false) = no change;
+   *   Plugin.CHANGE_FULL ('full') or true = full reapply;
+   *   Plugin.CHANGE_IP_ONLY = incremental (subscribers may do light update).
+   */
+  propagateConfigChanged(changeType) {
+    this.onConfigChanged(changeType);
+    if (changeType) {
       for (let instance of this.changeSubscribers) {
-        instance.propagateConfigChanged(true);
+        instance.propagateConfigChanged(changeType);
       }
     }
   }
 
-  onConfigChanged(changed) {
-    this._reapplyNeeded = changed;
+  onConfigChanged(changeType) {
+    this._reapplyNeeded = (changeType !== Plugin.CHANGE_NONE);
+  }
+
+  /**
+   * Returns the config change type when given newConfig (e.g. from loader);
+   * Override to compute type from this.networkConfig vs newConfig (e.g. return CHANGE_IP_ONLY when only IP keys differ).
+   * @param {object} [newConfig] - If provided, return the change type for the transition to this config;
+   * @returns {string} Plugin.CHANGE_FULL, Plugin.CHANGE_IP_ONLY, or Plugin.CHANGE_NONE.
+   */
+  getConfigChangeType(newConfig) {
+    return Plugin.CHANGE_FULL;
   }
 
   propagateEvent(event) {
@@ -133,5 +164,15 @@ class Plugin {
     throw msg;
   }
 }
+
+/**
+ * Config change types for propagateConfigChanged().
+ * - true or 'full': full reapply (flush + apply) needed
+ * - false: no reapply
+ * - 'ip_only': only IP-related fields changed; dependents may do incremental update
+ */
+Plugin.CHANGE_NONE = false;
+Plugin.CHANGE_FULL = 'full';
+Plugin.CHANGE_IP_ONLY = 'ip_only';
 
 module.exports = Plugin;
