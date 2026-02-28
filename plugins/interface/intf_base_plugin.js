@@ -91,6 +91,10 @@ class InterfaceBasePlugin extends Plugin {
         await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
         await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
       }
+      if (this.networkConfig.ipv6DelegateFrom) {
+        const fromIface = this.networkConfig.ipv6DelegateFrom;
+        await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+      }
       // regenerate ipv6 link local address based on EUI64
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
@@ -209,6 +213,40 @@ class InterfaceBasePlugin extends Plugin {
     // if (this.networkConfig.hwAddr) {
     //   await this.resetHardwareAddress();
     // }
+  }
+
+  /**
+   * Returns true if a full flush() is needed before apply(), false if only flushIP + apply() is enough.
+   * When only IP-related or ipv6DelegateFrom (and other "soft") fields change, no need to tear down
+   * the interface; flushIP + apply() is sufficient. Structural changes (enabled, meta, mtu, etc.) require full flush.
+   */
+  isFullFlushNeeded(newConfig) {
+    if (!this.networkConfig || !newConfig)
+      return true;
+    // Keys that can be updated with flushIP + apply only (no interface teardown)
+    const SOFT_KEYS = [
+      'ipv4', 'ipv4s', 'ipv6', 'dhcp', 'dhcp6', 'ipv6DelegateFrom',
+      'gateway', 'gateway6', 'nameservers', 'dns6Servers',
+      'allowNTPviaDHCP', 'dhcpOptions'
+    ];
+    const allKeys = _.union(Object.keys(this.networkConfig), Object.keys(newConfig));
+    for (const key of allKeys) {
+      if (SOFT_KEYS.includes(key))
+        continue;
+      if (!_.isEqual(this.networkConfig[key], newConfig[key]))
+        return true;
+    }
+    return false;
+  }
+
+  async flushFast() {
+    await this.flushIP();
+  }
+
+  getConfigChangeType(newConfig) {
+    if (this.isFullFlushNeeded(newConfig))
+      return Plugin.CHANGE_FULL;
+    return Plugin.CHANGE_IP_ONLY;
   }
 
   async configure(networkConfig) {
@@ -1700,7 +1738,7 @@ class InterfaceBasePlugin extends Plugin {
             }
           } else {
             // for interface that does not have L2, e.g., pppoe, simply reapply config on it
-            this.propagateConfigChanged(true);
+            this.propagateConfigChanged(Plugin.CHANGE_FULL);
             pl.scheduleReapply();
           }
         }
@@ -1713,7 +1751,7 @@ class InterfaceBasePlugin extends Plugin {
             platform.clearMacCache(this.name);
             this._reapplyNeeded = true;
             // trigger downstream plugins to reapply config
-            this.propagateConfigChanged(true);
+            this.propagateConfigChanged(Plugin.CHANGE_FULL);
             pl.scheduleReapply();
           });
         }
@@ -1742,7 +1780,7 @@ class InterfaceBasePlugin extends Plugin {
           pl.acquireApplyLock(async () => {
             await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
               // trigger downstream plugins to reapply, e.g., nat for ipv6
-              this.propagateConfigChanged(true);
+              this.propagateConfigChanged(Plugin.CHANGE_FULL);
               this._reapplyNeeded = false;
               pl.scheduleReapply();
               return pl.publishIfaceChangeApplied();

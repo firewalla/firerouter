@@ -15,6 +15,7 @@
 
 'use strict';
 
+const Plugin = require('./plugin.js');
 const log = require('../util/logger.js')(__filename);
 const config = require('../util/config.js').getConfig();
 const Message = require('../core/Message.js');
@@ -185,7 +186,7 @@ async function reapply(config, dryRun = false) {
           if (pluginConf.category === "apc")
             CHANGE_FLAGS |= FLAG_APC_CHANGE;
         }
-        instance.propagateConfigChanged(true);
+        instance.propagateConfigChanged(Plugin.CHANGE_FULL);
         instance.unsubscribeAllChanges();
         pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
       };
@@ -217,13 +218,14 @@ async function reapply(config, dryRun = false) {
             const oldConfig = instance.networkConfig;
             if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
               log.info(`Network config of ${pluginConf.category}-->${name} changed`, pluginConf.hide_config_in_log ? "hidden" : oldConfig, pluginConf.hide_config_in_log ? "hidden" : value[name]);
-              instance.propagateConfigChanged(true);
+              const changeType = instance.getConfigChangeType(value[name]);
+              instance.propagateConfigChanged(changeType);
             }
             instance._nextConfig = value[name];
             if (!oldConfig) {
               // initialization of network config, flush instance with new config
               log.info(`Initial setup of ${pluginConf.category}-->${name}`, pluginConf.hide_config_in_log ? "hidden" : value[name]);
-              instance.propagateConfigChanged(true);
+              instance.propagateConfigChanged(Plugin.CHANGE_FULL);
               instance.unsubscribeAllChanges();
             }
             newInstances[name] = instance;
@@ -259,8 +261,13 @@ async function reapply(config, dryRun = false) {
       if (instance.isReapplyNeeded()) {
         if (!dryRun) {
           if (instance.isFlushNeeded(instance._nextConfig)) {
-            log.info("Flushing old config", pluginConf.category, instance.name);
-            await instance.flush();
+            if (instance.isFullFlushNeeded(instance._nextConfig)) {
+              log.info("Flushing old config", pluginConf.category, instance.name);
+              await instance.flush();
+            } else {
+              log.info("Fast flushing old config", pluginConf.category, instance.name);
+              await instance.flushFast();
+            }
           } else
             log.info("No need to flush old config", pluginConf.category, instance.name);
           CHANGE_FLAGS |= FLAG_CHANGE;
@@ -321,7 +328,7 @@ async function reapply(config, dryRun = false) {
       } else {
         log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
       }
-      instance.propagateConfigChanged(false);
+      instance.propagateConfigChanged(Plugin.CHANGE_NONE);
     };
     for (let pluginConf of pluginConfs) {
       const concurrent = pluginConf.allow_concurrent;
