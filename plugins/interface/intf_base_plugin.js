@@ -488,7 +488,7 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
-            this.log.error(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
+            this.log.debug(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
       }
@@ -522,7 +522,7 @@ class InterfaceBasePlugin extends Plugin {
               } else {
                 // the suffix of the delegated interface is always 1
                 await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                  this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+                  this.log.debug(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
                 });
                 ipChanged = true;
               }
@@ -725,7 +725,7 @@ class InterfaceBasePlugin extends Plugin {
         ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
-            this.log.error(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
+            this.log.debug(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
       }
