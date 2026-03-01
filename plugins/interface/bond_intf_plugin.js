@@ -62,7 +62,9 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     // supported mode list: balance-rr, active-backup, balance-xor, broadcast, 802.3ad, balance-tlb, balance-alb
     // default to balance-rr
     const mode = this.networkConfig.mode || "balance-rr";
-    await exec(`sudo ip link add ${this.name} type bond mode ${mode}`);
+    await exec(`sudo ip link add ${this.name} type bond mode ${mode}`).catch((err) => {
+      this.log.debug(`Failed to create bond interface ${this.name} with mode ${mode}`, err.message);
+    });
     if (presentInterfaces.length > 0)
       await exec(`sudo ifenslave ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
         this.log.error(`Failed to add interfaces to bond ${this.name}`, err.message);
