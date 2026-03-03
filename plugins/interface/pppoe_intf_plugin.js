@@ -169,6 +169,10 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       });
     }
   }
+
+  isEthernetBasedInterface() {
+    return true;
+  }
 }
 
 module.exports = PPPoEInterfacePlugin;
