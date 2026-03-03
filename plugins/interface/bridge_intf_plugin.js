@@ -18,8 +18,17 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
 const pl = require('../plugin_loader.js');
+const fsp = require('fs').promises;
+const _ = require('lodash');
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
+
+  isFlushNeeded(newConfig) {
+    // flush is needed if attributes other than intf and stp are changed
+    const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "stp"));
+    const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "stp"));
+    return !_.isEqual(c1, c2);
+  }
 
   async flush() {
     await super.flush();
@@ -61,9 +70,21 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         this.log.error(`Failed to ${this.networkConfig.stp === false ? "disable" : "enable"} stp on bridge interface ${this.name}`, err.message);
       });
     }
+
+    const existingIntf = await fsp.readdir(`/sys/class/net/${this.name}/brif`);
+    for (const intf of existingIntf) {
+      if (!presentInterfaces.includes(intf)) {
+        await exec(`sudo brctl delif ${this.name} ${intf}`).catch((err) => {
+          this.log.error(`Failed to remove interface ${intf} from bridge ${this.name}`, err.message);
+        });
+      }
+    }
+
     if (presentInterfaces.length > 0)
       // add interfaces one at a time. Otherwise, if one interface cannot be added to bridge, the interfaces behind it will be skipped
       for (const iface of presentInterfaces) {
+        if (existingIntf.includes(iface))
+          continue;
         await exec(`sudo brctl addif ${this.name} ${iface}`).catch((err) => {
           this.log.error(`Failed to add interface ${iface} to bridge ${this.name}`, err.message);
         })
@@ -73,6 +94,19 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   getDefaultMTU() {
     return 1500;
+  }
+
+  async getSubIntfs() {
+    // return runtime lower interfaces from sysfs brif directory, the effective config may be different from the frcc config due to integrated AP config
+    const brifs = await fsp.readdir(`/sys/class/net/${this.name}/brif`).catch((err) => {
+      this.log.error(`Failed to read brif of bridge ${this.name}`, err.message);
+      return null;
+    });
+    return brifs;
+  }
+
+  isEthernetBasedInterface() {
+    return true;
   }
 }
 

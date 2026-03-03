@@ -21,6 +21,7 @@ const pl = require('../plugins/plugin_loader.js');
 const routing = require('../util/routing.js');
 const r = require('../util/firerouter.js');
 const fsp = require('fs').promises;
+const util = require('../util/util.js');
 
 const exec = require('child-process-promise').exec;
 
@@ -76,8 +77,17 @@ class NetworkSetup {
     }
   }
 
+  async post_setup(dryRun = false) {
+    if (!dryRun && !this.postDone) {
+      this.postDone = true;
+      await exec(`${util.wrapIptables("sudo iptables -w -t nat -D POSTROUTING -j FR_SNAT_TMP")}`).catch((err) => {});
+      await exec(`sudo iptables -w -t nat -F FR_SNAT_TMP`).catch((err) => {});
+    }
+  }
+
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
+    await this.post_setup(dryRun);
     // no need to await
     this.booting_finish();
     return errors;
