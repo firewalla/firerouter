@@ -21,6 +21,8 @@ const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const WifiSD = require('../WifiSD.js')
+const fs = require('fs');
+const fsp = fs.promises;
 
 const macCache = {};
 const IF_WLAN0 = "wlan0";
@@ -219,6 +221,21 @@ class GSEPlatform extends Platform {
       await super.setMTU(iface, mtu);
     }
   }
+
+  async getKoPath(module_name) {
+    let koPath = await super.getKoPath(module_name);
+
+    const compiler = await exec("grep -o 'aarch64.*-linux-gnu-gcc' /proc/version").then(result => result.stdout.trim());
+    if (compiler === "aarch64-none-linux-gnu-gcc") {
+      const altKoPath = `${koPath}.aarch64-none-linux-gnu-gcc`;
+      const altFileExists = await fsp.access(altKoPath, fs.constants.F_OK).then(() => true).catch(() => false);
+      if (altFileExists) {
+        koPath = altKoPath;
+      }
+    }
+    return koPath;
+  }
+
 }
 
 module.exports = GSEPlatform;
