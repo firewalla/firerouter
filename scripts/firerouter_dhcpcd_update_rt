@@ -81,13 +81,37 @@ case $reason in
         eval "nd_rdnss1_servers_val=\$$nd_rdnss1_servers"
         nd_addr1="nd${nd_id}_addr1"
         eval "nd_addr1_val=\$$nd_addr1"
-        if [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ]; then
+        nd_source="nd${nd_id}_source_address"
+        eval "nd_source_val=\$$nd_source"
+        if [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ] || [ -n "$nd_source_val" ]; then
           nd_from="$nd_from_val"
           break
         fi
       fi
       nd_id=$((nd_id - 1))
     done
+
+    # If no suitable nd_from was found but only one set exists (nd1_from), use it and set nd_id=1
+    if [ -z "$nd_from" ]; then
+      eval "nd1_from_val=\$nd1_from"
+      if [ -n "$nd1_from_val" ]; then
+        only_one=1
+        check_id=2
+        while [ $check_id -le 10 ]; do
+          check_name="nd${check_id}_from"
+          eval "check_val=\$$check_name"
+          if [ -n "$check_val" ]; then
+            only_one=0
+            break
+          fi
+          check_id=$((check_id + 1))
+        done
+        if [ "$only_one" -eq 1 ]; then
+          nd_from="$nd1_from_val"
+          nd_id=1
+        fi
+      fi
+    fi
 
     if [ -n "$nd_from" ]; then
       new_addrs=""
