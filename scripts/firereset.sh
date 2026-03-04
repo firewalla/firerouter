@@ -16,6 +16,8 @@ run_host_light_until_paired() {
 
 : ${BLUETOOTH_TIMEOUT:=0}
 
+before_firereset
+
 # use this user firereset binary if configured, for debugging purpose only
 USER_FIRERESET=/home/pi/.firewalla/run/firereset
 if [[ -e $USER_FIRERESET ]]; then
