@@ -21,6 +21,8 @@ const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const WifiSD = require('../WifiSD.js')
+const fs = require('fs');
+const fsp = fs.promises;
 
 const macCache = {};
 const IF_WLAN0 = "wlan0";

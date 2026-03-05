@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -48,12 +48,16 @@ Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const sysctl = require('../../util/sysctl.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const DHCP_RESTART_INTERVAL = 4;
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 5;
 const DUID_RECORD_MAX = 10;
+
+const IP6_NUM_DISCARD_DEPRECATED = 100;
+const IP6_NUM_MAX = 1000;
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -361,6 +365,8 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(
         [
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_announce`, 1).catch((err) => {}),
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_ignore`, 2).catch((err) => {}),
           routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`),
           routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6),
           routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`),
@@ -400,6 +406,8 @@ class InterfaceBasePlugin extends Plugin {
     if(disabled) {
       return;
     }
+
+    await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
 
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
@@ -1104,7 +1112,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv4Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
     // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
     const staticIpv4s = {};
@@ -1122,12 +1130,23 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
-    // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
-    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
-    if (ip6s)
-      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    // there may be link-local ipv6 on interface, which is not available in static ipv6 config,
+    // always try to get ipv6 addresses from ip addr output
+    let ip6s = await exec(`ip addr show dev ${this.name}`, {encoding: "utf8"})
+      .then(result => result.stdout.trim() || null).catch(err => null);
+    if (!ip6s) return null;
+
+    ip6s = ip6s.split("\n").filter(l => l.length > 0 && l.includes("inet6 "))
+    // a protection for massive number of IPs
+    // once number of IPs exceeds the threshold, no longer guarantee everything works in Firewalla
+    // but this should not cause any disaster
+    if (ip6s.length > IP6_NUM_DISCARD_DEPRECATED)
+      ip6s = ip6s.filter(l => !l.includes("deprecated"));
+    if (ip6s.length > IP6_NUM_MAX)
+      ip6s = ip6s.slice(0, IP6_NUM_MAX);
+    ip6s = ip6s.map(l => l.trim().split(" ")[1]);
     return ip6s;
   }
 
@@ -1453,7 +1472,7 @@ class InterfaceBasePlugin extends Plugin {
     const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
 
     if (sendEvent)
-      era.addStateEvent(EventConstants.EVENT_DNS_STATE, af == 4 ? nameserver : `${nameserver}:[${srcIP}]`, dnsResult ? 0 : 1, {
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
         "wan_intf_name":wanName,
         "wan_intf_uuid":wanUUID,
         "wan_intf_address":srcIP,
@@ -1629,7 +1648,7 @@ class InterfaceBasePlugin extends Plugin {
       this._getRtId(),
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
-      exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
+      this.getIPv6Addresses(),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDns4Nameservers(),
@@ -1641,10 +1660,6 @@ class InterfaceBasePlugin extends Plugin {
       this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-    if (ip4 && ip4.length > 0 && !ip4.includes("/"))
-      ip4 = `${ip4}/32`;
-    if (ip6)
-      ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
