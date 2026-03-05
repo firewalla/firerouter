@@ -65,10 +65,15 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link add ${this.name} type bond mode ${mode}`).catch((err) => {
       this.log.debug(`Failed to create bond interface ${this.name} with mode ${mode}`, err.message);
     });
-    if (presentInterfaces.length > 0)
+    if (presentInterfaces.length > 0) {
+      // detach slave interfaces and add them back to ensure the MAC address of slave interfaces is updated after interface is re-added
+      await exec(`sudo ifenslave -d ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
+        this.log.debug(`Failed to detach interfaces from bond ${this.name}`, err.message);
+      });
       await exec(`sudo ifenslave ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
         this.log.error(`Failed to add interfaces to bond ${this.name}`, err.message);
       });
+    }
     return true;
   }
 
