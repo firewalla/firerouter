@@ -365,6 +365,10 @@ class InterfaceBasePlugin extends Plugin {
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(
         [
+          // a workaround to loosen arp flux filtering as it may cause internet connectivity issue if DHCP server is not in the same subnet as WAN IP
+          // should be upgraded to a proper solution in the next release
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_announce`, 0).catch((err) => {}),
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_ignore`, 0).catch((err) => {}),
           routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`),
           routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6),
           routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`),
