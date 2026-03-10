@@ -1,25 +1,24 @@
 #!/bin/bash
 
-# ------ initialize iptables chains
-sudo iptables -w -t nat -N FR_PREROUTING &> /dev/null
-sudo iptables -w -t nat -F FR_PREROUTING
-sudo iptables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING
+TMPDIR_PATH="/dev/shm"
 
-sudo iptables -w -t nat -N FR_UPNP &> /dev/null
-sudo iptables -w -t nat -F FR_UPNP
-sudo iptables -w -t nat -A FR_PREROUTING -j FR_UPNP
+# ------ initialize iptables/ipset restore files
+rm -f ${TMPDIR_PATH}/fr_prepare_network_env.iptables.restore.* \
+  ${TMPDIR_PATH}/fr_prepare_network_env.ip6tables.restore.* \
+  ${TMPDIR_PATH}/fr_prepare_network_env.ipset.restore.*
 
-# not used, but it is required for miniupnpd to populate rules in forward chains
-sudo iptables -w -t nat -N FR_UPNP_POSTROUTING &> /dev/null
-sudo iptables -w -t nat -F FR_UPNP_POSTROUTING
+RESTORE_TS="$(date +%s)"
+IPTABLES_RESTORE_FILE="${TMPDIR_PATH}/fr_prepare_network_env.iptables.restore.${RESTORE_TS}"
+IP6TABLES_RESTORE_FILE="${TMPDIR_PATH}/fr_prepare_network_env.ip6tables.restore.${RESTORE_TS}"
+IPSET_RESTORE_FILE="${TMPDIR_PATH}/fr_prepare_network_env.ipset.restore.${RESTORE_TS}"
 
-sudo iptables -w -N FR_UPNP_ACCEPT &>/dev/null
+: > "$IPTABLES_RESTORE_FILE"
+: > "$IP6TABLES_RESTORE_FILE"
+: > "$IPSET_RESTORE_FILE"
 
-sudo iptables -w -t nat -N FR_WIREGUARD &> /dev/null
-sudo iptables -w -t nat -F FR_WIREGUARD
-
-sudo iptables -w -t nat -N FR_AMNEZIA_WG &> /dev/null
-sudo iptables -w -t nat -F FR_AMNEZIA_WG
+append_iptables() { printf '%s\n' "$@" >> "$IPTABLES_RESTORE_FILE"; }
+append_ip6tables() { printf '%s\n' "$@" >> "$IP6TABLES_RESTORE_FILE"; }
+append_ipset() { printf '%s\n' "$@" >> "$IPSET_RESTORE_FILE"; }
 
 # save FR_SNAT to FR_SNAT_TMP temporarily to avoid no snat during firerouter setup
 sudo iptables -w -t nat -F FR_SNAT_TMP &> /dev/null
@@ -30,121 +29,189 @@ if sudo iptables -w -t nat -L FR_SNAT_TMP &>/dev/null; then
   sudo iptables -w -t nat -A POSTROUTING -j FR_SNAT_TMP &>/dev/null
 fi
 
-sudo iptables -w -t nat -N FR_POSTROUTING &> /dev/null
-sudo iptables -w -t nat -F FR_POSTROUTING
+append_iptables "*nat"
+append_iptables ":FR_PREROUTING - [0:0]"
+append_iptables ":FR_UPNP - [0:0]"
+append_iptables ":FR_UPNP_POSTROUTING - [0:0]"
+append_iptables ":FR_WIREGUARD - [0:0]"
+append_iptables ":FR_AMNEZIA_WG - [0:0]"
+append_iptables ":FR_POSTROUTING - [0:0]"
+append_iptables ":FR_PASSTHROUGH - [0:0]"
+append_iptables ":FR_SNAT - [0:0]"
+append_iptables ":FR_OUTPUT_SNAT - [0:0]"
+append_iptables "-A FR_PREROUTING -j FR_UPNP"
+append_iptables "-A FR_POSTROUTING -j FR_PASSTHROUGH"
+append_iptables "-A FR_POSTROUTING -j FR_SNAT"
+append_iptables "-A FR_POSTROUTING -j FR_OUTPUT_SNAT"
+append_iptables "COMMIT"
+
+append_iptables "*mangle"
+append_iptables ":FR_PREROUTING - [0:0]"
+append_iptables ":FR_MROUTE - [0:0]"
+append_iptables ":FR_OUTPUT - [0:0]"
+append_iptables "-A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff"
+append_iptables "-A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff"
+append_iptables "-A FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE"
+append_iptables "-A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff"
+append_iptables "COMMIT"
+
+append_iptables "*filter"
+append_iptables ":FR_UPNP_ACCEPT - [0:0]"
+append_iptables ":FR_INPUT - [0:0]"
+append_iptables ":FR_IGMP - [0:0]"
+append_iptables ":FR_ICMP - [0:0]"
+append_iptables ":FR_SSH - [0:0]"
+append_iptables ":FR_WIREGUARD - [0:0]"
+append_iptables ":FR_AMNEZIA_WG - [0:0]"
+append_iptables ":FR_FORWARD - [0:0]"
+append_iptables ":FR_PASSTHROUGH - [0:0]"
+append_iptables ":FR_OSI_INSPECTION - [0:0]"
+append_iptables ":FR_OSI_RULES - [0:0]"
+append_iptables ":FR_OSI - [0:0]"
+append_iptables "-A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT"
+append_iptables "-A FR_INPUT -p udp --sport 67 --dport 68 -j ACCEPT"
+append_iptables "-A FR_INPUT -j FR_IGMP"
+append_iptables "-A FR_INPUT -j FR_ICMP"
+append_iptables "-A FR_INPUT -j FR_SSH"
+append_iptables "-A FR_INPUT -j FR_WIREGUARD"
+append_iptables "-A FR_INPUT -j FR_AMNEZIA_WG"
+append_iptables "-A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+append_iptables "-A FR_FORWARD -j FR_PASSTHROUGH"
+append_iptables "-A FR_FORWARD -j FR_IGMP"
+append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob src -j DROP"
+append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob dst -j DROP"
+append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN"
+append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set src -j RETURN"
+append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN"
+append_iptables "-A FR_OSI_INSPECTION -j DROP"
+append_iptables "-A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob src -j DROP"
+append_iptables "-A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob dst -j DROP"
+append_iptables "-A FR_OSI -m set --match-set osi_wan_inbound_set src,src -j DROP"
+append_iptables "-A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION"
+append_iptables "-A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION"
+append_iptables "-A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION"
+append_iptables "-A FR_OSI -m set --match-set osi_rules_mac_set src -j FR_OSI_RULES"
+append_iptables "-A FR_OSI -m set --match-set osi_rules_subnet_set src -j FR_OSI_RULES"
+append_iptables "-A FR_OSI -m set --match-set osi_rules_subnet_set dst -j FR_OSI_RULES"
+append_iptables "-A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI"
+append_iptables "-A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI"
+append_iptables "COMMIT"
+
+append_ip6tables "*nat"
+append_ip6tables ":FR_PREROUTING - [0:0]"
+append_ip6tables ":FR_WIREGUARD - [0:0]"
+append_ip6tables ":FR_AMNEZIA_WG - [0:0]"
+append_ip6tables ":FR_POSTROUTING - [0:0]"
+append_ip6tables ":FR_PASSTHROUGH - [0:0]"
+append_ip6tables ":FR_SNAT - [0:0]"
+append_ip6tables ":FR_OUTPUT_SNAT - [0:0]"
+append_ip6tables "-A FR_POSTROUTING -j FR_PASSTHROUGH"
+append_ip6tables "-A FR_POSTROUTING -j FR_SNAT"
+append_ip6tables "-A FR_POSTROUTING -j FR_OUTPUT_SNAT"
+append_ip6tables "COMMIT"
+
+append_ip6tables "*mangle"
+append_ip6tables ":FR_PREROUTING - [0:0]"
+append_ip6tables ":FR_MROUTE - [0:0]"
+append_ip6tables ":FR_OUTPUT - [0:0]"
+append_ip6tables "-A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff"
+append_ip6tables "-A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff"
+append_ip6tables "-A FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE"
+append_ip6tables "-A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff"
+append_ip6tables "COMMIT"
+
+append_ip6tables "*filter"
+append_ip6tables ":FR_INPUT - [0:0]"
+append_ip6tables ":FR_ICMP - [0:0]"
+append_ip6tables ":FR_WIREGUARD - [0:0]"
+append_ip6tables ":FR_AMNEZIA_WG - [0:0]"
+append_ip6tables ":FR_FORWARD - [0:0]"
+append_ip6tables ":FR_PASSTHROUGH - [0:0]"
+append_ip6tables ":FR_OSI_INSPECTION - [0:0]"
+append_ip6tables ":FR_OSI_RULES - [0:0]"
+append_ip6tables ":FR_OSI - [0:0]"
+append_ip6tables "-A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT"
+append_ip6tables "-A FR_INPUT -p udp --sport 547 --dport 546 -j ACCEPT"
+append_ip6tables "-A FR_INPUT -p icmpv6 --icmpv6-type neighbour-solicitation -j ACCEPT"
+append_ip6tables "-A FR_INPUT -p icmpv6 --icmpv6-type neighbour-advertisement -j ACCEPT"
+append_ip6tables "-A FR_INPUT -p icmpv6 --icmpv6-type router-advertisement -j ACCEPT"
+append_ip6tables "-A FR_INPUT -j FR_ICMP"
+append_ip6tables "-A FR_INPUT -j FR_WIREGUARD"
+append_ip6tables "-A FR_INPUT -j FR_AMNEZIA_WG"
+append_ip6tables "-A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+append_ip6tables "-A FR_FORWARD -j FR_PASSTHROUGH"
+append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 src -j DROP"
+append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 dst -j DROP"
+append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN"
+append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet6_set src -j RETURN"
+append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet6_set dst -j RETURN"
+append_ip6tables "-A FR_OSI_INSPECTION -j DROP"
+append_ip6tables "-A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob6 src -j DROP"
+append_ip6tables "-A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob6 dst -j DROP"
+append_ip6tables "-A FR_OSI -m set --match-set osi_wan_inbound_set6 src,src -j DROP"
+append_ip6tables "-A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION"
+append_ip6tables "-A FR_OSI -m set --match-set osi_subnet6_set src -j FR_OSI_INSPECTION"
+append_ip6tables "-A FR_OSI -m set --match-set osi_subnet6_set dst -j FR_OSI_INSPECTION"
+append_ip6tables "-A FR_OSI -m set --match-set osi_rules_mac_set src -j FR_OSI_RULES"
+append_ip6tables "-A FR_OSI -m set --match-set osi_rules_subnet6_set src -j FR_OSI_RULES"
+append_ip6tables "-A FR_OSI -m set --match-set osi_rules_subnet6_set dst -j FR_OSI_RULES"
+append_ip6tables "-A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI"
+append_ip6tables "-A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI"
+append_ip6tables "COMMIT"
+
+append_ipset "create -! osi_mac_set hash:mac timeout 600"
+append_ipset "create -! osi_subnet_set hash:net timeout 600"
+append_ipset "create -! osi_rules_mac_set hash:mac timeout 600"
+append_ipset "create -! osi_rules_subnet_set hash:net timeout 600"
+append_ipset "flush -! osi_mac_set"
+append_ipset "flush -! osi_subnet_set"
+append_ipset "flush -! osi_rules_mac_set"
+append_ipset "flush -! osi_rules_subnet_set"
+append_ipset "create -! osi_wan_inbound_set hash:net,iface timeout 600"
+append_ipset "flush -! osi_wan_inbound_set"
+append_ipset "create -! osi_match_all_knob hash:net"
+append_ipset "flush -! osi_match_all_knob"
+append_ipset "add -! osi_match_all_knob 0.0.0.0/1"
+append_ipset "add -! osi_match_all_knob 128.0.0.0/1"
+append_ipset "create -! osi_rules_match_all_knob hash:net"
+append_ipset "flush -! osi_rules_match_all_knob"
+append_ipset "add -! osi_rules_match_all_knob 0.0.0.0/1"
+append_ipset "add -! osi_rules_match_all_knob 128.0.0.0/1"
+append_ipset "create -! osi_verified_mac_set hash:mac"
+append_ipset "create -! osi_verified_subnet_set hash:net"
+append_ipset "create -! osi_subnet6_set hash:net family inet6 timeout 600"
+append_ipset "create -! osi_rules_subnet6_set hash:net family inet6 timeout 600"
+append_ipset "flush -! osi_subnet6_set"
+append_ipset "flush -! osi_rules_subnet6_set"
+append_ipset "create -! osi_wan_inbound_set6 hash:net,iface family inet6 timeout 600"
+append_ipset "flush -! osi_wan_inbound_set6"
+append_ipset "create -! osi_match_all_knob6 hash:net family inet6"
+append_ipset "flush -! osi_match_all_knob6"
+append_ipset "add -! osi_match_all_knob6 ::/1"
+append_ipset "add -! osi_match_all_knob6 8000::/1"
+append_ipset "create -! osi_rules_match_all_knob6 hash:net family inet6"
+append_ipset "flush -! osi_rules_match_all_knob6"
+append_ipset "add -! osi_rules_match_all_knob6 ::/1"
+append_ipset "add -! osi_rules_match_all_knob6 8000::/1"
+append_ipset "create -! osi_verified_subnet6_set hash:net family inet6"
+
+sudo ipset restore -! < "$IPSET_RESTORE_FILE"
+sudo iptables-restore -w -n "$IPTABLES_RESTORE_FILE"
+sudo ip6tables-restore -w -n "$IP6TABLES_RESTORE_FILE"
+
+sudo iptables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING
 sudo iptables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING
-
-sudo iptables -w -t nat -N FR_PASSTHROUGH &> /dev/null
-sudo iptables -w -t nat -F FR_PASSTHROUGH &> /dev/null
-sudo iptables -w -t nat -A FR_POSTROUTING -j FR_PASSTHROUGH
-
-sudo iptables -w -t nat -N FR_SNAT &> /dev/null
-sudo iptables -w -t nat -F FR_SNAT &> /dev/null
-sudo iptables -w -t nat -A FR_POSTROUTING -j FR_SNAT
-sudo iptables -w -t nat -N FR_OUTPUT_SNAT &> /dev/null
-sudo iptables -w -t nat -F FR_OUTPUT_SNAT &> /dev/null
-sudo iptables -w -t nat -A FR_POSTROUTING -j FR_OUTPUT_SNAT
-
-sudo iptables -w -t mangle -N FR_PREROUTING &>/dev/null
-sudo iptables -w -t mangle -F FR_PREROUTING &>/dev/null
 sudo iptables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo iptables -w -t mangle -A PREROUTING -j FR_PREROUTING
-# restore fwmark for packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
-sudo iptables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
-# save the updated fwmark into the connmark, which may be used in tc filter actions
-sudo iptables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
-
-sudo iptables -w -t mangle -N FR_MROUTE &>/dev/null
-sudo iptables -w -t mangle -F FR_MROUTE &>/dev/null
-sudo iptables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE &>/dev/null || sudo iptables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE
-
-sudo iptables -w -t mangle -N FR_OUTPUT &> /dev/null
-sudo iptables -w -t mangle -F FR_OUTPUT &> /dev/null
 sudo iptables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo iptables -w -t mangle -A OUTPUT -j FR_OUTPUT
-# restore fwmark for output packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
-sudo iptables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
-
-sudo iptables -w -N FR_INPUT &> /dev/null
-sudo iptables -w -F FR_INPUT
-
-# always accept loopback traffic
-sudo iptables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
-# always accept dhcp reply from server to local
-sudo iptables -w -A FR_INPUT -p udp --sport 67 --dport 68 -j ACCEPT
 sudo iptables -w -C INPUT -j FR_INPUT &> /dev/null || sudo iptables -w -I INPUT -j FR_INPUT
-
-# chain for igmp proxy
-sudo iptables -w -N FR_IGMP &> /dev/null
-sudo iptables -w -F FR_IGMP
-
-sudo iptables -w -A FR_INPUT -j FR_IGMP
-
-# chain for icmp
-sudo iptables -w -N FR_ICMP &> /dev/null
-sudo iptables -w -F FR_ICMP
-
-sudo iptables -w -A FR_INPUT -j FR_ICMP
-
-# chain for ssh
-sudo iptables -w -N FR_SSH &> /dev/null
-sudo iptables -w -F FR_SSH
-
-sudo iptables -w -A FR_INPUT -j FR_SSH
-
-# chain for wireguard
-sudo iptables -w -N FR_WIREGUARD &> /dev/null
-sudo iptables -w -F FR_WIREGUARD
-
-sudo iptables -w -A FR_INPUT -j FR_WIREGUARD
-
-# chain for amneziawg
-sudo iptables -w -N FR_AMNEZIA_WG &> /dev/null
-sudo iptables -w -F FR_AMNEZIA_WG
-
-sudo iptables -w -A FR_INPUT -j FR_AMNEZIA_WG
-
-sudo iptables -w -N FR_FORWARD &> /dev/null
-sudo iptables -w -F FR_FORWARD
 sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
-# adjust TCP MSS for specific ethernet encapsulation, e.g., PPPoE
-sudo iptables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-# chain for NAT passthrough
-sudo iptables -w -N FR_PASSTHROUGH &> /dev/null
-sudo iptables -w -F FR_PASSTHROUGH
-sudo iptables -w -A FR_FORWARD -j FR_PASSTHROUGH
 
-sudo iptables -w -A FR_FORWARD -j FR_IGMP
-
-# chain for Office Secondary Inspection
-# any mac address or subnet in this set will be blocked until fully verified
-# use timeout for final protection, in case something is wrong
-sudo ipset create -! osi_mac_set hash:mac timeout 600 &>/dev/null
-sudo ipset create -! osi_subnet_set hash:net timeout 600 &>/dev/null
-sudo ipset create -! osi_rules_mac_set hash:mac timeout 600 &>/dev/null
-sudo ipset create -! osi_rules_subnet_set hash:net timeout 600 &>/dev/null
-sudo ipset flush -! osi_mac_set &>/dev/null
-sudo ipset flush -! osi_subnet_set &>/dev/null
-sudo ipset flush -! osi_rules_mac_set &>/dev/null
-sudo ipset flush -! osi_rules_subnet_set &>/dev/null
-
-# ipset for wan inbound block during reboot, service restart/upgrade
-sudo ipset create -! osi_wan_inbound_set hash:net,iface timeout 600 &>/dev/null
-sudo ipset flush -! osi_wan_inbound_set &> /dev/null
-
-# use this knob to match everything if needed
-sudo ipset create -! osi_match_all_knob hash:net &>/dev/null
-sudo ipset flush -! osi_match_all_knob &>/dev/null
-sudo ipset add -! osi_match_all_knob 0.0.0.0/1 &>/dev/null
-sudo ipset add -! osi_match_all_knob 128.0.0.0/1 &>/dev/null
-
-# use this knob to match everything if needed for rules
-sudo ipset create -! osi_rules_match_all_knob hash:net &>/dev/null
-sudo ipset flush -! osi_rules_match_all_knob &>/dev/null
-sudo ipset add -! osi_rules_match_all_knob 0.0.0.0/1 &>/dev/null
-sudo ipset add -! osi_rules_match_all_knob 128.0.0.0/1 &>/dev/null
-
-# ipset for verified mac address and subnet, as the verify process may be async
-sudo ipset create -! osi_verified_mac_set hash:mac &>/dev/null
-sudo ipset create -! osi_verified_subnet_set hash:net &>/dev/null
+sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
+sudo ip6tables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo ip6tables -w -t nat -I POSTROUTING -j FR_POSTROUTING
+sudo ip6tables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t mangle -A PREROUTING -j FR_PREROUTING
+sudo ip6tables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo ip6tables -w -t mangle -A OUTPUT -j FR_OUTPUT
+sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
+sudo ip6tables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo ip6tables -w -I FORWARD -j FR_FORWARD
 
 OSI_TIMEOUT=$(redis-cli get osi:admin:timeout)
 if [[ -z "$OSI_TIMEOUT" ]]; then
@@ -189,148 +256,6 @@ if [[ ! -e /dev/shm/main.touch ]]; then
 fi
 
 
-# allow verified ones to passthrough
-sudo iptables -w -N FR_OSI_INSPECTION &> /dev/null
-sudo iptables -w -F FR_OSI_INSPECTION &> /dev/null
-## knob will be turned off when policy are all applied, for now, just vpnclient
-sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob src -j DROP &>/dev/null
-sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob dst -j DROP &>/dev/null
-sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
-sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set src -j RETURN &>/dev/null
-sudo iptables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet_set dst -j RETURN &>/dev/null
-sudo iptables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
-
-# allow verified ones to passthrough
-sudo iptables -w -N FR_OSI_RULES &> /dev/null
-sudo iptables -w -F FR_OSI_RULES &> /dev/null
-
-## knob will be turned off when rules are all applied
-## when knob is off, all traffic should be bypassed
-sudo iptables -w -A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob src -j DROP &>/dev/null
-sudo iptables -w -A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob dst -j DROP &>/dev/null
-
-sudo iptables -w -N FR_OSI &> /dev/null
-sudo iptables -w -F FR_OSI &> /dev/null
-# block inbound connection during reboot/restart
-sudo iptables -w -A FR_OSI -m set --match-set osi_wan_inbound_set src,src -j DROP &>/dev/null
-# only these devices are subjected to inspection
-sudo iptables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set src -j FR_OSI_INSPECTION &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_subnet_set dst -j FR_OSI_INSPECTION &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_rules_mac_set src -j FR_OSI_RULES &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_rules_subnet_set src -j FR_OSI_RULES &>/dev/null
-sudo iptables -w -A FR_OSI -m set --match-set osi_rules_subnet_set dst -j FR_OSI_RULES &>/dev/null
-sudo iptables -w -C FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo iptables -w -A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
-sudo iptables -w -C FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo iptables -w -A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
-
-
-sudo ip6tables -w -t nat -N FR_PREROUTING &> /dev/null
-sudo ip6tables -w -t nat -F FR_PREROUTING
-sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
-
-sudo ip6tables -w -t nat -N FR_WIREGUARD &> /dev/null
-sudo ip6tables -w -t nat -F FR_WIREGUARD
-
-sudo ip6tables -w -t nat -N FR_AMNEZIA_WG &> /dev/null
-sudo ip6tables -w -t nat -F FR_AMNEZIA_WG
-
-sudo ip6tables -w -t nat -N FR_POSTROUTING &> /dev/null
-sudo ip6tables -w -t nat -F FR_POSTROUTING
-sudo ip6tables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo ip6tables -w -t nat -I POSTROUTING -j FR_POSTROUTING
-
-sudo ip6tables -w -t nat -N FR_PASSTHROUGH &> /dev/null
-sudo ip6tables -w -t nat -F FR_PASSTHROUGH &> /dev/null
-sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_PASSTHROUGH
-
-sudo ip6tables -w -t nat -N FR_SNAT &> /dev/null
-sudo ip6tables -w -t nat -F FR_SNAT &> /dev/null
-sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_SNAT
-sudo ip6tables -w -t nat -N FR_OUTPUT_SNAT &> /dev/null
-sudo ip6tables -w -t nat -F FR_OUTPUT_SNAT &> /dev/null
-sudo ip6tables -w -t nat -A FR_POSTROUTING -j FR_OUTPUT_SNAT
-
-sudo ip6tables -w -t mangle -N FR_PREROUTING &>/dev/null
-sudo ip6tables -w -t mangle -F FR_PREROUTING &>/dev/null
-sudo ip6tables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t mangle -A PREROUTING -j FR_PREROUTING
-# restore fwmark for packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
-sudo ip6tables -w -t mangle -A FR_PREROUTING -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
-# save the updated fwmark into the connmark, which may be used in tc filter actions
-sudo ip6tables -w -t mangle -A FR_PREROUTING -m mark ! --mark 0x0/0xffff -j CONNMARK --save-mark --nfmask 0xffff --ctmask 0xffff
-
-sudo ip6tables -w -t mangle -N FR_MROUTE &>/dev/null
-sudo ip6tables -w -t mangle -F FR_MROUTE &>/dev/null
-sudo ip6tables -w -t mangle -C FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE &>/dev/null || sudo ip6tables -w -t mangle -A FR_PREROUTING -m addrtype --dst-type MULTICAST -m addrtype ! --src-type LOCAL -j FR_MROUTE
-
-sudo ip6tables -w -t mangle -N FR_OUTPUT &> /dev/null
-sudo ip6tables -w -t mangle -F FR_OUTPUT &> /dev/null
-sudo ip6tables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo ip6tables -w -t mangle -A OUTPUT -j FR_OUTPUT
-# restore fwmark for output packets belonging to inbound connection, this connmark is set in nat stage for inbound connection from wan
-sudo ip6tables -w -t mangle -A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --ctdir REPLY -j CONNMARK --restore-mark --nfmask 0xffff --ctmask 0xffff
-
-sudo ip6tables -w -N FR_INPUT &> /dev/null
-sudo ip6tables -w -F FR_INPUT
-
-# always accept loopback traffic
-sudo ip6tables -w -A FR_INPUT -m addrtype --src-type LOCAL -j ACCEPT
-# always accept dhcp reply from server to local
-sudo ip6tables -w -A FR_INPUT -p udp --sport 547 --dport 546 -j ACCEPT
-sudo ip6tables -w -A FR_INPUT -p icmpv6 --icmpv6-type neighbour-solicitation -j ACCEPT
-sudo ip6tables -w -A FR_INPUT -p icmpv6 --icmpv6-type neighbour-advertisement -j ACCEPT
-sudo ip6tables -w -A FR_INPUT -p icmpv6 --icmpv6-type router-advertisement -j ACCEPT
-
-sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
-
-# chain for icmp
-sudo ip6tables -w -N FR_ICMP &> /dev/null
-sudo ip6tables -w -F FR_ICMP
-
-sudo ip6tables -w -A FR_INPUT -j FR_ICMP
-
-# chain for wireguard
-sudo ip6tables -w -N FR_WIREGUARD &> /dev/null
-sudo ip6tables -w -F FR_WIREGUARD
-
-sudo ip6tables -w -A FR_INPUT -j FR_WIREGUARD
-
-sudo ip6tables -w -N FR_AMNEZIA_WG &> /dev/null
-sudo ip6tables -w -F FR_AMNEZIA_WG
-
-sudo ip6tables -w -A FR_INPUT -j FR_AMNEZIA_WG
-
-sudo ip6tables -w -N FR_FORWARD &> /dev/null
-sudo ip6tables -w -F FR_FORWARD
-sudo ip6tables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo ip6tables -w -I FORWARD -j FR_FORWARD
-# adjust TCP MSS for specific ethernet encapsulation, e.g., PPPoE
-sudo ip6tables -w -A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-# chain for NAT passthrough
-sudo ip6tables -w -N FR_PASSTHROUGH &> /dev/null
-sudo ip6tables -w -F FR_PASSTHROUGH
-sudo ip6tables -w -A FR_FORWARD -j FR_PASSTHROUGH
-
-# for mac ipset, reuse the same for iptables (v4)
-sudo ipset create -! osi_subnet6_set hash:net family inet6 timeout 600 &>/dev/null
-sudo ipset create -! osi_rules_subnet6_set hash:net family inet6 timeout 600 &>/dev/null
-sudo ipset flush -! osi_subnet6_set &>/dev/null
-sudo ipset flush -! osi_rules_subnet6_set &>/dev/null
-
-# ipset for wan inbound block during reboot, service restart/upgrade
-sudo ipset create -! osi_wan_inbound_set6 hash:net,iface family inet6 timeout 600 &>/dev/null
-sudo ipset flush -! osi_wan_inbound_set6 &> /dev/null
-
-# use this knob to match everything if needed
-sudo ipset create -! osi_match_all_knob6 hash:net family inet6 &>/dev/null
-sudo ipset flush -! osi_match_all_knob6 &>/dev/null
-sudo ipset add -! osi_match_all_knob6 ::/1 &>/dev/null
-sudo ipset add -! osi_match_all_knob6 8000::/1 &>/dev/null
-
-# use this knob to match everything if needed for rules
-sudo ipset create -! osi_rules_match_all_knob6 hash:net family inet6 &>/dev/null
-sudo ipset flush -! osi_rules_match_all_knob6 &>/dev/null
-sudo ipset add -! osi_rules_match_all_knob6 ::/1 &>/dev/null
-sudo ipset add -! osi_rules_match_all_knob6 8000::/1 &>/dev/null
-
-sudo ipset create -! osi_verified_subnet6_set hash:net family inet6 &>/dev/null
-
 function prepare_osi6 {
   # fullfil from redis
   # only need to fulfill the ipv6 specific ones
@@ -357,41 +282,6 @@ if [[ ! -e /dev/shm/main.touch ]]; then
     prepare_osi6 &
   fi
 fi
-
-# allow verified ones to passthrough
-sudo ip6tables -w -N FR_OSI_INSPECTION &> /dev/null
-sudo ip6tables -w -F FR_OSI_INSPECTION &> /dev/null
-## knob will be turned off when policy are all applied, for now, just vpnclient
-sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 src -j DROP &>/dev/null
-sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 dst -j DROP &>/dev/null
-sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_mac_set src -j RETURN &>/dev/null
-sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet6_set src -j RETURN &>/dev/null
-sudo ip6tables -w -A FR_OSI_INSPECTION -m set --match-set osi_verified_subnet6_set dst -j RETURN &>/dev/null
-sudo ip6tables -w -A FR_OSI_INSPECTION -j DROP &>/dev/null
-
-# allow verified ones to passthrough
-sudo ip6tables -w -N FR_OSI_RULES &> /dev/null
-sudo ip6tables -w -F FR_OSI_RULES &> /dev/null
-
-## knob will be turned off when rules are all applied,
-## when knob is off, all traffic should be bypassed
-sudo ip6tables -w -A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob6 src -j DROP &>/dev/null
-sudo ip6tables -w -A FR_OSI_RULES -m set --match-set osi_rules_match_all_knob6 dst -j DROP &>/dev/null
-
-sudo ip6tables -w -N FR_OSI &> /dev/null
-sudo ip6tables -w -F FR_OSI &> /dev/null
-# block inbound connection during reboot/restart
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_wan_inbound_set6 src,src -j DROP &>/dev/null
-# only these devices are subjected to inspection
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_mac_set src -j FR_OSI_INSPECTION &>/dev/null
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_subnet6_set src -j FR_OSI_INSPECTION &>/dev/null
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_subnet6_set dst -j FR_OSI_INSPECTION &>/dev/null
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_rules_mac_set src -j FR_OSI_RULES &>/dev/null
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_rules_subnet6_set src -j FR_OSI_RULES &>/dev/null
-sudo ip6tables -w -A FR_OSI -m set --match-set osi_rules_subnet6_set dst -j FR_OSI_RULES &>/dev/null
-sudo ip6tables -w -C FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo ip6tables -w -A FR_FORWARD -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
-sudo ip6tables -w -C FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null || sudo ip6tables -w -A FR_INPUT -m conntrack --ctstate NEW -j FR_OSI &> /dev/null
-
 
 # ------ flush routing tables
 sudo flock /tmp/rt_tables.lock -c "
