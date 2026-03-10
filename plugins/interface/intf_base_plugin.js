@@ -54,7 +54,16 @@ const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const DHCP_RESTART_INTERVAL = 4;
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 5;
+// Conntrack fallback monitor duration (seconds)
+const CONNTRACK_MONITOR_SEC_DEFAULT = 5;
+const CONNTRACK_MONITOR_SEC_AFTER_SUCCESS = 8;
+const CONNTRACK_MONITOR_SEC_AFTER_FAILURE = 10;
 const DUID_RECORD_MAX = 10;
+
+// Ping test result enum: success = pass, failed = partial (some packets), all_failed = 0 received (dest may be unreachable)
+const PING_RESULT_SUCCESS = 'success';
+const PING_RESULT_FAILED = 'failed';
+const PING_RESULT_ALL_FAILED = 'all_failed';
 
 const IP6_NUM_DISCARD_DEPRECATED = 100;
 const IP6_NUM_MAX = 1000;
@@ -1355,6 +1364,7 @@ class InterfaceBasePlugin extends Plugin {
     let active = true;
     let carrierResult = null;
     let pingResult = null;
+    let needFallbackCheck = false;
     let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = defaultPingTestIP;
@@ -1397,42 +1407,60 @@ class InterfaceBasePlugin extends Plugin {
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `sudo ping -n -q -m ${rtid} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
-          if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
-            this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
-            failures.push({type: "ping", target: ip});
-            if (sendEvent)
-              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
-                "wan_test_ip":ip,
-                "wan_intf_name":wanName,
-                "wan_intf_uuid":wanUUID,
-                "ping_test_count":pingTestCount,
-                "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
-              });
-            return false;
-          } else
+          const received = (result && result.stdout) ? Number(result.stdout.trim()) : 0;
+          const passed = received >= pingTestCount * pingSuccessRate;
+          if (passed) {
             if (sendEvent)
               era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
                 "wan_test_ip":ip,
                 "wan_intf_name":wanName,
                 "wan_intf_uuid":wanUUID,
                 "ping_test_count":pingTestCount,
-                "success_rate":Number(result.stdout.trim())/pingTestCount
+                "success_rate":received / pingTestCount
               });
-          return true;
+            return PING_RESULT_SUCCESS;
+          }
+          this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
+          failures.push({type: "ping", target: ip});
+          if (sendEvent)
+            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
+              "wan_test_ip":ip,
+              "wan_intf_name":wanName,
+              "wan_intf_uuid":wanUUID,
+              "ping_test_count":pingTestCount,
+              "success_rate":received / pingTestCount,
+            });
+          return received === 0 ? PING_RESULT_ALL_FAILED : PING_RESULT_FAILED;
         }).catch((err) => {
           this.log.error(`Failed to do ping test to ${ip} on ${this.name}`, err.message);
           failures.push({type: "ping", target: ip});
-          return false;
+          return PING_RESULT_ALL_FAILED;
         });
       })).then(results => {
-        if (!results.some(result => result === true)) {
+        if (results.some(r => r === PING_RESULT_SUCCESS)) {
+          pingResult = true;
+        } else if (results.every(r => r === PING_RESULT_ALL_FAILED)) {
+          this.log.error(`Ping test failed to all ping test targets on ${this.name} (0 packets received; dest may be unreachable)`);
+          pingResult = false;
+          // active = false;
+          needFallbackCheck = true;
+        } else {
+          // at least one ping target give responses
           this.log.error(`Ping test failed to all ping test targets on ${this.name}`);
           pingResult = false;
           active = false;
-        } else
-          pingResult = true;
+        }
       });
     }
+
+    if (needFallbackCheck) {
+      active = await this._checkWanStatusByConntrack();
+      if (active)
+        this.log.info(`WAN ${this.name}: fallback check passed (recent real traffic to public IPs), treating as connected`);
+      else
+        this.log.warn(`WAN ${this.name}: fallback check found no recent real traffic to public IPs`);
+    }
+
 
     if (active && dnsTestEnabled) {
       const nameservers = await this.getDNSNameservers() || [];
@@ -1481,6 +1509,62 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     return result;
+  }
+
+  /**
+   * Fallback: check if there is recent real traffic on this WAN (conntrack UPDATE with reply to our IP).
+   * Used when all ping targets had 0 packets (ping dest may be unreachable). Counts lines where original
+   * dst is a public (non-private) IP. Returns true if at least one such flow is seen.
+   */
+  async _checkWanStatusByConntrackForReplyDst(replyDst, monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT) {
+    if (!replyDst)
+      return false;
+    const execTimeoutMs = (monitorSec + 1) * 1000;
+    try {
+      const cmd = `sudo timeout ${monitorSec} conntrack -E -e UPDATE --reply-dst ${replyDst} 2>/dev/null | grep '\\[ASSURED\\]' | grep -E '(udp|ESTABLISHED)'`;
+      const result = await exec(cmd, { timeout: execTimeoutMs });
+      const stdout = (result && result.stdout) ? result.stdout.trim() : '';
+      const lines = stdout.split('\n').filter(l => l.length > 0);
+      let validCount = 0;
+      for (const line of lines) {
+        const m = line.match(/dst=([^\s]+)/);
+        if (m && m[1]) {
+          const origDst = m[1];
+          if (!ip.isPrivate(origDst))
+            validCount++;
+        }
+      }
+      return validCount > 0;
+    } catch (err) {
+      // If conntrack fails to match an UPDATE message within monitorSec,
+      // the grep command will return err code 1, thus entering the catch block and returning false.
+      return false;
+    }
+  }
+
+  async _checkWanStatusByConntrack() {
+    const ip4s = await this.getIPv4Addresses();
+    if (!ip4s || ip4s.length === 0)
+      return false;
+
+    const state = this._wanConnState || {};
+    const failureCount = (state.failureCount != null) ? state.failureCount : 0;
+    const successCount = (state.successCount != null) ? state.successCount : 0;
+    let monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT;
+    if (failureCount > 0 && failureCount <= ON_OFF_THRESHOLD)
+      // longer after initial failures to reduce false "down" 
+      monitorSec = CONNTRACK_MONITOR_SEC_AFTER_FAILURE;
+    else if (successCount > 0 && successCount <= OFF_ON_THRESHOLD)
+      // longer after initial successes for stability
+      monitorSec = CONNTRACK_MONITOR_SEC_AFTER_SUCCESS;
+
+    const replyDsts = [...new Set(ip4s.map(a => a.split('/')[0].trim()).filter(Boolean))];
+    if (replyDsts.length === 0)
+      return false;
+    const results = await Promise.all(
+      replyDsts.map(d => this._checkWanStatusByConntrackForReplyDst(d, monitorSec))
+    );
+    return results.some(Boolean);
   }
 
   setPendingTest(v = false) {
