@@ -24,6 +24,7 @@ const { v4: uuidv4 } = require("uuid");
 const r = require('../../util/firerouter');
 
 const exec = require('child-process-promise').exec;
+const { spawn } = require('child_process');
 
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -58,6 +59,7 @@ const OFF_ON_THRESHOLD = 5;
 const CONNTRACK_MONITOR_SEC_DEFAULT = 5;
 const CONNTRACK_MONITOR_SEC_AFTER_SUCCESS = 8;
 const CONNTRACK_MONITOR_SEC_AFTER_FAILURE = 10;
+
 const DUID_RECORD_MAX = 10;
 
 // Ping test result enum: success = pass, failed = partial (some packets), all_failed = 0 received (dest may be unreachable)
@@ -67,6 +69,32 @@ const PING_RESULT_ALL_FAILED = 'all_failed';
 
 const IP6_NUM_DISCARD_DEPRECATED = 100;
 const IP6_NUM_MAX = 1000;
+
+/** AbortController-compatible helper for environments where AbortController is not defined (e.g. older Node). */
+function createAbortController() {
+  const listeners = [];
+  const signal = {
+    aborted: false,
+    addEventListener(ev, fn) {
+      if (ev === 'abort') listeners.push(fn);
+    },
+    removeEventListener(ev, fn) {
+      if (ev === 'abort') {
+        const i = listeners.indexOf(fn);
+        if (i !== -1) listeners.splice(i, 1);
+      }
+    }
+  };
+  return {
+    signal,
+    abort() {
+      if (signal.aborted) return;
+      signal.aborted = true;
+      listeners.forEach((fn) => fn());
+    }
+  };
+}
+
 
 class InterfaceBasePlugin extends Plugin {
 
@@ -1515,56 +1543,105 @@ class InterfaceBasePlugin extends Plugin {
    * Fallback: check if there is recent real traffic on this WAN (conntrack UPDATE with reply to our IP).
    * Used when all ping targets had 0 packets (ping dest may be unreachable). Counts lines where original
    * dst is a public (non-private) IP. Returns true if at least one such flow is seen.
+   * Uses spawn + kill on first match to avoid waiting the full monitorSec when a match is found early.
+   * Optional abortSignal: when aborted, settles with false and kills the conntrack process.
    */
-  async _checkWanStatusByConntrackForReplyDst(replyDst, monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT) {
+  async _checkWanStatusByConntrackForReplyDst(replyDst, monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT, abortSignal = null) {
     if (!replyDst)
       return false;
-    const execTimeoutMs = (monitorSec + 1) * 1000;
-    try {
-      const cmd = `sudo timeout ${monitorSec} conntrack -E -e UPDATE --reply-dst ${replyDst} 2>/dev/null | grep '\\[ASSURED\\]' | grep -E '(udp|ESTABLISHED)'`;
-      const result = await exec(cmd, { timeout: execTimeoutMs });
-      const stdout = (result && result.stdout) ? result.stdout.trim() : '';
-      const lines = stdout.split('\n').filter(l => l.length > 0);
-      let validCount = 0;
-      for (const line of lines) {
-        const m = line.match(/dst=([^\s]+)/);
-        if (m && m[1]) {
-          const origDst = m[1];
-          if (!ip.isPrivate(origDst))
-            validCount++;
+    return new Promise((resolve) => {
+      const child = spawn('sudo', [
+        'conntrack', '-E', '-e', 'UPDATE', '--reply-dst', replyDst
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      let settled = false;
+      let timer = null;
+      let abortListener = null;
+      const killChild = () => {
+        if (typeof child.pid === 'number' && child.pid > 0) {
+          const k = spawn('sudo', ['pkill', '-9', '-P', String(child.pid)], { stdio: 'ignore' });
+          k.on('error', () => {});
         }
+      };
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (abortListener && abortSignal) {
+          try { abortSignal.removeEventListener('abort', abortListener); } catch (_) {}
+        }
+        killChild();
+        resolve(value);
+      };
+      abortListener = abortSignal ? () => finish(false) : null;
+      if (abortSignal) {
+        if (abortSignal.aborted) return finish(false);
+        abortSignal.addEventListener('abort', abortListener);
       }
-      return validCount > 0;
-    } catch (err) {
-      // If conntrack fails to match an UPDATE message within monitorSec,
-      // the grep command will return err code 1, thus entering the catch block and returning false.
-      return false;
-    }
+      timer = setTimeout(() => finish(false), monitorSec * 1000);
+      let buf = '';
+      const checkLine = (line) => {
+        if (!line.includes('[ASSURED]') || !/(udp|ESTABLISHED)/.test(line)) return;
+        const m = line.match(/dst=([^\s]+)/);
+        if (!m || !m[1] || ip.isPrivate(m[1])) return;
+        finish(true);
+      };
+      child.stdout.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines)
+          if (line.trim()) checkLine(line);
+      });
+      child.stderr.on('data', () => {});
+      child.on('error', () => finish(false));
+      child.on('close', () => {
+        if (buf.trim()) checkLine(buf.trim());
+        finish(false);
+      });
+    });
   }
 
   async _checkWanStatusByConntrack() {
     const ip4s = await this.getIPv4Addresses();
-    if (!ip4s || ip4s.length === 0)
-      return false;
-
+    if (!ip4s || ip4s.length === 0) return false;
     const state = this._wanConnState || {};
-    const failureCount = (state.failureCount != null) ? state.failureCount : 0;
-    const successCount = (state.successCount != null) ? state.successCount : 0;
+    const { failureCount = 0, successCount = 0 } = state;
     let monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT;
-    if (failureCount > 0 && failureCount <= ON_OFF_THRESHOLD)
-      // longer after initial failures to reduce false "down" 
+    
+    if (failureCount > 0 && failureCount <= ON_OFF_THRESHOLD) {
       monitorSec = CONNTRACK_MONITOR_SEC_AFTER_FAILURE;
-    else if (successCount > 0 && successCount <= OFF_ON_THRESHOLD)
-      // longer after initial successes for stability
+    } else if (successCount > 0 && successCount <= OFF_ON_THRESHOLD) {
       monitorSec = CONNTRACK_MONITOR_SEC_AFTER_SUCCESS;
-
+    }
+  
     const replyDsts = [...new Set(ip4s.map(a => a.split('/')[0].trim()).filter(Boolean))];
-    if (replyDsts.length === 0)
-      return false;
-    const results = await Promise.all(
-      replyDsts.map(d => this._checkWanStatusByConntrackForReplyDst(d, monitorSec))
-    );
-    return results.some(Boolean);
+    if (replyDsts.length === 0) return false;
+
+    const controller = createAbortController();
+    const { signal } = controller;
+    const promises = replyDsts.map((d) => this._checkWanStatusByConntrackForReplyDst(d, monitorSec, signal));
+
+    // node 10 and 12 not support Promise.any
+    return new Promise((resolve) => {
+      let settled = false;
+      let falseCount = 0;
+      const len = promises.length;
+      const onTrue = () => {
+        if (settled) return;
+        settled = true;
+        controller.abort();
+        resolve(true);
+      };
+      const onFalse = () => {
+        falseCount += 1;
+        if (falseCount === len && !settled) {
+          settled = true;
+          resolve(false);
+        }
+      };
+      promises.forEach((p) => p.then((v) => (v ? onTrue() : onFalse())).catch(() => onFalse()));
+    });
   }
 
   setPendingTest(v = false) {
