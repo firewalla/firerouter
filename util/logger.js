@@ -24,6 +24,12 @@ const fs = require('fs');
 const _ = require('lodash');
 
 const moment = require('moment')
+const LRU = require('lru-cache');
+
+const rateLimitCache = new LRU({
+  max: 1000,
+  ttl: 1000 * 60 * 5
+});
 
 String.prototype.capitalizeFirstLetter = function () {
   return this.charAt(0).toUpperCase() + this.slice(1);
@@ -52,7 +58,7 @@ function redactLog(obj, redactRequired = false, depth) {
     for (const key of Object.keys(obj)) {
       if (_.isFunction(obj[key]))
         continue;
-      if (_.isObject(obj[key]) || _.isArray(obj[key]))
+      if (_.isPlainObject(obj[key]) || _.isArray(obj[key]))
         objCopy[key] = redactLog(obj[key], redactRequired || keysToRedact.has(key), depth + 1);
       else {
         if (redactRequired || keysToRedact.has(key))
@@ -75,7 +81,7 @@ function argumentsToString(v) {
       // args[k] = JSON.stringify(args[k]);
       if (_.isFunction(args[k]))
         continue;
-      if (_.isArray(args[k]) || _.isObject(args[k]))
+      if (_.isArray(args[k]) || _.isPlainObject(args[k]))
         args[k] = redactLog(args[k], false, depth + 1);
       args[k] = require('util').inspect(args[k], false, null, true);
     }
@@ -208,6 +214,20 @@ module.exports = function (component) {
     logger.log.apply(logger, ["error", component + ": " + argumentsToString(arguments)]);
   };
 
+  wrap.errorRateLimited = function (cooldownMs = 1000 * 60 * 5) {
+    if (logger.levels[getLogLevel()] < logger.levels['error']) {
+      return // do nothing
+    }
+    const args = Array.prototype.slice.call(arguments, 1);
+    const argsString = argumentsToString(args);
+    const key = "error:" + component + ": " + argsString;
+    if (rateLimitCache.peek(key)) {
+      return // rate limited
+    }
+    rateLimitCache.set(key, true, cooldownMs);
+    logger.log.apply(logger, ["error", component + ": " + argsString]);
+  };
+
   wrap.warn = function () {
     if (logger.levels[getLogLevel()] < logger.levels['warn']) {
       return // do nothing
@@ -237,14 +257,6 @@ module.exports = function (component) {
   };
 
   wrap.setGlobalLogLevel = (level) => {
-    if(logger && logger.transports && logger.transports.console) {
-      logger.transports.console.level = level;
-    }
-
-    if(logger && logger.transports && logger.transports['log-file']) {
-      logger.transports['log-file'].level = level;
-    }
-
     globalLogLevel = level;
   };
 

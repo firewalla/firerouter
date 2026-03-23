@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter Wireless Event Listener on %i
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/bin/bash %HOSTAPD_DIRECTORY%/hostapd_cli.sh %i
+RemainAfterExit=true

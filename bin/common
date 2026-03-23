@@ -47,7 +47,7 @@ init_network_config() {
   BEGIN=$(date +%s)
   if [[ ! -f /dev/shm/firerouter.prepared ]]; then
     echo "Preparing network environment ..."
-    HTTP_STATUS_CODE=`curl -m30 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
+    HTTP_STATUS_CODE=`curl -m60 -s -o /dev/null -w "%{http_code}" 'http://localhost:8837/v1/config/prepare_env' -XPOST -H 'Content-Type: application/json' -d {}`
     if [[ $HTTP_STATUS_CODE != "200" ]]; then
       echo "Failed to prepare environment"
       _rc=2
