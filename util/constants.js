@@ -1,0 +1,20 @@
+'use strict';
+
+const POWER_MODE_PERFORMANCE = "performance";
+const POWER_MODE_POWERSAVE = "powersave";
+const POWER_MODE_ONDEMAND = "ondemand";
+const SUPPORTED_POWER_MODES = [
+  POWER_MODE_PERFORMANCE,
+  POWER_MODE_POWERSAVE,
+  POWER_MODE_ONDEMAND,
+];
+
+module.exports = {
+  POWER_MODE_PERFORMANCE,
+  POWER_MODE_POWERSAVE,
+  POWER_MODE_ONDEMAND,
+
+  SUPPORTED_POWER_MODES,
+
+  REDIS_KEY_POWER_MODE: "pdo:power_mode",
+};
