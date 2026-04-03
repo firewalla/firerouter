@@ -180,11 +180,14 @@ async function reapply(config, dryRun = false) {
         if (!dryRun) {
           log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
           await instance.flush();
-          CHANGE_FLAGS |= FLAG_CHANGE;
-          if (pluginConf.category === "interface")
-            CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
-          if (pluginConf.category === "apc")
+          if (pluginConf.category === "apc") {
             CHANGE_FLAGS |= FLAG_APC_CHANGE;
+          } else {
+            CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+          }
+
         }
         instance.propagateConfigChanged(Plugin.CHANGE_FULL);
         instance.unsubscribeAllChanges();
@@ -270,11 +273,13 @@ async function reapply(config, dryRun = false) {
             }
           } else
             log.info("No need to flush old config", pluginConf.category, instance.name);
-          CHANGE_FLAGS |= FLAG_CHANGE;
-          if (pluginConf.category === "interface")
-            CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
-          if (pluginConf.category === "apc")
+          if (pluginConf.category === "apc") {
             CHANGE_FLAGS |= FLAG_APC_CHANGE;
+          } else {
+            CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+          }
         }
         instance.unsubscribeAllChanges();
       }
@@ -320,11 +325,14 @@ async function reapply(config, dryRun = false) {
           log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
           errors.push(err.message || err);
         });
-        CHANGE_FLAGS |= FLAG_CHANGE;
-        if (pluginConf.category === "interface")
-          CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
-        if (pluginConf.category === "apc")
+        if (pluginConf.category === "apc") {
           CHANGE_FLAGS |= FLAG_APC_CHANGE;
+        } else {
+          CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+        }
+
       } else {
         log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
       }
