@@ -93,6 +93,7 @@ case $reason in
 
     # If no suitable nd_from was found but only one set exists (nd1_from), use it and set nd_id=1
     if [ -z "$nd_from" ]; then
+      unset ipv6_passthrough
       eval "nd1_from_val=\$nd1_from"
       if [ -n "$nd1_from_val" ]; then
         only_one=1
@@ -131,9 +132,28 @@ case $reason in
         addr_id=$((addr_id - 1))
       done
       if [ -n "$new_addrs" ]; then
-        for rt_table in $rt_tables; do
-          execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
-        done
+        valid_prefix_len=64 # valid prefix length for ipv6 passthrough
+        if [ -z "$ipv6_passthrough" ] || ["${new_addrs##*/}" != "$valid_prefix_len"]; then
+          for rt_table in $rt_tables; do
+            execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+          done
+        else 
+          gua_addr=$(ip -6 addr show dev eth0 scope global | grep -oP 'inet6\s+\K[0-9a-f:]+/[0-9]+' | head -n 1)
+
+          if [ -n "$gua_addr" ]; then
+            addr_only="${gua_addr%%/*}"
+            # delete /64 address and route in main table
+            execute_and_log "sudo ip -6 addr del $gua_addr dev $interface"
+            prefix_route=$(ip -6 route show dev "$interface" proto ra | grep "/${valid_prefix_len}" | awk '{print $1}' | head -n 1)
+            if [ -n "$prefix_route" ]; then
+              execute_and_log "sudo ip -6 r del $prefix_route dev $interface"
+            fi
+            # add /128 address
+            execute_and_log "sudo ip -6 addr add ${addr_only}/128 dev $interface"
+
+            echo "$(date) changed $gua_addr to ${addr_only}/128 on eth0" >> /tmp/test/dhcpcd6.log
+          fi 
+        fi
       fi
 
       for default_rt_table in $default_rt_tables; do
