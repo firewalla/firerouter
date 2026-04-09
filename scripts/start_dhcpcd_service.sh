@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "$(date) ipv6_passthrough=${ipv6_passthrough}" >> /tmp/test/dhcpcd6.log
+
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 
 source ${FIREROUTER_HOME}/platform/platform.sh

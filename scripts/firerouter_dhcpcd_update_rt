@@ -150,8 +150,6 @@ case $reason in
             fi
             # add /128 address
             execute_and_log "sudo ip -6 addr add ${addr_only}/128 dev $interface"
-
-            echo "$(date) changed $gua_addr to ${addr_only}/128 on eth0" >> /tmp/test/dhcpcd6.log
           fi 
         fi
       fi
