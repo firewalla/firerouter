@@ -115,6 +115,7 @@ case $reason in
     fi
 
     if [ -n "$nd_from" ]; then
+      # only contain 1 address in current logic
       new_addrs=""
       addr_id=10
       while [ $addr_id -gt 0 ]; do

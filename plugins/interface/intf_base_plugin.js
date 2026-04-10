@@ -515,6 +515,18 @@ class InterfaceBasePlugin extends Plugin {
       } else {
         await this._resetDuid();
       }
+
+      const passthroughEnvFile = `/etc/dhcpcd/ipv6_passthrough_${this.name}.env`;
+      if (this.networkConfig.dhcp6.ipv6Passthrough) {
+        await exec(`sudo bash -c 'mkdir -p /etc/dhcpcd && echo "ipv6_passthrough=1" > ${passthroughEnvFile}'`).catch((err) => {
+          this.log.error(`Failed to write ipv6 passthrough env file, ${err.message}`);
+        });
+      } else {
+        await exec(`sudo rm -f ${passthroughEnvFile}`).catch((err) => {
+          this.log.error(`Failed to remove ipv6_passthrough env file for ${this.name}`, err.message);
+        });
+      }
+      
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
@@ -531,6 +543,12 @@ class InterfaceBasePlugin extends Plugin {
           });
         }
       }
+
+      if (this.networkConfig.ipv6DelegateFrom && this.networkConfig.ipv6PassthroughFrom) {
+        this.fatal(`ipv6DelegateFrom and ipv6PassthroughFrom are mutually exclusive on interface ${this.name}`);
+        return;
+      }
+
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
         const parentIntfPlugin = pl.getPluginInstance("interface", fromIface);
@@ -572,9 +590,124 @@ class InterfaceBasePlugin extends Plugin {
             }
           });
         }
+      } 
+      if (this.networkConfig.ipv6PassthroughFrom) {
+        do {
+          // generate LAN GUA address
+          const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
+          if (!fromWANPlugin) {
+            this.log.error(`WAN interface ${this.networkConfig.ipv6PassthroughFrom} not found!`);
+            break;
+          }
+          this.subscribeChangeFrom(fromWANPlugin);
+
+          let ip6s = await fromWANPlugin.getIPv6Addresses();
+          if (_.isEmpty(ip6s)) {
+            this.log.warn(`No IPv6 address found on WAN interface ${fromWANPlugin.name}`);
+            break;
+          }
+          ip6s = ip6s.filter((ip6) => !ip.isPrivate(ip6));
+          if (_.isEmpty(ip6s)) {
+            this.log.warn(`No GUA found on WAN interface ${fromWANPlugin.name}`);
+            break;
+          }
+
+          // TODO: deal with multiple GUA situation
+          const wanAddr6 = ip6s[0];
+          const addr6 = new Address6(wanAddr6);
+          if (!addr6.isValid()) {
+            this.log.error(`Invalid IPv6 address from WAN: ${wanAddr6}`);
+            break;
+          }
+
+          // Extract /64 prefix network address (upper 64 bits)
+          const prefix64 = Address6.fromBigInteger(
+            addr6.bigInteger().and(
+              new Address6('ffff:ffff:ffff:ffff::').bigInteger()
+            )
+          );
+
+          // Get this interface's MAC and generate EUI-64 IID
+          const mac = await this.getHardwareAddress();
+          if (!mac) {
+            this.log.error(`Failed to get hardware address of ${this.name}`);
+            break;
+          }
+          const iid = this._macToEUI64(mac);
+
+          // Combine prefix + IID into a full /64 address
+          const prefix64Upper = prefix64.canonicalForm().split(':').slice(0, 4).join(':');
+          const fullAddr = `${prefix64Upper}:${iid}/64`;
+          const addrObj = new Address6(fullAddr);
+          if (!addrObj.isValid()) {
+            this.log.error(`Generated invalid IPv6 address: ${fullAddr}`);
+            break;
+          }
+
+          this.log.debug(`Adding IPv6 address ${addrObj.correctForm()} to ${this.name}`);
+          await exec(`sudo ip -6 addr add ${addrObj.correctForm()}/64 dev ${this.name}`).catch((err) => {
+            this.log.warn(`Failed to add IPv6 addr ${addrObj.correctForm()} to ${this.name}`, err.message);
+          });
+          await exec(`sudo ip -6 route del ${prefix64Upper}::/64 dev ${this.name}`).catch((err) => {
+            this.log.warn(`Failed to del IPv6 route ${prefix64Upper}::/64 on ${this.name}`, err.message);
+          });
+          const rt = `${fromWANPlugin.name}_local`;
+          await exec(`sudo ip -6 route add ${prefix64Upper}::/64 dev ${this.name} table ${rt}`).catch((err) => {
+            this.log.warn(`Failed to add IPv6 route ${prefix64Upper}::/64 to ${rt}`, err.message);
+          });
+
+          // generate ndppd.conf file
+          const prefix64Str = `${prefix64Upper}::/64`;
+          await this._writeNdppdConfigFile(fromWANPlugin.name, this.name, prefix64Str);
+
+          // start ndppd
+          await exec(`sudo systemctl restart firerouter_ndppd@${this.name}`).catch((err) => {
+            this.log.error(`Failed to start ndppd service for ${this.name}`, err.message);
+          });
+        } while(0);
+      } else {
+        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+  }
+
+  _macToEUI64(mac) {
+    const parts = mac.toLowerCase().split(':');
+    // flip U/L bit (bit 1 from LSB of first octet)
+    parts[0] = (parseInt(parts[0], 16) ^ 0x02).toString(16).padStart(2, '0');
+    // insert ff:fe between byte 3 and 4
+    const eui64 = [
+      parts[0] + parts[1],
+      parts[2] + 'ff',
+      'fe' + parts[3],
+      parts[4] + parts[5],
+    ];
+    return eui64.join(':');
+  }
+
+  async _writeNdppdConfigFile(wanInterface, lanInterface, prefix) {
+    const confPath = `/etc/ndppd/${lanInterface}.conf`;
+    const content = [
+      `proxy ${wanInterface} {`,
+      `    router no`,
+      `    timeout 500`,
+      `    ttl 30000`,
+      `    rule ${prefix} {`,
+      `        iface ${lanInterface}`,
+      `    }`,
+      `}`,
+      ``
+    ].join('\n');
+
+    await exec(`sudo mkdir -p /etc/ndppd`).catch((err) => {
+      this.log.error(`Failed to create /etc/ndppd directory`, err.message);
+    });
+    const contentB64 = Buffer.from(content).toString('base64');
+    await exec(`echo ${contentB64} | base64 -d | sudo tee ${confPath}`).catch((err) => {
+      this.log.error(`Failed to write ndppd config ${confPath}`, err.message);
+    });
+    this.log.debug(`Written ndppd config to ${confPath}`);
   }
 
   // just for readability
