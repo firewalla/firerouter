@@ -8,4 +8,4 @@ source ${FIREROUTER_HOME}/platform/platform.sh
 INTF=$1
 NDPPD_BINARY=$(get_ndppd_path)
 
-$NDPPD_BINARY -c "/etc/ndppd/${INTF}.conf"
+$NDPPD_BINARY -c "/home/pi/.router/config/ndppd/${INTF}.conf"
