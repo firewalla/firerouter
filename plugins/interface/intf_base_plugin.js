@@ -673,15 +673,35 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`WAN interface ${this.networkConfig.ipv6PassthroughFrom} not found!`);
       return null;
     }
-    let ip6s = await fromWANPlugin.getIPv6Addresses();
-    ip6s = (ip6s || []).filter((a) => !ip.isPrivate(a));
-    if (_.isEmpty(ip6s)) {
-      this.log.warn(`No GUA found on WAN interface ${fromWANPlugin.name}`);
-      return null;
+    // Prefer reading from the dhcpcd RA cache in /dev/shm to avoid a race condition where
+    // the dhcpcd hook script deletes the /64 address and re-adds it as /128 on the WAN
+    // interface, causing a brief window where ip addr show returns no GUA.
+    let addr6Str = null;
+    const raFile = `/dev/shm/dhcpcd.ra.${fromWANPlugin.name}`;
+    const raContent = await fs.readFileAsync(raFile, { encoding: "utf8" }).catch(() => null);
+    if (raContent) {
+      const match = raContent.match(/^ip6=(.+)$/m);
+      if (match) {
+        const candidate = match[1].trim().split('/')[0];
+        if (!ip.isPrivate(candidate)) {
+          addr6Str = candidate;
+          this.log.debug(`Got WAN IPv6 prefix from RA cache ${raFile}: ${addr6Str}`);
+        }
+      }
     }
-    const addr6 = new Address6(ip6s[0]);
+    // Fallback: read directly from the WAN interface
+    if (!addr6Str) {
+      let ip6s = await fromWANPlugin.getIPv6Addresses();
+      ip6s = (ip6s || []).filter((a) => !ip.isPrivate(a));
+      if (_.isEmpty(ip6s)) {
+        this.log.warn(`No GUA found on WAN interface ${fromWANPlugin.name}`);
+        return null;
+      }
+      addr6Str = ip6s[0].split('/')[0];
+    }
+    const addr6 = new Address6(addr6Str);
     if (!addr6.isValid()) {
-      this.log.error(`Invalid IPv6 address from WAN: ${ip6s[0]}`);
+      this.log.error(`Invalid IPv6 address from WAN: ${addr6Str}`);
       return null;
     }
     const prefix64 = Address6.fromBigInteger(
