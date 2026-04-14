@@ -95,8 +95,15 @@ function createAbortController() {
   };
 }
 
+const ndppdConfDir = `${r.getUserConfigFolder()}/ndppd`;
+const dhcpcd6ConfDir = `${r.getUserConfigFolder()}/dhcpcd6`;
 
 class InterfaceBasePlugin extends Plugin {
+
+  static async preparePlugin() {
+    await fs.mkdirAsync(`${ndppdConfDir}`, { recursive: true }).catch((err) => { });
+    await fs.mkdirAsync(`${dhcpcd6ConfDir}`, { recursive: true }).catch((err) => { });
+  }
 
   async isInterfacePresent() {
     return fs.accessAsync(r.getInterfaceSysFSDirectory(this.name), fs.constants.F_OK).then(() => true).catch((err) => false);
@@ -230,6 +237,10 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
         await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+      }
+      if (this.networkConfig.ipv6PassthroughFrom) {
+        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
+        await fs.unlinkAsync(`${ndppdConfDir}/${this.name}.conf`).catch((err) => { });
       }
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
@@ -466,7 +477,8 @@ class InterfaceBasePlugin extends Plugin {
   isIPv6Enabled() {
     return this.networkConfig.dhcp6 || // DHCP
       this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6)) || // Static
-      this.networkConfig.ipv6DelegateFrom; // Delegate
+      this.networkConfig.ipv6DelegateFrom || // Delegate
+      this.networkConfig.ipv6PassthroughFrom; // Passthrough
   }
 
   getEscapedNameForSysctl() {
@@ -515,6 +527,16 @@ class InterfaceBasePlugin extends Plugin {
       } else {
         await this._resetDuid();
       }
+
+      const passthroughEnvFile = `${dhcpcd6ConfDir}/ipv6_passthrough_${this.name}.env`;
+      if (this.networkConfig.dhcp6.ipv6Passthrough) {
+        await fs.writeFileAsync(passthroughEnvFile, "ipv6_passthrough=1").catch((err) => {
+          this.log.error(`Failed to write ipv6 passthrough env file, ${err.message}`);
+        });
+      } else {
+        await fs.unlinkAsync(passthroughEnvFile).catch((err) => { });
+      }
+      
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
@@ -531,6 +553,12 @@ class InterfaceBasePlugin extends Plugin {
           });
         }
       }
+
+      if (this.networkConfig.ipv6DelegateFrom && this.networkConfig.ipv6PassthroughFrom) {
+        this.fatal(`ipv6DelegateFrom and ipv6PassthroughFrom are mutually exclusive on interface ${this.name}`);
+        return;
+      }
+
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
         const parentIntfPlugin = pl.getPluginInstance("interface", fromIface);
@@ -572,9 +600,128 @@ class InterfaceBasePlugin extends Plugin {
             }
           });
         }
+      } 
+      if (this.networkConfig.ipv6PassthroughFrom) {
+        do {
+          // generate LAN GUA address
+          const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
+          if (!fromWANPlugin) {
+            this.log.error(`Failed to get ${this.networkConfig.ipv6PassthroughFrom} interface plugin.`);
+            break;
+          }
+          this.subscribeChangeFrom(fromWANPlugin);
+
+          // Get this interface's MAC and generate EUI-64 IID
+          const mac = await this.getHardwareAddress();
+          if (!mac) {
+            this.log.error(`Failed to get hardware address of ${this.name}`);
+            break;
+          }
+          const iid = this._macToEUI64(mac);
+
+          // Combine prefix + IID into a full /64 address
+          const prefix64Upper = await this._getIpv6PassthroughPrefix64Upper();
+          if (!prefix64Upper) {
+            this.log.error(`Failed to get prefix64Upper.`);
+            break;
+          }
+          const fullAddr = `${prefix64Upper}:${iid}/64`;
+          const addrObj = new Address6(fullAddr);
+          if (!addrObj.isValid()) {
+            this.log.error(`Generated invalid IPv6 address: ${fullAddr}`);
+            break;
+          }
+
+          this.log.debug(`Adding IPv6 address ${addrObj.correctForm()} to ${this.name}`);
+          await exec(`sudo ip -6 addr add ${addrObj.correctForm()}/64 dev ${this.name}`).catch((err) => {
+            this.log.warn(`Failed to add IPv6 addr ${addrObj.correctForm()} to ${this.name}`, err.message);
+          });
+
+          // generate ndppd.conf file
+          const prefix = `${prefix64Upper}::/64`;
+          await this._writeNdppdConfigFile(fromWANPlugin.name, this.name, prefix);
+
+          // start ndppd
+          await exec(`sudo systemctl restart firerouter_ndppd@${this.name}`).catch((err) => {
+            this.log.error(`Failed to start ndppd service for ${this.name}`, err.message);
+          });
+        } while(0);
+      } else {
+        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+  }
+
+  async reapplyIpv6Settings() {
+    pl.acquireApplyLock(async () => {
+      await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+        // trigger downstream plugins to reapply, e.g., nat for ipv6
+        this.propagateConfigChanged(Plugin.CHANGE_FULL);
+        this._reapplyNeeded = false;
+        pl.scheduleReapply();
+        return pl.publishIfaceChangeApplied();
+      }).catch((err) => {
+        this.log.error(`Failed to reapply IPv6 settings on ${this.name}`, err.message);
+      });
+    });
+  }
+
+  async _getIpv6PassthroughPrefix64Upper() {
+    const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
+    if (!fromWANPlugin) {
+      this.log.error(`WAN interface ${this.networkConfig.ipv6PassthroughFrom} not found!`);
+      return null;
+    }
+    let ip6s = await fromWANPlugin.getIPv6Addresses();
+    ip6s = (ip6s || []).filter((a) => !ip.isPrivate(a));
+    if (_.isEmpty(ip6s)) {
+      this.log.warn(`No GUA found on WAN interface ${fromWANPlugin.name}`);
+      return null;
+    }
+    const addr6 = new Address6(ip6s[0]);
+    if (!addr6.isValid()) {
+      this.log.error(`Invalid IPv6 address from WAN: ${ip6s[0]}`);
+      return null;
+    }
+    const prefix64 = Address6.fromBigInteger(
+      addr6.bigInteger().and(new Address6('ffff:ffff:ffff:ffff::').bigInteger())
+    );
+    return prefix64.canonicalForm().split(':').slice(0, 4).join(':');
+  }
+
+  _macToEUI64(mac) {
+    const parts = mac.toLowerCase().split(':');
+    // flip U/L bit (bit 1 from LSB of first octet)
+    parts[0] = (parseInt(parts[0], 16) ^ 0x02).toString(16).padStart(2, '0');
+    // insert ff:fe between byte 3 and 4
+    const eui64 = [
+      parts[0] + parts[1],
+      parts[2] + 'ff',
+      'fe' + parts[3],
+      parts[4] + parts[5],
+    ];
+    return eui64.join(':');
+  }
+
+  async _writeNdppdConfigFile(wanInterface, lanInterface, prefix) {
+    const confPath = `${ndppdConfDir}/${lanInterface}.conf`;
+    const content = [
+      `proxy ${wanInterface} {`,
+      `    router no`,
+      `    timeout 500`,
+      `    ttl 30000`,
+      `    rule ${prefix} {`,
+      `        iface ${lanInterface}`,
+      `    }`,
+      `}`,
+      ``
+    ].join('\n');
+
+    await fs.writeFileAsync(confPath, content).catch((err) => {
+      this.log.error(`Failed to write ndppd config ${confPath}`, err.message);
+    });
+    this.log.debug(`Written ndppd config to ${confPath}`);
   }
 
   // just for readability
@@ -852,6 +999,18 @@ class InterfaceBasePlugin extends Plugin {
           await routing.addRouteToTable(cidr, null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
           await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
         }
+      }
+    } else if (this.networkConfig.ipv6PassthroughFrom) {
+      const prefix64Upper = await this._getIpv6PassthroughPrefix64Upper();
+      if (prefix64Upper) {
+        const prefix = `${prefix64Upper}::/64`;
+        const rt = `${this.networkConfig.ipv6PassthroughFrom}_local`;
+        await routing.removeRouteFromTable(`${prefix}`, null, this.name, null, 6).catch((err) => {
+          this.log.warn(`Failed to del IPv6 route ${prefix} on ${this.name}`, err.message);
+        });
+        await routing.addRouteToTable(`${prefix}`, null, this.name, rt, null, 6).catch((err) => {
+          this.log.warn(`Failed to add IPv6 route ${prefix} to ${rt}`, err.message);
+        });
       }
     }
     if (this.networkConfig.gateway) {
@@ -1940,17 +2099,7 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          pl.acquireApplyLock(async () => {
-            await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
-              // trigger downstream plugins to reapply, e.g., nat for ipv6
-              this.propagateConfigChanged(Plugin.CHANGE_FULL);
-              this._reapplyNeeded = false;
-              pl.scheduleReapply();
-              return pl.publishIfaceChangeApplied();
-            }).catch((err) => {
-              this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
-            });
-          });
+          this.reapplyIpv6Settings();
         }
         break;
       }
@@ -1969,6 +2118,14 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
           pl.publishIfaceChangeApplied();
+        }
+        break;
+      }
+      case event.EVENT_IP6_CHANGE: {
+        const payload = event.getEventPayload(e);
+        const iface = payload.intf;
+        if (iface && this.networkConfig.ipv6PassthroughFrom === iface) {
+          this.reapplyIpv6Settings();
         }
         break;
       }
