@@ -685,7 +685,7 @@ class InterfaceBasePlugin extends Plugin {
         const candidate = match[1].trim().split('/')[0];
         if (!ip.isPrivate(candidate)) {
           addr6Str = candidate;
-          this.log.debug(`Got WAN IPv6 prefix from RA cache ${raFile}: ${addr6Str}`);
+          this.log.debug(`Got WAN GUA from RA cache ${raFile}: ${addr6Str}`);
         }
       }
     }
@@ -701,7 +701,7 @@ class InterfaceBasePlugin extends Plugin {
     }
     const addr6 = new Address6(addr6Str);
     if (!addr6.isValid()) {
-      this.log.error(`Invalid IPv6 address from WAN: ${addr6Str}`);
+      this.log.error(`Invalid GUA from WAN: ${addr6Str}`);
       return null;
     }
     const prefix64 = Address6.fromBigInteger(
