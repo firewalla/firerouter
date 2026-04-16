@@ -700,39 +700,7 @@ class InterfaceBasePlugin extends Plugin {
       }
     }
 
-    return '';
-
-    // Fallback: derive upper 64 bits from the GUA in the RA cache
-    let addr6Str = null;
-    if (raContent) {
-      const match = raContent.match(/^ip6=(.+)$/m);
-      if (match) {
-        const candidate = match[1].trim().split('/')[0];
-        if (!ip.isPrivate(candidate)) {
-          addr6Str = candidate;
-          this.log.debug(`Got WAN GUA from RA cache ${raFile}: ${addr6Str}`);
-        }
-      }
-    }
-    // Fallback: read directly from the WAN interface
-    if (!addr6Str) {
-      let ip6s = await fromWANPlugin.getIPv6Addresses();
-      ip6s = (ip6s || []).filter((a) => !ip.isPrivate(a));
-      if (_.isEmpty(ip6s)) {
-        this.log.warn(`No GUA found on WAN interface ${fromWANPlugin.name}`);
-        return null;
-      }
-      addr6Str = ip6s[0].split('/')[0];
-    }
-    const addr6 = new Address6(addr6Str);
-    if (!addr6.isValid()) {
-      this.log.error(`Invalid GUA from WAN: ${addr6Str}`);
-      return null;
-    }
-    const prefix64 = Address6.fromBigInteger(
-      addr6.bigInteger().and(new Address6('ffff:ffff:ffff:ffff::').bigInteger())
-    );
-    return prefix64.canonicalForm().split(':').slice(0, 4).join(':');
+    return null;
   }
 
   _macToEUI64(mac) {
