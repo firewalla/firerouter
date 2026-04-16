@@ -667,18 +667,43 @@ class InterfaceBasePlugin extends Plugin {
     });
   }
 
+  // return e.g."2001:0db8:0000:0001"
   async _getIpv6PassthroughPrefix64Upper() {
     const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
     if (!fromWANPlugin) {
       this.log.error(`WAN interface ${this.networkConfig.ipv6PassthroughFrom} not found!`);
       return null;
     }
-    // Prefer reading from the dhcpcd RA cache in /dev/shm to avoid a race condition where
-    // the dhcpcd hook script deletes the /64 address and re-adds it as /128 on the WAN
-    // interface, causing a brief window where ip addr show returns no GUA.
-    let addr6Str = null;
+
     const raFile = `/dev/shm/dhcpcd.ra.${fromWANPlugin.name}`;
     const raContent = await fs.readFileAsync(raFile, { encoding: "utf8" }).catch(() => null);
+
+    // Prefer reading the SLAAC prefix directly from the RA cache.
+    // The prefix field (e.g. "2001:db8:0:1::") is written by the hook 'firerouter_dhcpcd_record_lease',
+    if (raContent) {
+      const prefixMatch = raContent.match(/^prefix=(.+)$/m);
+      if (prefixMatch) {
+        const prefixStr = prefixMatch[1].trim();
+        if (prefixStr) {
+          const addr6 = new Address6(`${prefixStr}/64`);
+          if (addr6.isValid()) {
+            this.log.debug(`Got WAN prefix from RA cache ${raFile}: ${prefixStr}`);
+            return addr6.canonicalForm().split(':').slice(0, 4).join(':');
+          } else {
+            this.log.warn(`Invalid IPv6 prefix parsed from ${raFile}: ${prefixStr}`);
+          }
+        } else {
+          this.log.warn(`Empty prefix value in ${raFile}`);
+        }
+      } else {
+        this.log.warn(`Failed to match prefix in ${raFile}, content: ${raContent.trim()}`);
+      }
+    }
+
+    return '';
+
+    // Fallback: derive upper 64 bits from the GUA in the RA cache
+    let addr6Str = null;
     if (raContent) {
       const match = raContent.match(/^ip6=(.+)$/m);
       if (match) {
