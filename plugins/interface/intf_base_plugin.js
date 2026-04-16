@@ -667,47 +667,40 @@ class InterfaceBasePlugin extends Plugin {
     });
   }
 
+  // return e.g."2001:0db8:0000:0001"
   async _getIpv6PassthroughPrefix64Upper() {
     const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
     if (!fromWANPlugin) {
       this.log.error(`WAN interface ${this.networkConfig.ipv6PassthroughFrom} not found!`);
       return null;
     }
-    // Prefer reading from the dhcpcd RA cache in /dev/shm to avoid a race condition where
-    // the dhcpcd hook script deletes the /64 address and re-adds it as /128 on the WAN
-    // interface, causing a brief window where ip addr show returns no GUA.
-    let addr6Str = null;
+
     const raFile = `/dev/shm/dhcpcd.ra.${fromWANPlugin.name}`;
     const raContent = await fs.readFileAsync(raFile, { encoding: "utf8" }).catch(() => null);
+
+    // Prefer reading the SLAAC prefix directly from the RA cache.
+    // The prefix field (e.g. "2001:db8:0:1::") is written by the hook 'firerouter_dhcpcd_record_lease',
     if (raContent) {
-      const match = raContent.match(/^ip6=(.+)$/m);
-      if (match) {
-        const candidate = match[1].trim().split('/')[0];
-        if (!ip.isPrivate(candidate)) {
-          addr6Str = candidate;
-          this.log.debug(`Got WAN GUA from RA cache ${raFile}: ${addr6Str}`);
+      const prefixMatch = raContent.match(/^prefix=(.+)$/m);
+      if (prefixMatch) {
+        const prefixStr = prefixMatch[1].trim();
+        if (prefixStr) {
+          const addr6 = new Address6(`${prefixStr}/64`);
+          if (addr6.isValid()) {
+            this.log.debug(`Got WAN prefix from RA cache ${raFile}: ${prefixStr}`);
+            return addr6.canonicalForm().split(':').slice(0, 4).join(':');
+          } else {
+            this.log.warn(`Invalid IPv6 prefix parsed from ${raFile}: ${prefixStr}`);
+          }
+        } else {
+          this.log.warn(`Empty prefix value in ${raFile}`);
         }
+      } else {
+        this.log.warn(`Failed to match prefix in ${raFile}, content: ${raContent.trim()}`);
       }
     }
-    // Fallback: read directly from the WAN interface
-    if (!addr6Str) {
-      let ip6s = await fromWANPlugin.getIPv6Addresses();
-      ip6s = (ip6s || []).filter((a) => !ip.isPrivate(a));
-      if (_.isEmpty(ip6s)) {
-        this.log.warn(`No GUA found on WAN interface ${fromWANPlugin.name}`);
-        return null;
-      }
-      addr6Str = ip6s[0].split('/')[0];
-    }
-    const addr6 = new Address6(addr6Str);
-    if (!addr6.isValid()) {
-      this.log.error(`Invalid GUA from WAN: ${addr6Str}`);
-      return null;
-    }
-    const prefix64 = Address6.fromBigInteger(
-      addr6.bigInteger().and(new Address6('ffff:ffff:ffff:ffff::').bigInteger())
-    );
-    return prefix64.canonicalForm().split(':').slice(0, 4).join(':');
+
+    return null;
   }
 
   _macToEUI64(mac) {

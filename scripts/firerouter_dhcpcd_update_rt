@@ -1,11 +1,15 @@
 #!/bin/bash
 
+log() {
+  # echo "$(date) $*" >> /tmp/test/dhcpcd6.log
+}
+
 execute_and_log() {
   if [ -z "$1" ]; then
     return 1
   fi
   command="$*"
-  # echo "command: $command" >> /tmp/test/dhcpcd6.log
+  log "command: $command"
   eval "$command"
 }
 
@@ -115,46 +119,70 @@ case $reason in
     fi
 
     if [ -n "$nd_from" ]; then
-      # only contain 1 address in current logic
-      new_addrs=""
-      addr_id=10
-      while [ $addr_id -gt 0 ]; do
-        var_name="nd${nd_id}_addr$addr_id"
-        eval "addr=\$$var_name"
-        if [ -n "$addr" ] && [ -z "$new_addrs" ]; then
-          new_addrs="$addr"
-        elif [ -n "$addr" ]; then
-          # here we should take other addresses as the old addresses and remove them and related routes.
-          for rt_table in $rt_tables; do
-            execute_and_log "sudo ip -6 r del $addr dev $interface table $rt_table"
-          done
-          execute_and_log "sudo ip -6 addr del $addr dev $interface"
+      if [ -n "$ipv6_passthrough" ]; then
+        ra_file="/dev/shm/dhcpcd.ra.$interface"
+        prefix=$(grep -oP '^prefix=\K.+' "$ra_file" 2>/dev/null || true)
+        log "Get prefix $prefix from $ra_file"
+        if [ -z "$prefix" ]; then
+          unset ipv6_passthrough
         fi
-        addr_id=$((addr_id - 1))
-      done
-      if [ -n "$new_addrs" ]; then
-        valid_prefix_len=64 # valid prefix length for ipv6 passthrough
-        if [ -z "$ipv6_passthrough" ] || [ "${new_addrs##*/}" != "$valid_prefix_len" ]; then
-          for rt_table in $rt_tables; do
-            execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
-          done
-        else 
-          # delete dhcpcd auto-gen prefix route
-          prefix_route=$(ip -6 route show dev "$interface" proto ra | grep "/${valid_prefix_len}" | awk '{print $1}' | head -n 1)
-          if [ -n "$prefix_route" ]; then
-            execute_and_log "sudo ip -6 r del $prefix_route dev $interface"
+      else
+        # only contain 1 address in current logic
+        new_addrs=""
+        addr_id=10
+        while [ $addr_id -gt 0 ]; do
+          var_name="nd${nd_id}_addr$addr_id"
+          eval "addr=\$$var_name"
+          if [ -n "$addr" ] && [ -z "$new_addrs" ]; then
+            new_addrs="$addr"
+          elif [ -n "$addr" ]; then
+            # here we should take other addresses as the old addresses and remove them and related routes.
+            for rt_table in $rt_tables; do
+              execute_and_log "sudo ip -6 r del $addr dev $interface table $rt_table"
+            done
+            execute_and_log "sudo ip -6 addr del $addr dev $interface"
           fi
-          
-          gua_addr=$(ip -6 addr show dev "$interface" scope global | grep -oP 'inet6\s+\K[0-9a-f:]+/[0-9]+' | head -n 1)
-          gua_addr_prefix_len=${gua_addr##*/}
+          addr_id=$((addr_id - 1))
+        done
+      fi
 
-          if [ -n "$gua_addr" ] && [ "$gua_addr_prefix_len" = "$valid_prefix_len" ]; then
-            addr_only="${gua_addr%%/*}"
-            execute_and_log "sudo ip -6 addr del $gua_addr dev $interface"
-            execute_and_log "sudo ip -6 addr add ${addr_only}/128 dev $interface"
-            #echo "$(date) changed $gua_addr to ${addr_only}/128 on $interface" >> /tmp/test/dhcpcd6.log
-          fi 
+      if [ -n "$ipv6_passthrough" ]; then
+        # Compute the SLAAC address manually:
+        # combine the /64 prefix upper bits with the EUI-64 derived from the interface MAC.
+        # prefix format is "2001:db8:0:1::" (no /64 suffix), strip trailing :: to get upper bits.
+        mac=$(cat /sys/class/net/"$interface"/address 2>/dev/null)
+        if [ -n "$mac" ]; then
+          b1=$(printf '%d' "0x$(echo "$mac" | cut -d: -f1)")
+          b2=$(echo "$mac" | cut -d: -f2)
+          b3=$(echo "$mac" | cut -d: -f3)
+          b4=$(echo "$mac" | cut -d: -f4)
+          b5=$(echo "$mac" | cut -d: -f5)
+          b6=$(echo "$mac" | cut -d: -f6)
+          # Flip U/L bit (bit 1 from LSB) to form modified EUI-64
+          b1=$(printf '%02x' $((b1 ^ 2)))
+
+          # Strip trailing :: to get the upper 64-bit groups
+          prefix_upper="${prefix%::*}"
+          if [ -z "$prefix_upper" ]; then
+            prefix_upper="0:0:0:0"
+          else
+            n=$(echo "$prefix_upper" | awk -F: '{print NF}')
+            while [ "$n" -lt 4 ]; do
+              prefix_upper="${prefix_upper}:0"
+              n=$((n + 1))
+            done
+          fi
+
+          slaac_addr="${prefix_upper}:${b1}${b2}:${b3}ff:fe${b4}:${b5}${b6}"
+          log "prefix=$prefix slaac_addr=$slaac_addr"
+          execute_and_log "sudo ip -6 addr add ${slaac_addr}/128 dev $interface"
         fi
+      fi
+
+      if [ -n "$new_addrs" ]; then
+        for rt_table in $rt_tables; do
+          execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+        done
       fi
 
       for default_rt_table in $default_rt_tables; do

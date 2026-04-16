@@ -106,7 +106,21 @@ case $reason in
         addr_id=$((addr_id - 1))
       done
 
-      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)" > /dev/shm/dhcpcd.ra.$interface
+      # Find first SLAAC-capable (/A flag) prefix from the selected ND group
+      slaac_prefix=""
+      pi_id=1
+      while true; do
+        eval "pi_prefix=\$nd${nd_id}_prefix_information${pi_id}_prefix"
+        [ -z "$pi_prefix" ] && break
+        eval "pi_flags=\$nd${nd_id}_prefix_information${pi_id}_flags"
+        if echo "$pi_flags" | grep -qi 'a'; then
+          slaac_prefix="$pi_prefix"
+          break
+        fi
+        pi_id=$((pi_id + 1))
+      done
+
+      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)\nprefix=$slaac_prefix" > /dev/shm/dhcpcd.ra.$interface
     fi
     ;;
   BOUND6|REBOOT6|RENEW6|REBIND6)
