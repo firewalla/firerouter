@@ -2,6 +2,7 @@
 
 log() {
   # echo "$(date) $*" >> /tmp/test/dhcpcd6.log
+  :
 }
 
 execute_and_log() {
