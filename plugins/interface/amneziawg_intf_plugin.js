@@ -66,8 +66,9 @@ class AmneziawgInterfacePlugin extends WireguardInterfacePlugin {
   _addObfuscationOptions(entries, networkConfig) {
     const obfuscationKeys = [
       'jc', 'jmin', 'jmax',
-      's1', 's2',
-      'h1', 'h2', 'h3', 'h4'
+      's1', 's2', 's3', 's4',
+      'h1', 'h2', 'h3', 'h4',
+      'i1', 'i2', 'i3', 'i4', "i5"
     ];
     for (const key of obfuscationKeys) {
       if (networkConfig[key]) {

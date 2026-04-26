@@ -468,6 +468,7 @@ class NetworkConfigManager {
         case 124: // timeout
         case 255: // wpa_supplicant not initialized
           deferred.reject(new Error(`wpa_cli exited with ${code}`))
+          break;
         default:
           log.info('wpa_cli exited with code', code)
       }
@@ -483,7 +484,9 @@ class NetworkConfigManager {
     // readline will wait for that and cause a 5s delay
     wpaCli.stdout.on('data', data => {
       if (!data) return
-      const lines = data.toString().split('\n').map(line => line.trim())
+      // Keep trailing spaces: SSID is the last field in scan_result output,
+      // so trim() would corrupt SSIDs like "MyWiFi ".
+      const lines = data.toString().split('\n').map(line => line.replace(/\r$/, '').trimStart())
       for (const line of lines) try {
         log.debug(state, line)
 
