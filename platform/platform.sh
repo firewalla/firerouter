@@ -40,6 +40,10 @@ function get_dhcpcd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/dhcpcd"
 }
 
+function get_ndppd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/ndppd"
+}
+
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }
