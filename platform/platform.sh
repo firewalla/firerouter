@@ -40,6 +40,10 @@ function get_dhcpcd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/dhcpcd"
 }
 
+function get_ndppd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/ndppd"
+}
+
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }
@@ -128,6 +132,10 @@ case "$UNAME" in
       orange)
         source $FW_PLATFORM_DIR/orange/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/orange
+        ;;
+      goldplus2)
+        source $FW_PLATFORM_DIR/goldplus2/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldplus2
         ;;
       *)
         unset FW_PLATFORM_CUR_DIR
