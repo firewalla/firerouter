@@ -14,12 +14,16 @@ add_route() {
   dhcp_server="$2"
   gateway="$3"
 
-  if [ -z "$iface" ] || [ -z "$dhcp_server" ] || [ -z "$gateway" ]; then
+  if [ -z "$iface" ] || [ -z "$dhcp_server" ]; then
     return 0
   fi
 
   for rt_table in $rt_tables; do
-    execute_and_log "sudo ip route replace $dhcp_server via $gateway dev $iface table $rt_table"
+    if [ -z "$gateway" ]; then
+      execute_and_log "sudo ip route replace $dhcp_server dev $iface table $rt_table"
+    else
+      execute_and_log "sudo ip route replace $dhcp_server via $gateway dev $iface table $rt_table"
+    fi
   done
 }
 
@@ -39,6 +43,17 @@ fi
 iface="$interface"
 dhcp_server="${new_dhcp_server_identifier}"
 gateway="$(echo "$new_routers" | awk '{print $1}')"
+subnet_mask="${new_subnet_mask}"
+if [ "$subnet_mask" = "255.255.255.255" ]; then
+  # point-to-point gateway does not need via argument
+  gateway=""
+  # loosen arp flux filtering settings for point-to-point gateway
+  echo 0 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
+  echo 0 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_announce
+else
+  echo 2 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
+  echo 1 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_announce
+fi
 
 case "$reason" in
   BOUND|REBOOT)

@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -24,6 +24,7 @@ const { v4: uuidv4 } = require("uuid");
 const r = require('../../util/firerouter');
 
 const exec = require('child-process-promise').exec;
+const { spawn } = require('child_process');
 
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -48,14 +49,61 @@ Promise.promisifyAll(fs);
 
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const sysctl = require('../../util/sysctl.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const DHCP_RESTART_INTERVAL = 4;
 const ON_OFF_THRESHOLD = 2;
 const OFF_ON_THRESHOLD = 5;
+// Conntrack fallback monitor duration (seconds)
+const CONNTRACK_MONITOR_SEC_DEFAULT = 5;
+const CONNTRACK_MONITOR_SEC_AFTER_SUCCESS = 8;
+const CONNTRACK_MONITOR_SEC_AFTER_FAILURE = 10;
+
 const DUID_RECORD_MAX = 10;
 
+// Ping test result enum: success = pass, failed = partial (some packets), all_failed = 0 received (dest may be unreachable)
+const PING_RESULT_SUCCESS = 'success';
+const PING_RESULT_FAILED = 'failed';
+const PING_RESULT_ALL_FAILED = 'all_failed';
+
+const IP6_NUM_DISCARD_DEPRECATED = 100;
+const IP6_NUM_MAX = 1000;
+
+/** AbortController-compatible helper for environments where AbortController is not defined (e.g. older Node). */
+function createAbortController() {
+  const listeners = [];
+  const signal = {
+    aborted: false,
+    addEventListener(ev, fn) {
+      if (ev === 'abort') listeners.push(fn);
+    },
+    removeEventListener(ev, fn) {
+      if (ev === 'abort') {
+        const i = listeners.indexOf(fn);
+        if (i !== -1) listeners.splice(i, 1);
+      }
+    }
+  };
+  return {
+    signal,
+    abort() {
+      if (signal.aborted) return;
+      signal.aborted = true;
+      listeners.forEach((fn) => fn());
+    }
+  };
+}
+
+const ndppdConfDir = `${r.getUserConfigFolder()}/ndppd`;
+const dhcpcd6ConfDir = `${r.getUserConfigFolder()}/dhcpcd6`;
+
 class InterfaceBasePlugin extends Plugin {
+
+  static async preparePlugin() {
+    await fs.mkdirAsync(`${ndppdConfDir}`, { recursive: true }).catch((err) => { });
+    await fs.mkdirAsync(`${dhcpcd6ConfDir}`, { recursive: true }).catch((err) => { });
+  }
 
   async isInterfacePresent() {
     return fs.accessAsync(r.getInterfaceSysFSDirectory(this.name), fs.constants.F_OK).then(() => true).catch((err) => false);
@@ -67,16 +115,30 @@ class InterfaceBasePlugin extends Plugin {
         this.log.error(`Failed to flush ip address of ${this.name}`, err);
       });
       // make sure to stop dhclient no matter if dhcp is enabled
-      await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+      if (this.networkConfig.dhcp) {
+        await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+      }
     }
     if (!af || af == 6) {
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
-      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
-      await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
-      // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
-      const lease6Filename = await this._getDHCPCDLease6Filename();
-      if (lease6Filename)
-        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+      if (this.networkConfig.dhcp6) {
+        await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      }
+      if (this.isWAN() || this.isLAN()) {
+        await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+        // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
+        const lease6Filename = await this._getDHCPCDLease6Filename();
+        if (lease6Filename)
+          await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+  
+        await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
+        await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
+        await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
+      }
+      if (this.networkConfig.ipv6DelegateFrom) {
+        const fromIface = this.networkConfig.ipv6DelegateFrom;
+        await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
+      }
       // regenerate ipv6 link local address based on EUI64
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
       await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
@@ -98,38 +160,47 @@ class InterfaceBasePlugin extends Plugin {
       await fs.unlinkAsync(r.getInterfaceDelegatedPrefixPath(this.name)).catch((err) => {});
 
       // remove cached router-advertisement ipv6 address file
-      await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+      if (this.networkConfig.dhcp6) {
+        await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+      }
         
-      // flush related routing tables
-      await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
-      await routing.flushRoutingTable(`${this.name}_default`).catch((err) => {});
+      if (this.isWAN() || this.isLAN()) {
+        // flush related routing tables
+        await routing.flushRoutingTable(`${this.name}_local`).catch((err) => {});
+        await routing.flushRoutingTable(`${this.name}_default`).catch((err) => {});
 
-      // remove related policy routing rules
-      await routing.removeInterfaceRoutingRules(this.name);
-      await routing.removeInterfaceGlobalRoutingRules(this.name);
-      await routing.removeInterfaceGlobalLocalRoutingRules(this.name);
+        // remove related policy routing rules
+        await routing.removeInterfaceRoutingRules(this.name).catch((err) => {});
+        await routing.removeInterfaceGlobalRoutingRules(this.name).catch((err) => {});
+        if (this.isLAN())
+          await routing.removeInterfaceGlobalLocalRoutingRules(this.name).catch((err) => {});
+      }
 
       if (this.isWAN()) {
         // considered as WAN interface, remove access to "routable"
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
-        // restore reverse path filtering settings
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {});
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
+          // restore reverse path filtering settings
+          exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {})
+        ]);
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {});
-        await routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) =>{});
-        await exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
-        });
-        await exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-          this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
-        });
-        await this.unmarkOutputConnection(rtid).catch((err) => {
-          this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
-        });
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`).catch((err) => {}),
+          routing.removePolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => {}),
+          exec(wrapIptables(`sudo iptables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          exec(wrapIptables(`sudo ip6tables -w -t nat -D FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          this.unmarkOutputConnection(rtid).catch((err) => {
+            this.log.error(`Failed to remove outgoing mark for WAN interface ${this.name}`, err.message);
+          })
+        ]);
       }
       // remove from lan_roubable anyway
       if (this.networkConfig.ipv4 && _.isString(this.networkConfig.ipv4) || this.networkConfig.ipv4s && _.isArray(this.networkConfig.ipv4s)) {
@@ -167,14 +238,22 @@ class InterfaceBasePlugin extends Plugin {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
         await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
       }
+      if (this.networkConfig.ipv6PassthroughFrom) {
+        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
+        await fs.unlinkAsync(`${ndppdConfDir}/${this.name}.conf`).catch((err) => { });
+      }
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
       }
       if (this.networkConfig.dhcp) {
         await fs.unlinkAsync(this._getDHClientConfigPath()).catch((err) => {});
       }
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { });
-      await routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { });
+      if (this.isWAN() || this.isLAN()) {
+        await Promise.all([
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002).catch((err) => { }),
+          routing.removePolicyRoutingRule("all", this.name, routing.RT_LAN_ROUTABLE, 5002, null, 6).catch((err) => { }),
+        ]);
+      }
     }
 
     // This is a special logic that hwAddr will NOT be reset to factory during FLUSH
@@ -182,6 +261,40 @@ class InterfaceBasePlugin extends Plugin {
     // if (this.networkConfig.hwAddr) {
     //   await this.resetHardwareAddress();
     // }
+  }
+
+  /**
+   * Returns true if a full flush() is needed before apply(), false if only flushIP + apply() is enough.
+   * When only IP-related or ipv6DelegateFrom (and other "soft") fields change, no need to tear down
+   * the interface; flushIP + apply() is sufficient. Structural changes (enabled, meta, mtu, etc.) require full flush.
+   */
+  isFullFlushNeeded(newConfig) {
+    if (!this.networkConfig || !newConfig)
+      return true;
+    // Keys that can be updated with flushIP + apply only (no interface teardown)
+    const SOFT_KEYS = [
+      'ipv4', 'ipv4s', 'ipv6', 'dhcp', 'dhcp6', 'ipv6DelegateFrom',
+      'gateway', 'gateway6', 'nameservers', 'dns6Servers',
+      'allowNTPviaDHCP', 'dhcpOptions'
+    ];
+    const allKeys = _.union(Object.keys(this.networkConfig), Object.keys(newConfig));
+    for (const key of allKeys) {
+      if (SOFT_KEYS.includes(key))
+        continue;
+      if (!_.isEqual(this.networkConfig[key], newConfig[key]))
+        return true;
+    }
+    return false;
+  }
+
+  async flushFast() {
+    await this.flushIP();
+  }
+
+  getConfigChangeType(newConfig) {
+    if (this.isFullFlushNeeded(newConfig))
+      return Plugin.CHANGE_FULL;
+    return Plugin.CHANGE_IP_ONLY;
   }
 
   async configure(networkConfig) {
@@ -201,12 +314,26 @@ class InterfaceBasePlugin extends Plugin {
     return `/run/resolvconf/interface/${this.name}.dhclient`;
   }
 
-  _getDhcpcdFilePath() {
+
+  _getDeprecatedDhcpcdFilePath() {
     return `/run/resolvconf/interface/${this.name}.dhcpcd`;
   }
 
+  _getDhcpcdFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.v6`;
+  }
+
+  _getDhcpcdRaFilePath() {
+    return `/run/resolvconf/interface/${this.name}.dhcpcd.ra`;
+  }
+
   async _getDHCPCDLease6Filename() {
-    const version = await exec(`dhcpcd --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
+    let dhcpcdBinPath = platform.getBinaryPath() + '/dhcpcd';
+    // this.log.debug(`checking if dhcpcd binary exists: ${dhcpcdBinPath}`);
+    if (!await fs.accessAsync(dhcpcdBinPath, fs.constants.F_OK).then(() => true).catch((err) => false)) {
+      dhcpcdBinPath = 'dhcpcd';
+    }
+    const version = await exec(`${dhcpcdBinPath} --version | head -n 1 | awk '{print $2}'`).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get dhcpcd version`, err.message);
       return null;
     });
@@ -322,16 +449,24 @@ class InterfaceBasePlugin extends Plugin {
       await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`);
-      await routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6);
-      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`);
-      await routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6);
-      await exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
-        this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
-      });
-      await exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
-        this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
-      });
+      await Promise.all(
+        [
+          // a workaround to loosen arp flux filtering as it may cause internet connectivity issue if DHCP server is not in the same subnet as WAN IP
+          // should be upgraded to a proper solution in the next release
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_announce`, 0).catch((err) => {}),
+          sysctl.setValue(`net.ipv4.conf.${this.getEscapedNameForSysctl()}.arp_ignore`, 0).catch((err) => {}),
+          routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`),
+          routing.createPolicyRoutingRule("all", null, `${this.name}_default`, 6001, `${rtid}/${routing.MASK_REG}`, 6),
+          routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`),
+          routing.createPolicyRoutingRule("all", "lo", `${this.name}_local`, 499, `${rtid}/${routing.MASK_REG}`, 6),
+          exec(wrapIptables(`sudo iptables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => { // do not reset connmark if it is already set in mangle table
+            this.log.error(`Failed to add inbound connmark rule for WAN interface ${this.name}`, err.message);
+          }),
+          exec(wrapIptables(`sudo ip6tables -w -t nat -A FR_PREROUTING -i ${this.name} -m connmark --mark 0x0/${routing.MASK_ALL} -j CONNMARK --set-xmark ${rtid}/${routing.MASK_ALL}`)).catch((err) => {
+            this.log.error(`Failed to add ipv6 inbound connmark rule for WAN interface ${this.name}`, err.message);
+          })
+        ]
+      );
     }
   }
 
@@ -342,7 +477,8 @@ class InterfaceBasePlugin extends Plugin {
   isIPv6Enabled() {
     return this.networkConfig.dhcp6 || // DHCP
       this.networkConfig.ipv6 && (_.isString(this.networkConfig.ipv6) || _.isArray(this.networkConfig.ipv6)) || // Static
-      this.networkConfig.ipv6DelegateFrom; // Delegate
+      this.networkConfig.ipv6DelegateFrom || // Delegate
+      this.networkConfig.ipv6PassthroughFrom; // Passthrough
   }
 
   getEscapedNameForSysctl() {
@@ -359,6 +495,8 @@ class InterfaceBasePlugin extends Plugin {
     if(disabled) {
       return;
     }
+
+    await sysctl.setValue(`net.ipv6.conf.${this.getEscapedNameForSysctl()}.use_tempaddr`, 0);
 
     if (this.networkConfig.dhcp6) {
       // add link local route to interface local and default routing table
@@ -389,6 +527,16 @@ class InterfaceBasePlugin extends Plugin {
       } else {
         await this._resetDuid();
       }
+
+      const passthroughEnvFile = `${dhcpcd6ConfDir}/ipv6_passthrough_${this.name}.env`;
+      if (this.networkConfig.dhcp6.ipv6Passthrough) {
+        await fs.writeFileAsync(passthroughEnvFile, "ipv6_passthrough=1").catch((err) => {
+          this.log.error(`Failed to write ipv6 passthrough env file, ${err.message}`);
+        });
+      } else {
+        await fs.unlinkAsync(passthroughEnvFile).catch((err) => { });
+      }
+      
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
       await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
@@ -401,10 +549,16 @@ class InterfaceBasePlugin extends Plugin {
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
           await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
-            this.log.error(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
+            this.log.debug(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
       }
+
+      if (this.networkConfig.ipv6DelegateFrom && this.networkConfig.ipv6PassthroughFrom) {
+        this.fatal(`ipv6DelegateFrom and ipv6PassthroughFrom are mutually exclusive on interface ${this.name}`);
+        return;
+      }
+
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
         const parentIntfPlugin = pl.getPluginInstance("interface", fromIface);
@@ -435,7 +589,7 @@ class InterfaceBasePlugin extends Plugin {
               } else {
                 // the suffix of the delegated interface is always 1
                 await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
-                  this.log.error(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
+                  this.log.debug(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
                 });
                 ipChanged = true;
               }
@@ -446,9 +600,141 @@ class InterfaceBasePlugin extends Plugin {
             }
           });
         }
+      } 
+      if (this.networkConfig.ipv6PassthroughFrom) {
+        do {
+          // generate LAN GUA address
+          const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
+          if (!fromWANPlugin) {
+            this.log.error(`Failed to get ${this.networkConfig.ipv6PassthroughFrom} interface plugin.`);
+            break;
+          }
+          this.subscribeChangeFrom(fromWANPlugin);
+
+          // Get this interface's MAC and generate EUI-64 IID
+          const mac = await this.getHardwareAddress();
+          if (!mac) {
+            this.log.error(`Failed to get hardware address of ${this.name}`);
+            break;
+          }
+          const iid = this._macToEUI64(mac);
+
+          // Combine prefix + IID into a full /64 address
+          const prefix64Upper = await this._getIpv6PassthroughPrefix64Upper();
+          if (!prefix64Upper) {
+            this.log.error(`Failed to get prefix64Upper.`);
+            break;
+          }
+          const fullAddr = `${prefix64Upper}:${iid}/64`;
+          const addrObj = new Address6(fullAddr);
+          if (!addrObj.isValid()) {
+            this.log.error(`Generated invalid IPv6 address: ${fullAddr}`);
+            break;
+          }
+
+          this.log.debug(`Adding IPv6 address ${addrObj.correctForm()} to ${this.name}`);
+          await exec(`sudo ip -6 addr add ${addrObj.correctForm()}/64 dev ${this.name}`).catch((err) => {
+            this.log.warn(`Failed to add IPv6 addr ${addrObj.correctForm()} to ${this.name}`, err.message);
+          });
+
+          // generate ndppd.conf file
+          const prefix = `${prefix64Upper}::/64`;
+          await this._writeNdppdConfigFile(fromWANPlugin.name, this.name, prefix);
+
+          // start ndppd
+          await exec(`sudo systemctl restart firerouter_ndppd@${this.name}`).catch((err) => {
+            this.log.error(`Failed to start ndppd service for ${this.name}`, err.message);
+          });
+        } while(0);
+      } else {
+        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+  }
+
+  async reapplyIpv6Settings() {
+    pl.acquireApplyLock(async () => {
+      await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
+        // trigger downstream plugins to reapply, e.g., nat for ipv6
+        this.propagateConfigChanged(Plugin.CHANGE_FULL);
+        this._reapplyNeeded = false;
+        pl.scheduleReapply();
+        return pl.publishIfaceChangeApplied();
+      }).catch((err) => {
+        this.log.error(`Failed to reapply IPv6 settings on ${this.name}`, err.message);
+      });
+    });
+  }
+
+  // return e.g."2001:0db8:0000:0001"
+  async _getIpv6PassthroughPrefix64Upper() {
+    const fromWANPlugin = pl.getPluginInstance("interface", this.networkConfig.ipv6PassthroughFrom);
+    if (!fromWANPlugin) {
+      this.log.error(`WAN interface ${this.networkConfig.ipv6PassthroughFrom} not found!`);
+      return null;
+    }
+
+    const raFile = `/dev/shm/dhcpcd.ra.${fromWANPlugin.name}`;
+    const raContent = await fs.readFileAsync(raFile, { encoding: "utf8" }).catch(() => null);
+
+    // Prefer reading the SLAAC prefix directly from the RA cache.
+    // The prefix field (e.g. "2001:db8:0:1::") is written by the hook 'firerouter_dhcpcd_record_lease',
+    if (raContent) {
+      const prefixMatch = raContent.match(/^prefix=(.+)$/m);
+      if (prefixMatch) {
+        const prefixStr = prefixMatch[1].trim();
+        if (prefixStr) {
+          const addr6 = new Address6(`${prefixStr}/64`);
+          if (addr6.isValid()) {
+            this.log.debug(`Got WAN prefix from RA cache ${raFile}: ${prefixStr}`);
+            return addr6.canonicalForm().split(':').slice(0, 4).join(':');
+          } else {
+            this.log.warn(`Invalid IPv6 prefix parsed from ${raFile}: ${prefixStr}`);
+          }
+        } else {
+          this.log.warn(`Empty prefix value in ${raFile}`);
+        }
+      } else {
+        this.log.warn(`Failed to match prefix in ${raFile}, content: ${raContent.trim()}`);
+      }
+    }
+
+    return null;
+  }
+
+  _macToEUI64(mac) {
+    const parts = mac.toLowerCase().split(':');
+    // flip U/L bit (bit 1 from LSB of first octet)
+    parts[0] = (parseInt(parts[0], 16) ^ 0x02).toString(16).padStart(2, '0');
+    // insert ff:fe between byte 3 and 4
+    const eui64 = [
+      parts[0] + parts[1],
+      parts[2] + 'ff',
+      'fe' + parts[3],
+      parts[4] + parts[5],
+    ];
+    return eui64.join(':');
+  }
+
+  async _writeNdppdConfigFile(wanInterface, lanInterface, prefix) {
+    const confPath = `${ndppdConfDir}/${lanInterface}.conf`;
+    const content = [
+      `proxy ${wanInterface} {`,
+      `    router no`,
+      `    timeout 500`,
+      `    ttl 30000`,
+      `    rule ${prefix} {`,
+      `        iface ${lanInterface}`,
+      `    }`,
+      `}`,
+      ``
+    ].join('\n');
+
+    await fs.writeFileAsync(confPath, content).catch((err) => {
+      this.log.error(`Failed to write ndppd config ${confPath}`, err.message);
+    });
+    this.log.debug(`Written ndppd config to ${confPath}`);
   }
 
   // just for readability
@@ -638,7 +924,7 @@ class InterfaceBasePlugin extends Plugin {
         ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
           await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
-            this.log.error(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
+            this.log.debug(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
       }
@@ -727,6 +1013,18 @@ class InterfaceBasePlugin extends Plugin {
           await routing.addRouteToTable(cidr, null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
         }
       }
+    } else if (this.networkConfig.ipv6PassthroughFrom) {
+      const prefix64Upper = await this._getIpv6PassthroughPrefix64Upper();
+      if (prefix64Upper) {
+        const prefix = `${prefix64Upper}::/64`;
+        const rt = `${this.networkConfig.ipv6PassthroughFrom}_local`;
+        await routing.removeRouteFromTable(`${prefix}`, null, this.name, null, 6).catch((err) => {
+          this.log.warn(`Failed to del IPv6 route ${prefix} on ${this.name}`, err.message);
+        });
+        await routing.addRouteToTable(`${prefix}`, null, this.name, rt, null, 6).catch((err) => {
+          this.log.warn(`Failed to add IPv6 route ${prefix} to ${rt}`, err.message);
+        });
+      }
     }
     if (this.networkConfig.gateway) {
       await routing.addRouteToTable("default", this.networkConfig.gateway, this.name, `${this.name}_default`).catch((err) => {});
@@ -741,8 +1039,10 @@ class InterfaceBasePlugin extends Plugin {
     }
     if (this.isWAN()) {
       // considered as WAN interface, accessbile to "wan_routable"
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {});
-      await routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {});
+      await Promise.all([
+        routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
+        routing.createPolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
+      ]);
     }
     if (this.isLAN()) {
       // considered as LAN interface, add to "lan_routable" and "wan_routable"
@@ -1014,11 +1314,14 @@ class InterfaceBasePlugin extends Plugin {
     const result = _.pick(Object.assign({}, this._wanConnState), "ready");
     result.pendingTest = this._pendingTest || false;
     result.active = false;
+    result.inUse = false;
     const routingPlugin = pl.getPluginInstance("routing", "global");
     if (routingPlugin) {
       const state = routingPlugin.getWANConnState(this.name);
-      if (state)
+      if (state){
         result.active = state.active || false;
+        result.inUse = state.inUse || false;
+      }
     }
     return result;
   }
@@ -1046,8 +1349,9 @@ class InterfaceBasePlugin extends Plugin {
 
   async getOrigDNS6Nameservers() {
     if (!this.isIPv6Enabled()) return [];
-    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), {encoding: "utf8"}).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => null);
-    return dns6 || [];
+    const dns6 = await fs.readFileAsync(this._getDhcpcdFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    const dns6Ra = await fs.readFileAsync(this._getDhcpcdRaFilePath(), { encoding: "utf8" }).then(content => content.trim().split("\n").filter(line => line.startsWith("nameserver")).map(line => line.replace("nameserver", "").trim())).catch((err) => []) || [];
+    return _.uniq([...dns6, ...dns6Ra]) || [];
   }
 
   async getPrefixDelegations() {
@@ -1060,7 +1364,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv4Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
     // if there is static ipv4 config, directly return it to reduce overhead of invoking ip command
     const staticIpv4s = {};
@@ -1078,13 +1382,30 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getIPv6Addresses() {
-    if (!this.networkConfig.enabled)
+    if (!_.get(this.networkConfig, "enabled", false))
       return null;
-    // there may be link-local ipv6 on interface, which is not available in static ipv6 config, always try to get ipv6 addresses from ip addr output
-    let ip6s = await exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null);
-    if (ip6s)
-      ip6s = ip6s.split("\n").filter(l => l.length > 0);
+    // there may be link-local ipv6 on interface, which is not available in static ipv6 config,
+    // always try to get ipv6 addresses from ip addr output
+    let ip6s = await exec(`ip addr show dev ${this.name}`, {encoding: "utf8"})
+      .then(result => result.stdout.trim() || null).catch(err => null);
+    if (!ip6s) return null;
+
+    ip6s = ip6s.split("\n").filter(l => l.length > 0 && l.includes("inet6 "))
+    // a protection for massive number of IPs
+    // once number of IPs exceeds the threshold, no longer guarantee everything works in Firewalla
+    // but this should not cause any disaster
+    if (ip6s.length > IP6_NUM_DISCARD_DEPRECATED)
+      ip6s = ip6s.filter(l => !l.includes("deprecated"));
+    if (ip6s.length > IP6_NUM_MAX)
+      ip6s = ip6s.slice(0, IP6_NUM_MAX);
+    ip6s = ip6s.map(l => l.trim().split(" ")[1]);
     return ip6s;
+  }
+
+  isIPv6ULA(ip) {
+    if (!ip) return false;
+    const normalized = ip.toLowerCase();
+    return normalized.startsWith('fc') || normalized.startsWith('fd');
   }
 
   async getRoutableIPv6Addresses() {
@@ -1093,7 +1414,7 @@ class InterfaceBasePlugin extends Plugin {
       return ip6s;
     }
 
-    return ip6s.filter((ip6) => !ip.isPrivate(ip6));
+    return ip6s.filter((ip6) => !ip.isPrivate(ip6) || this.isIPv6ULA(ip6));
   }
 
   async getHardwareAddress() {
@@ -1243,6 +1564,7 @@ class InterfaceBasePlugin extends Plugin {
     let active = true;
     let carrierResult = null;
     let pingResult = null;
+    let needFallbackCheck = false;
     let dnsResult = false; // avoid sending null to app/web
     const extraConf = Object.assign({}, this.networkConfig && this.networkConfig.extra, forceExtraConf);
     let pingTestIP = defaultPingTestIP;
@@ -1285,42 +1607,60 @@ class InterfaceBasePlugin extends Plugin {
       await Promise.all(pingTestIP.map(async (ip) => {
         let cmd = `sudo ping -n -q -m ${rtid} -c ${pingTestCount} -W ${pingTestTimeout} -i 1 ${ip} | grep "received" | awk '{print $4}'`;
         return exec(cmd).then((result) => {
-          if (!result || !result.stdout || Number(result.stdout.trim()) < pingTestCount * pingSuccessRate) {
-            this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
-            failures.push({type: "ping", target: ip});
-            if (sendEvent)
-              era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
-                "wan_test_ip":ip,
-                "wan_intf_name":wanName,
-                "wan_intf_uuid":wanUUID,
-                "ping_test_count":pingTestCount,
-                "success_rate": (result && result.stdout) ? Number(result.stdout.trim())/pingTestCount : 0,
-              });
-            return false;
-          } else
+          const received = (result && result.stdout) ? Number(result.stdout.trim()) : 0;
+          const passed = received >= pingTestCount * pingSuccessRate;
+          if (passed) {
             if (sendEvent)
               era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 0, {
                 "wan_test_ip":ip,
                 "wan_intf_name":wanName,
                 "wan_intf_uuid":wanUUID,
                 "ping_test_count":pingTestCount,
-                "success_rate":Number(result.stdout.trim())/pingTestCount
+                "success_rate":received / pingTestCount
               });
-          return true;
+            return PING_RESULT_SUCCESS;
+          }
+          this.log.warn(`Failed to pass ping test to ${ip} on ${this.name}`);
+          failures.push({type: "ping", target: ip});
+          if (sendEvent)
+            era.addStateEvent(EventConstants.EVENT_PING_STATE, this.name+"-"+ip, 1, {
+              "wan_test_ip":ip,
+              "wan_intf_name":wanName,
+              "wan_intf_uuid":wanUUID,
+              "ping_test_count":pingTestCount,
+              "success_rate":received / pingTestCount,
+            });
+          return received === 0 ? PING_RESULT_ALL_FAILED : PING_RESULT_FAILED;
         }).catch((err) => {
           this.log.error(`Failed to do ping test to ${ip} on ${this.name}`, err.message);
           failures.push({type: "ping", target: ip});
-          return false;
+          return PING_RESULT_ALL_FAILED;
         });
       })).then(results => {
-        if (!results.some(result => result === true)) {
+        if (results.some(r => r === PING_RESULT_SUCCESS)) {
+          pingResult = true;
+        } else if (results.every(r => r === PING_RESULT_ALL_FAILED)) {
+          this.log.error(`Ping test failed to all ping test targets on ${this.name} (0 packets received; dest may be unreachable)`);
+          pingResult = false;
+          // active = false;
+          needFallbackCheck = true;
+        } else {
+          // at least one ping target give responses
           this.log.error(`Ping test failed to all ping test targets on ${this.name}`);
           pingResult = false;
           active = false;
-        } else
-          pingResult = true;
+        }
       });
     }
+
+    if (needFallbackCheck) {
+      active = await this._checkWanStatusByConntrack();
+      if (active)
+        this.log.info(`WAN ${this.name}: fallback check passed (recent real traffic to public IPs), treating as connected`);
+      else
+        this.log.warn(`WAN ${this.name}: fallback check found no recent real traffic to public IPs`);
+    }
+
 
     if (active && dnsTestEnabled) {
       const nameservers = await this.getDNSNameservers() || [];
@@ -1371,6 +1711,111 @@ class InterfaceBasePlugin extends Plugin {
     return result;
   }
 
+  /**
+   * Fallback: check if there is recent real traffic on this WAN (conntrack UPDATE with reply to our IP).
+   * Used when all ping targets had 0 packets (ping dest may be unreachable). Counts lines where original
+   * dst is a public (non-private) IP. Returns true if at least one such flow is seen.
+   * Uses spawn + kill on first match to avoid waiting the full monitorSec when a match is found early.
+   * Optional abortSignal: when aborted, settles with false and kills the conntrack process.
+   */
+  async _checkWanStatusByConntrackForReplyDst(replyDst, monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT, abortSignal = null) {
+    if (!replyDst)
+      return false;
+    return new Promise((resolve) => {
+      const child = spawn('sudo', [
+        'conntrack', '-E', '-e', 'UPDATE', '--reply-dst', replyDst
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      let settled = false;
+      let timer = null;
+      let abortListener = null;
+      const killChild = () => {
+        if (typeof child.pid === 'number' && child.pid > 0) {
+          const k = spawn('sudo', ['pkill', '-9', '-P', String(child.pid)], { stdio: 'ignore' });
+          k.on('error', () => {});
+        }
+      };
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (abortListener && abortSignal) {
+          try { abortSignal.removeEventListener('abort', abortListener); } catch (_) {}
+        }
+        killChild();
+        resolve(value);
+      };
+      abortListener = abortSignal ? () => finish(false) : null;
+      if (abortSignal) {
+        if (abortSignal.aborted) return finish(false);
+        abortSignal.addEventListener('abort', abortListener);
+      }
+      timer = setTimeout(() => finish(false), monitorSec * 1000);
+      let buf = '';
+      const checkLine = (line) => {
+        if (!line.includes('[ASSURED]') || !/(udp|ESTABLISHED)/.test(line)) return;
+        const m = line.match(/dst=([^\s]+)/);
+        if (!m || !m[1] || ip.isPrivate(m[1])) return;
+        finish(true);
+      };
+      child.stdout.on('data', (chunk) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines)
+          if (line.trim()) checkLine(line);
+      });
+      child.stderr.on('data', () => {});
+      child.on('error', () => finish(false));
+      child.on('close', () => {
+        if (buf.trim()) checkLine(buf.trim());
+        finish(false);
+      });
+    });
+  }
+
+  async _checkWanStatusByConntrack() {
+    const ip4s = await this.getIPv4Addresses();
+    if (!ip4s || ip4s.length === 0) return false;
+    const state = this._wanConnState || {};
+    const { failureCount = 0, successCount = 0 } = state;
+    let monitorSec = CONNTRACK_MONITOR_SEC_DEFAULT;
+    
+    if (failureCount > 0 && failureCount <= ON_OFF_THRESHOLD) {
+      monitorSec = CONNTRACK_MONITOR_SEC_AFTER_FAILURE;
+    } else if (successCount > 0 && successCount <= OFF_ON_THRESHOLD) {
+      monitorSec = CONNTRACK_MONITOR_SEC_AFTER_SUCCESS;
+    }
+  
+    const replyDsts = [...new Set(ip4s.map(a => a.split('/')[0].trim()).filter(Boolean))];
+    if (replyDsts.length === 0) return false;
+
+    const controller = createAbortController();
+    const { signal } = controller;
+    const promises = replyDsts.map((d) => this._checkWanStatusByConntrackForReplyDst(d, monitorSec, signal));
+
+    // node 10 and 12 not support Promise.any
+    return new Promise((resolve) => {
+      let settled = false;
+      let falseCount = 0;
+      const len = promises.length;
+      const onTrue = () => {
+        if (settled) return;
+        settled = true;
+        controller.abort();
+        resolve(true);
+      };
+      const onFalse = () => {
+        falseCount += 1;
+        if (falseCount === len && !settled) {
+          settled = true;
+          resolve(false);
+        }
+      };
+      promises.forEach((p) => p.then((v) => (v ? onTrue() : onFalse())).catch(() => onFalse()));
+    });
+  }
+
   setPendingTest(v = false) {
     this._pendingTest = v;
     if (v)
@@ -1403,7 +1848,7 @@ class InterfaceBasePlugin extends Plugin {
     const wanUUID = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.uuid;
 
     if (sendEvent)
-      era.addStateEvent(EventConstants.EVENT_DNS_STATE, af == 4 ? nameserver : `${nameserver}:[${srcIP}]`, dnsResult ? 0 : 1, {
+      era.addStateEvent(EventConstants.EVENT_DNS_STATE, nameserver, dnsResult ? 0 : 1, {
         "wan_intf_name":wanName,
         "wan_intf_uuid":wanUUID,
         "wan_intf_address":srcIP,
@@ -1579,7 +2024,7 @@ class InterfaceBasePlugin extends Plugin {
       this._getRtId(),
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
-      exec(`ip addr show dev ${this.name} | awk '/inet6 /' | awk '{print $2}'`, {encoding: "utf8"}).then((result) => result.stdout.trim() || null).catch((err) => null),
+      this.getIPv6Addresses(),
       routing.getInterfaceGWIP(this.name) || null,
       routing.getInterfaceGWIP(this.name, 6) || null,
       this.getDns4Nameservers(),
@@ -1591,10 +2036,6 @@ class InterfaceBasePlugin extends Plugin {
       this.getSubIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-    if (ip4 && ip4.length > 0 && !ip4.includes("/"))
-      ip4 = `${ip4}/32`;
-    if (ip6)
-      ip6 = ip6.split("\n").filter(l => l.length > 0);
     let wanConnState = null;
     let wanTestResult = null;
     if (this.isWAN()) {
@@ -1632,7 +2073,7 @@ class InterfaceBasePlugin extends Plugin {
             }
           } else {
             // for interface that does not have L2, e.g., pppoe, simply reapply config on it
-            this.propagateConfigChanged(true);
+            this.propagateConfigChanged(Plugin.CHANGE_FULL);
             pl.scheduleReapply();
           }
         }
@@ -1645,7 +2086,7 @@ class InterfaceBasePlugin extends Plugin {
             platform.clearMacCache(this.name);
             this._reapplyNeeded = true;
             // trigger downstream plugins to reapply config
-            this.propagateConfigChanged(true);
+            this.propagateConfigChanged(Plugin.CHANGE_FULL);
             pl.scheduleReapply();
           });
         }
@@ -1659,7 +2100,9 @@ class InterfaceBasePlugin extends Plugin {
             await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
               this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
             });
-            // this.propagateConfigChanged(true);
+            return pl.publishIfaceChangeApplied();
+          }).catch((err) => {
+            this.log.error(`Failed to apply DNSv6 settings on ${this.name}`, err.message);
           });
         }
         break;
@@ -1669,17 +2112,7 @@ class InterfaceBasePlugin extends Plugin {
         const iface = payload.intf;
         if (iface && this.networkConfig.ipv6DelegateFrom === iface) {
           // the interface from which prefix is delegated is changed, need to reapply ipv6 settings
-          pl.acquireApplyLock(async () => {
-            await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
-              // trigger downstream plugins to reapply, e.g., nat for ipv6
-              this.propagateConfigChanged(true);
-              this._reapplyNeeded = false;
-              pl.scheduleReapply();
-              return pl.publishIfaceChangeApplied();
-            }).catch((err) => {
-              this.log.error(`Failed to apply IPv6 settings for prefix delegation change from ${iface} on ${this.name}`, err.message);
-            });
-          });
+          this.reapplyIpv6Settings();
         }
         break;
       }
@@ -1698,6 +2131,14 @@ class InterfaceBasePlugin extends Plugin {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
           pl.publishIfaceChangeApplied();
+        }
+        break;
+      }
+      case event.EVENT_IP6_CHANGE: {
+        const payload = event.getEventPayload(e);
+        const iface = payload.intf;
+        if (iface && this.networkConfig.ipv6PassthroughFrom === iface) {
+          this.reapplyIpv6Settings();
         }
         break;
       }
