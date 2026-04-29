@@ -24,9 +24,10 @@ const event = require('../../core/event.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const serverKeyDir = `${r.getUserConfigFolder()}/sshd/keys`;
-const keyAlgorithms = ['dsa', 'ecdsa', 'ed25519', 'rsa'];
+const keyAlgorithms = platform.getSSHKeyTypes();
 
 
 class SSHDPlugin extends Plugin {
