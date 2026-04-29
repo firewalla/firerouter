@@ -133,6 +133,10 @@ case "$UNAME" in
         source $FW_PLATFORM_DIR/orange/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/orange
         ;;
+      goldplus2)
+        source $FW_PLATFORM_DIR/goldplus2/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldplus2
+        ;;
       *)
         unset FW_PLATFORM_CUR_DIR
         ;;
