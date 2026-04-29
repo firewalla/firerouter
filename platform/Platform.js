@@ -407,6 +407,10 @@ class Platform {
   async setWifiDynamicDebug() {
     return;
   }
+
+  getSSHKeyTypes() {
+    return ['dsa', 'ecdsa', 'ed25519', 'rsa'];
+  }
 }
 
 module.exports = Platform;
