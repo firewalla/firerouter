@@ -24,6 +24,7 @@ const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const rclientDB0 = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 const macCache = {};
 
@@ -31,6 +32,11 @@ let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
 class PurplePlatform extends Platform {
+  constructor() {
+    super();
+    this.rejects = [];
+  }
+
   getName() {
     return "purple";
   }
@@ -294,6 +300,33 @@ class PurplePlatform extends Platform {
       }
     } else
       await super.setMTU(iface, mtu);
+  }
+
+  async processWpaSupplicantLog(line, config) {
+    // #define WLAN_REASON_UNSPECIFIED 1
+    if (line.includes('CTRL-EVENT-ASSOC-REJECT status_code=1')) {
+      // ignore reject events within a minute as it could coming from multiple SSIDs
+      const now = Date.now() / 1000
+      if (!this.rejects.length || now - this.rejects[this.rejects.length-1] > config.reject_threshold_min_interval) {
+        this.rejects.push(now)
+        log.debug('added reject event', this.rejects)
+        while (this.rejects[0] < now - config.reject_threshold_time_seconds) {
+          const removed = this.rejects.shift()
+          log.debug('removed reject', removed)
+        }
+        if (this.rejects.length >= config.reject_threshold_count) {
+          log.info('Threshold hit, reloading kernel module ...')
+          // sleep to allow IfPresenceSensor to catch the event
+          await exec('sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
+          this.rejects = []
+          await rclientDB0.incrAsync('sys:wlan:kernelReload')
+        }
+      }
+    } else if (line.includes('CTRL-EVENT-CONNECTED')) {
+      // reset counter
+      this.rejects = []
+      log.debug('connected event received, rejects cleared', this.rejects)
+    }
   }
 }
 

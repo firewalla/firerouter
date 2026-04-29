@@ -41,6 +41,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await platform.overrideWLANKernelModule();
     await platform.reloadWLANKernelModule();
     await platform.installWLANTools();
+    await platform.setWifiDynamicDebug();
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf /etc/rsyslog.d/`);
     pl.scheduleRestartRsyslog();
@@ -156,6 +157,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async writeConfigFile() {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
+    // Seconds to consider old scan results valid for association
+    entries.push(...platform.getWpaSupplicantDefaultConfig());
 
     const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
     const networks = wpaSupplicant.networks || [];
@@ -210,6 +213,12 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
       await exec('echo 4 > /proc/net/rtl8821cu/log_level').catch(()=>{})
+    }
+
+    if (this.networkConfig.wds && platform.isWDSSupported()) {
+      await exec(`sudo iw dev ${this.name} set 4addr on`).catch((err) => {});
+    } else {
+      await exec(`sudo iw dev ${this.name} set 4addr off`).catch((err) => {});
     }
 
     if (this.networkConfig.wpaSupplicant) {
@@ -318,6 +327,9 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         case "freq":
           status.freq = Number(value);
           break;
+        case "ssid":
+          status.ssid = util.parseEscapedString(value);
+          break;
         default:
           status[key] = value;
       }
@@ -326,7 +338,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     if (!this.isWAN())
-      status.ssid = status[`ssid[${bssIndex}]`];
+      status.ssid = util.parseEscapedString(status[`ssid[${bssIndex}]`]);
     return status;
   }
 

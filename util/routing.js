@@ -122,22 +122,16 @@ async function createPolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   rule = `${rule}lookup ${tableName}`;
   if (priority)
     rule = `${rule} priority ${priority}`;
-  let cmd = `ip -${af} rule list ${rule}`;
-  let result = await exec(cmd).then(r => r.stdout).catch((err) => {
-    log.debug(`Failed to list rule with command ${cmd}`, err.message);
-    return "";
-  });
-  if (result.length > 0) {
-    log.debug("Same policy routing rule already exists: ", rule);
-    return;
-  }
-  cmd = `sudo ip -${af} rule add ${rule}`;
+  const cmd = `sudo ip -${af} rule add ${rule}`;
   log.info("Create new policy routing rule: ", cmd);
-  result = await exec(cmd);
-  if (result.stderr !== "") {
-    log.error("Failed to create policy routing rule.", result.stderr);
-    throw result.stderr;
-  }
+  await exec(cmd).catch((err) => {
+    if (err.message.includes("File exists")) {
+      log.debug("Same policy routing rule already exists: ", rule);
+      return;
+    }
+    log.error("Failed to create policy routing rule.", err.message);
+    throw err;
+  });
 }
 
 async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, af = 4) {
@@ -158,22 +152,16 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
   rule = `${rule}lookup ${tableName}`;
   if (priority)
     rule = `${rule} priority ${priority}`;
-  let cmd = `ip -${af} rule list ${rule}`;
-  let result = await exec(cmd).then(r => r.stdout).catch((err) => {
-    log.debug(`Failed to list rule with command ${cmd}`, err.message);
-    return "";
-  });
-  if (result.length === 0) {
-    log.debug("Policy routing rule does not exist: ", rule);
-    return;
-  }
-  cmd = `sudo ip -${af} rule del ${rule}`;
+  const cmd = `sudo ip -${af} rule del ${rule}`;
   log.info("Remove policy routing rule: ", cmd);
-  result = await exec(cmd);
-  if (result.stderr !== "") {
-    log.error("Failed to remove policy routing rule.", result.stderr);
-    throw result.stderr;
-  }
+  await exec(cmd).catch((err) => {
+    if (err.message.includes("No such file or directory")) {
+      log.debug("Policy routing rule does not exist: ", rule);
+      return;
+    }
+    log.error("Failed to remove policy routing rule.", err.message);
+    throw err;
+  });
 }
 
 async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false, type = "unicast") {
@@ -293,7 +281,7 @@ async function flushRoutingTable(tableName, af = null) {
   for (const cmd of cmds) {
     log.debug(`[routing] flush route table: ${cmd}`);
     await exec(cmd).catch((err) => {
-      log.error(`Failed to flush routing table using command ${cmd}`, err.message);
+      log.debug(`Failed to flush routing table using command ${cmd}`, err.message);
     });
   }
 }
@@ -311,36 +299,36 @@ async function flushPolicyRoutingRules() {
 
 async function initializeInterfaceRoutingTables(intf) {
   await createCustomizedRoutingTable(`${intf}_local`);
-  await createCustomizedRoutingTable(`${intf}_static`);
   await createCustomizedRoutingTable(`${intf}_default`);
   await flushRoutingTable(`${intf}_local`);
-  await flushRoutingTable(`${intf}_static`);
   await flushRoutingTable(`${intf}_default`);
 }
 
 async function createInterfaceRoutingRules(intf, noSelfRoute = false) {
   // self route on specific types of WAN interface may be undesired and will cause infinite loop, e.g., docker network with VPN client containers
-  await createPolicyRoutingRule("all", intf, `${intf}_local`, 501);
-  await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501);
-  await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001);
-  if (!noSelfRoute)
-    await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001);
-  await createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6);
-  await createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6);
-  await createPolicyRoutingRule("all", intf, `${intf}_static`, 3001, null, 6);
-  if (!noSelfRoute)
-    await createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6);
+  const promises = [
+    createPolicyRoutingRule("all", intf, `${intf}_local`, 501),
+    createPolicyRoutingRule("all", "lo", `${intf}_local`, 501),
+    createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6),
+    createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6),
+  ];
+  if (!noSelfRoute) {
+    promises.push(createPolicyRoutingRule("all", intf, `${intf}_default`, 8001));
+    promises.push(createPolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6));
+  }
+  await Promise.all(promises);
 }
 
 async function removeInterfaceRoutingRules(intf) {
-  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501).catch((err) => {});
-  await removePolicyRoutingRule("all", "lo", `${intf}_local`, 501).catch((err) => {});
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001).catch((err) => {});
-  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001).catch((err) => {});
-  await removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6).catch((err) => {});
-  await removePolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6).catch((err) => {});
-  await removePolicyRoutingRule("all", intf,  `${intf}_static`, 3001, null, 6).catch((err) => {});
-  await removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6).catch((err) => {});
+  const promises = [
+    removePolicyRoutingRule("all", intf, `${intf}_local`, 501),
+    removePolicyRoutingRule("all", "lo", `${intf}_local`, 501),
+    removePolicyRoutingRule("all", intf, `${intf}_default`, 8001),
+    removePolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6),
+    removePolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6),
+    removePolicyRoutingRule("all", intf, `${intf}_default`, 8001, null, 6),
+  ];
+  await Promise.all(promises);
 }
 
 async function createInterfaceGlobalRoutingRules(intf) {
