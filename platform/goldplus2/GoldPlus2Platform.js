@@ -236,6 +236,9 @@ class GoldPlus2Platform extends Platform {
     return koPath;
   }
 
+  getSSHKeyTypes() {
+    return ['ecdsa', 'ed25519', 'rsa'];
+  }
 }
 
 module.exports = GoldPlus2Platform;
