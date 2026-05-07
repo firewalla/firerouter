@@ -2124,13 +2124,17 @@ class InterfaceBasePlugin extends Plugin {
           this._wanConnState.successCount = OFF_ON_THRESHOLD - 1;
           this._wanConnState.failureCount = ON_OFF_THRESHOLD - 1;
           // update route for DNS from DHCP
-          this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
+          pl.acquireApplyLock(async () => {
+          await this.applyDnsSettings().then(() => this.updateRouteForDNS()).catch((err) => {
             this.log.error(`Failed to apply DNS settings and update DNS route on ${this.name}`, err.message);
           })
           this.markOutputConnection().catch((err) => {
             this.log.error(`Failed to add outgoing mark on ${this.name}`, err.message);
           })
           pl.publishIfaceChangeApplied();
+          }).catch((err) => {
+            this.log.error(`Failed to apply ipchange settings on ${this.name}`, err.message);
+          });
         }
         break;
       }
