@@ -18,6 +18,11 @@ add_route() {
     return 0
   fi
 
+  # when dhcp_server and gateway are the same, no need to add a separate host route
+  if [ "$dhcp_server" = "$gateway" ]; then
+    return 0
+  fi
+
   for rt_table in $rt_tables; do
     if [ -z "$gateway" ]; then
       execute_and_log "sudo ip route replace $dhcp_server dev $iface table $rt_table"
