@@ -91,7 +91,16 @@ case $reason in
 
       if [ -n "$new_addrs" ]; then
         for rt_table in $rt_tables; do
-          execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+          case "$new_addrs" in
+            # seen in one customer's environment that RA assigns a /47 address that overlaps with PD address range.
+            # this solution is not perfect, if there are other cases that RA assigns a /64 address that overlaps with PD address range (I don't think it's likely), we need to do more work.
+            */64)
+              execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+              ;;
+            *)
+              log "invalid RA addr that does not end with /64: $new_addrs"
+              ;;
+          esac
         done
       fi
 

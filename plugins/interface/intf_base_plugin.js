@@ -1121,14 +1121,17 @@ class InterfaceBasePlugin extends Plugin {
     if (!_.isArray(dns) || dns.length === 0 || !gateway)
       return;
     for (const dnsIP of dns) {
-      if (new Address4(dnsIP).isValid())
+      if (new Address4(dnsIP).isValid()) {
+        if (dnsIP === gateway) continue;
         await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true)
                       .then(()=>{this._updateDnsRouteCache(dnsIP, gateway, this.name, `${this.name}_default`, 4);})
                       .catch((err) => {});
-      else
+      } else {
+        if (dnsIP === gateway6) continue;
         await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true)
                       .then(()=>{this._updateDnsRouteCache(dnsIP, gateway6, this.name, `${this.name}_default`, 6);})
                       .catch((err) => {});
+      }
     }
   }
 
