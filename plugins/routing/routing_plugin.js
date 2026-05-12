@@ -796,6 +796,13 @@ class RoutingPlugin extends Plugin {
     return wanSwitched;
   }
 
+  async _applyActiveGlobalDefaultRoutingAndNotify(inAsyncContext = false, af = null) {
+    const wanSwitched = await this._applyActiveGlobalDefaultRouting(inAsyncContext, af);
+    if (wanSwitched)
+      this.propagateEvent(event.buildEvent(event.EVENT_WAN_SWITCHED, {}));
+    return wanSwitched;
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -928,7 +935,7 @@ class RoutingPlugin extends Plugin {
                 }
                 // in apply context here
                 this._wanStatus = wanStatus;
-                await this._applyActiveGlobalDefaultRouting(false);
+                await this._applyActiveGlobalDefaultRoutingAndNotify(false);
                 if (!_.isEmpty(changeDescs)) {
                   for (const desc of changeDescs) {
                     this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
@@ -1110,10 +1117,8 @@ class RoutingPlugin extends Plugin {
       }
       case event.EVENT_IP6_CHANGE: {
         this.flush(6)
-            .then(() => this._applyActiveGlobalDefaultRouting(true, 6))
-            .then((wanSwitched) => {
-              if (wanSwitched)
-                this.propagateEvent(event.buildEvent(event.EVENT_WAN_SWITCHED, {}));
+            .then(() => this._applyActiveGlobalDefaultRoutingAndNotify(true, 6))
+            .then(() => {
               return pl.publishChangeApplied();
             })
             .catch((err) => {
@@ -1285,9 +1290,7 @@ class RoutingPlugin extends Plugin {
         };
       }));
       // in async context here
-      this._applyActiveGlobalDefaultRouting(true).then(() => {
-        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {});
-        this.propagateEvent(e);
+      this._applyActiveGlobalDefaultRoutingAndNotify(true).then(() => {
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
             this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
