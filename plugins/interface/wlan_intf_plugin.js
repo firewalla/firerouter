@@ -382,6 +382,37 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
         });
       }
     }
+    if (eventType === event.EVENT_WPA_DISCONNECTED) {
+      const wifiClientIntf = platform.getWifiClientInterface && platform.getWifiClientInterface();
+      if (wifiClientIntf && this.name === wifiClientIntf && platform.isWLANManagedByAPC()) {
+        this.log.info(`WPA disconnected on ${this.name}, scheduling reapply of hostapd`);
+        this._scheduleReapplyHostapd();
+      }
+    }
+  }
+
+  _scheduleReapplyHostapd() {
+    if (this._hostapdReapplyTimer) {
+      clearTimeout(this._hostapdReapplyTimer);
+      this._hostapdReapplyTimer = null;
+    }
+    this._hostapdReapplyTimer = setTimeout(() => {
+      this._hostapdReapplyTimer = null;
+      this._reapplyHostapdIfConfigured().catch((err) => {
+        this.log.error(`Failed to reapply network after WPA disconnect on ${this.name}`, err.message);
+      });
+    }, 4000);
+  }
+
+  async _reapplyHostapdIfConfigured() {
+    this.log.info(`${this.name} WPA disconnected and hostapd is configured; reapplying network config`);
+    await ncm.acquireConfigRWLock(async () => {
+      const currentConfig = await ncm.getActiveConfig();
+      await ncm.tryApplyConfig(currentConfig).catch((err) => {
+        this.log.error('tryApplyConfig failed after WPA disconnect', err.message);
+        return;
+      });
+    });
   }
 
   async setHardwareAddress() {
