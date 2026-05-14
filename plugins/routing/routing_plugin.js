@@ -458,10 +458,20 @@ class RoutingPlugin extends Plugin {
       }
   }
 
+  _getActiveWANNames() {
+    if (!this._wanStatus)
+      return [];
+    return Object.keys(this._wanStatus)
+      .filter((i) => this._wanStatus[i].active === true)
+      .sort((a, b) => this._wanStatus[a].seq - this._wanStatus[b].seq);
+  }
+
   async _applyActiveGlobalDefaultRouting(inAsyncContext = false, af = null) {
     this.meterApplyActiveGlobalDefaultRouting();
+    let wanSwitched = false;
     // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
     await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
+      const activeWANsBefore = this._getActiveWANNames();
       // flush global default routing table, no need to touch global static routing table here
       const type = this.networkConfig.default.type || "single";
       if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
@@ -778,7 +788,19 @@ class RoutingPlugin extends Plugin {
       }
       await this._refreshOutputSNATRules(af);
       this.processWANConnChange(); // no need to await, call this func again to ensure led is set correctly
+      const activeWANsAfter = this._getActiveWANNames();
+      wanSwitched = !_.isEqual(activeWANsBefore, activeWANsAfter);
+      if (wanSwitched)
+        this.log.info(`Active WAN changed: ${activeWANsBefore} -> ${activeWANsAfter}`);
     });
+    return wanSwitched;
+  }
+
+  async _applyActiveGlobalDefaultRoutingAndNotify(inAsyncContext = false, af = null) {
+    const wanSwitched = await this._applyActiveGlobalDefaultRouting(inAsyncContext, af);
+    if (wanSwitched)
+      this.propagateEvent(event.buildEvent(event.EVENT_WAN_SWITCHED, {}));
+    return wanSwitched;
   }
 
   async apply() {
@@ -913,7 +935,7 @@ class RoutingPlugin extends Plugin {
                 }
                 // in apply context here
                 this._wanStatus = wanStatus;
-                await this._applyActiveGlobalDefaultRouting(false);
+                await this._applyActiveGlobalDefaultRoutingAndNotify(false);
                 if (!_.isEmpty(changeDescs)) {
                   for (const desc of changeDescs) {
                     this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
@@ -1094,9 +1116,14 @@ class RoutingPlugin extends Plugin {
         break;
       }
       case event.EVENT_IP6_CHANGE: {
-        this.flush(6).then(() => this._applyActiveGlobalDefaultRouting(true, 6)).then(() => pl.publishChangeApplied()).catch((err) => {
-          this.log.error(`Failed to apply active global default routes for IPv6 change event`, err.message);
-        });
+        this.flush(6)
+            .then(() => this._applyActiveGlobalDefaultRoutingAndNotify(true, 6))
+            .then(() => {
+              return pl.publishChangeApplied();
+            })
+            .catch((err) => {
+              this.log.error(`Failed to apply active global default routes for IPv6 change event`, err.message);
+            });
         break;
       }
       case event.EVENT_IF_UP: {
@@ -1263,9 +1290,7 @@ class RoutingPlugin extends Plugin {
         };
       }));
       // in async context here
-      this._applyActiveGlobalDefaultRouting(true).then(() => {
-        const e = event.buildEvent(event.EVENT_WAN_SWITCHED, {});
-        this.propagateEvent(e);
+      this._applyActiveGlobalDefaultRoutingAndNotify(true).then(() => {
         if (!_.isEmpty(this._pendingChangeDescs)) {
           for (const desc of this._pendingChangeDescs) {
             this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
