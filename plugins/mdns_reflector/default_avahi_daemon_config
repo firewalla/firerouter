@@ -31,7 +31,8 @@ allow-interfaces=#ENABLED_INTERFACES#
 #enable-dbus=yes
 #disallow-other-stacks=no
 allow-point-to-point=yes
-cache-entries-max=4096
+# do not enable cache at the moment, otherwise devices moving between networks may detect false hostname conflicts, and derive hostnames appended with (1), (2), ...
+cache-entries-max=0
 #clients-max=4096
 #objects-per-client-max=1024
 #entries-per-entry-group-max=32
