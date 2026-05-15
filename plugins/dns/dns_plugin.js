@@ -39,6 +39,7 @@ class DNSPlugin extends Plugin {
 
   static async preparePlugin() {
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-dnsmasq.conf /etc/rsyslog.d/`);
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/16-firerouter-dns.conf /etc/rsyslog.d/`);
     await this.createDirectories();
     await this.installDNSScript();
     await this.installSystemService();
