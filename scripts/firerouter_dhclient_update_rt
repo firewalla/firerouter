@@ -56,7 +56,7 @@ if [ "$subnet_mask" = "255.255.255.255" ]; then
   echo 0 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
   echo 0 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_announce
 else
-  echo 2 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
+  echo 1 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
   echo 1 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_announce
 fi
 
