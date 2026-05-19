@@ -205,6 +205,20 @@ class GSEPlatform extends Platform {
     // nothing to do, driver in os image now
   }
 
+  async installMiniupnpd() {
+    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
+    const srcPath = `${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft`;
+    // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
+    const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
+      .then(() => true).catch(() => false);
+    if (needsUpdate) {
+      log.info(`miniupnpd binary differs from in-house version, replacing ...`);
+      await exec(`sudo cp -f --preserve=mode ${srcPath} $(which miniupnpd)`).catch((err) => {
+        log.error(`Failed to update miniupnpd`, err.message);
+      });
+    }
+  }
+
   async setMTU(iface, mtu) {
     if (iface === "eth1" || iface === "eth2") {
       const ifplug = sensorLoader.getSensor("IfPlugSensor");
