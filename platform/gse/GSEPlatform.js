@@ -206,8 +206,8 @@ class GSEPlatform extends Platform {
   }
 
   async installMiniupnpd() {
-    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
-    const srcPath = `${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft`;
+    if (!await this.isUbuntu22()) return
+    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
     // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
     const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
       .then(() => true).catch(() => false);
