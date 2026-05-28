@@ -56,7 +56,6 @@ append_iptables "-A FR_OUTPUT -m connmark ! --mark 0x0000/0xffff -m conntrack --
 append_iptables "COMMIT"
 
 append_iptables "*filter"
-append_iptables ":FR_UPNP_ACCEPT - [0:0]"
 append_iptables ":FR_INPUT - [0:0]"
 append_iptables ":FR_IGMP - [0:0]"
 append_iptables ":FR_ICMP - [0:0]"
@@ -198,6 +197,8 @@ append_ipset "create -! osi_verified_subnet6_set hash:net family inet6"
 sudo ipset restore -! < "$IPSET_RESTORE_FILE"
 sudo iptables-restore -w -n "$IPTABLES_RESTORE_FILE"
 sudo ip6tables-restore -w -n "$IP6TABLES_RESTORE_FILE"
+
+sudo iptables -w -N FR_UPNP_ACCEPT &>/dev/null
 
 sudo iptables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo iptables -w -t nat -I PREROUTING -j FR_PREROUTING
 sudo iptables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo iptables -w -t nat -I POSTROUTING -j FR_POSTROUTING
