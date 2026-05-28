@@ -37,6 +37,13 @@ const util = require('../util/util.js');
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
 
+const WPA_ALLOWED_KEYS = new Set([
+  'ssid', 'psk', 'key_mgmt', 'eap', 'identity', 'password',
+  'phase1', 'phase2', 'ca_cert', 'client_cert', 'private_key',
+  'bssid', 'priority', 'scan_ssid', 'proto', 'pairwise', 'group',
+  'anonymous_identity', 'domain_suffix_match', 'altsubject_match',
+]);
+
 const Promise = require('bluebird');
 
 class NetworkConfigManager {
@@ -162,6 +169,10 @@ class NetworkConfigManager {
           if (!params.hasOwnProperty("ssid"))
             params.ssid = ssid;
           for (const key of Object.keys(params)) {
+            if (!WPA_ALLOWED_KEYS.has(key)) {
+              done(null, [`Invalid wpa_supplicant parameter: ${key}`]);
+              return;
+            }
             const value = await util.generateWpaSupplicantConfig(key, params);
             const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} set_network ${selectedNetwork.id} ${key} ${value}`).then(() => null).catch((err) => err.message);
             if (error) {
