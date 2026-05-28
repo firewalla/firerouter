@@ -59,9 +59,8 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.debug(`Failed to create bridge interface ${this.name}`, err.message);
     });
-    // default forward delay is 15 seconds, maybe too long,
-    // but need to be consistent with switch's STP behavior so root bridge can be elected properly
-    await exec(`sudo brctl setfd ${this.name} 15`).catch((err) => {
+    // default forward delay is 15 seconds, maybe too long
+    await exec(`sudo brctl setfd ${this.name} 2.5`).catch((err) => {
       this.log.error(`Failed to change forward delay of bridge interface ${this.name}`, err.message);
     });
     // no need to enable stp if there is only one interface in bridge
