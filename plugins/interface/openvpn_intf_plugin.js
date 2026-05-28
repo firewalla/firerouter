@@ -27,6 +27,7 @@ const ip = require('ip');
 const _ = require('lodash');
 Promise.promisifyAll(fs);
 const Address6 = require('ip-address').Address6;
+const Plugin = require('../plugin.js');
 
 class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
   // this is a semi-stub now, it is not used to bring up to shutdown interface
@@ -131,7 +132,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
       case event.EVENT_IF_UP: 
       case event.EVENT_IF_DOWN: {
         this._reapplyNeeded = true;
-        this.propagateConfigChanged(true);
+        this.propagateConfigChanged(Plugin.CHANGE_FULL);
         pl.scheduleReapply();
         break;
       }
@@ -141,10 +142,15 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async getIPv4Addresses() {
     const ip4s = []
+    // check if file /sys/class/net/${this.name} exists
+    const fileExists = await fs.accessAsync(`/sys/class/net/${this.name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return ip4s;
+    }
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
-        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
         return null;
       });
     if (localIp) {
@@ -159,6 +165,11 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async getIPv6Addresses() {
     const ip6s = []
+    // check if file /sys/class/net/${this.name} exists
+    const fileExists = await fs.accessAsync(`/sys/class/net/${this.name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return ip6s;
+    }
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local6`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
