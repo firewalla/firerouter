@@ -187,20 +187,6 @@ class OrangePlatform extends Platform {
   async overrideWLANKernelModule() {
   }
 
-  async installMiniupnpd() {
-    if (!await this.isUbuntu22()) return
-    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
-    // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
-    const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
-      .then(() => true).catch(() => false);
-    if (needsUpdate) {
-      log.info(`miniupnpd binary differs from in-house version, replacing ...`);
-      await exec(`sudo cp -f --preserve=mode ${srcPath} $(which miniupnpd)`).catch((err) => {
-        log.error(`Failed to update miniupnpd`, err.message);
-      });
-    }
-  }
-
   _isPhysicalInterface(iface) {
     return ["eth0", "eth1"].includes(iface) || iface.startsWith("wlan");
   }
