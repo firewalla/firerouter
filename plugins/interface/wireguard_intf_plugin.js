@@ -68,13 +68,17 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});      
     }
     await this._resetBindIntfRule().catch((err) => {});
-    if (this._automata) {
-      this._automata.stop();
-      delete this._automata;
-    }
+    this._disposeAutomata();
     if (this._assetsController) {
       this._assetsController.stopServer();
       delete this._assetsController;
+    }
+  }
+
+  _disposeAutomata() {
+    if (this._automata) {
+      this._automata.stop();
+      delete this._automata;
     }
   }
 
@@ -170,6 +174,21 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  // normalize allowedIPs CIDR to the network address
+  _normalizeAllowedIpForRoute(allowedIP) {
+    const v4 = new Address4(allowedIP);
+    if (v4.isValid()) {
+      const net = v4.startAddress();
+      return `${net.correctForm()}/${v4.subnetMask}`;
+    }
+    const v6 = new Address6(allowedIP);
+    if (v6.isValid()) {
+      const net = v6.startAddress();
+      return `${net.correctForm()}/${v6.subnetMask}`;
+    }
+    return allowedIP;
+  }
+
   async changeRoutingTables() {
     await super.changeRoutingTables();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
@@ -183,20 +202,21 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
-            const af = new Address4(allowedIP).isValid() ? 4 : 6;
+            const routeCidr = this._normalizeAllowedIpForRoute(allowedIP);
+            const af = new Address4(routeCidr).isValid() ? 4 : 6;
             // no need to add allowed IP that is in wg interface's cidr, this can reduce cost of executing ip route commands since most peers are in the same IP range
-            if ((af == 4 && v4Subnets.some(subnet => new Address4(allowedIP).isInSubnet(subnet))) || (af == 6 && v6Subnets.some(subnet => new Address6(allowedIP).isInSubnet(subnet))))
+            if ((af == 4 && v4Subnets.some(subnet => new Address4(routeCidr).isInSubnet(subnet))) || (af == 6 && v6Subnets.some(subnet => new Address6(routeCidr).isInSubnet(subnet))))
               continue;
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
-            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, af).catch((err) => {});
+            await routing.addRouteToTable(routeCidr, null, this.name, "main", rtid, af).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, af).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, af).catch((err) => {});
+              await routing.addRouteToTable(routeCidr, null, this.name, routing.RT_LAN_ROUTABLE, rtid, af).catch((err) => {});
+              await routing.addRouteToTable(routeCidr, null, this.name, routing.RT_WAN_ROUTABLE, rtid, af).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(routeCidr, null, this.name, `${this.name}_default`, rtid, af).catch((err) => {});
             }
           }
         }
@@ -238,7 +258,12 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
         return null;
       })
       if (pubKey) {
-        this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig);
+        this._disposeAutomata();
+        this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig, {
+          wgCmd: this.wgCmd,
+          wireguardType: this.wireguardType,
+          bindIntf: this._bindIntf,
+        });
         this._automata.start();
       }
     }
@@ -339,7 +364,7 @@ const T1 = 180;
 const T2 = 225;
 
 class WireguardMeshAutomata {
-  constructor(intf, pubKey, config) {
+  constructor(intf, pubKey, config, options = {}) {
     // config should be the network config of the intf
     this.intf = intf;
     this.pubKey = pubKey;
@@ -348,8 +373,9 @@ class WireguardMeshAutomata {
     this.effectiveAllowedIPs = {};
     this.dnsCache = new LRU({ maxAge: 300 * 1000 });
     this.domainZoneCache = new LRU({ maxAge: 3600 * 1000 });
-    this.wireguardType = "wireguard";
-    this.wgCmd = "wg";
+    this.wireguardType = options.wireguardType || "wireguard";
+    this.wgCmd = options.wgCmd || "wg";
+    this.bindIntf = options.bindIntf || null;
     const ipv4 = this.config.ipv4;
     const cidr = new Address4(ipv4);
     for (const peer of this.config.peers) {
@@ -677,12 +703,20 @@ class WireguardMeshAutomata {
       this.log.error(`Failed to dump ${this.wireguardType} peers on ${this.intf}`, err.message);
       return null;
     });
+
+    const hasUsableIpv6DefaultRoute = (stdout) => {
+      return stdout.trim().split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .some(line => !line.startsWith('unreachable'));
+    }
     const now = Date.now() / 1000;
     let v6Supported = false;
-    if (this.config.bindIntf) {
-      v6Supported = await exec(`ip -6 r show default table ${this.config.bindIntf}_default`).then(result => !_.isEmpty(result.stdout.trim())).catch((err) => false);
+    let bindIntf = this.config.bindIntf || this.bindIntf || null;
+    if (bindIntf) {
+      v6Supported = await exec(`ip -6 r show default table ${bindIntf}_default`).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
     } else {
-      v6Supported = await exec(`ip -6 r show default table global_default`).then(result => !_.isEmpty(result.stdout.trim())).catch((err) => false);
+      v6Supported = await exec(`ip -6 r show default table global_default`).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
     }
     const t0Peers = [];
     const t1Peers = [];
