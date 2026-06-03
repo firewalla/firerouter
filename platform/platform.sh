@@ -100,6 +100,10 @@ case "$UNAME" in
         source $FW_PLATFORM_DIR/goldpro/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldpro
         ;;
+      crystal)
+        source $FW_PLATFORM_DIR/crystal/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/crystal
+        ;;
       *)
         source $FW_PLATFORM_DIR/gold/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/gold
