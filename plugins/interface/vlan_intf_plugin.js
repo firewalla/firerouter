@@ -39,7 +39,7 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     const intf = this.networkConfig.intf;
     const vid = this.networkConfig.vid;
     await exec(`sudo ip link add link ${intf} name ${this.name} type vlan id ${vid} protocol 802.1Q`).catch((err) => {
-      this.log.error(`Failed to create vlan interface ${this.name}`, err.message);
+      this.log.debug(`Failed to create vlan interface ${this.name}`, err.message);
     });
     const intfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);
     if (intfPlugin) {
