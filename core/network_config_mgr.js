@@ -647,6 +647,62 @@ class NetworkConfigManager {
     return config;
   }
 
+  // --- admin-managed network-config overlay -------------------------------
+  // An optional file that is deep-merged onto the active config when applying
+  // and when reporting /config/active, but is NEVER written back into
+  // sysdb:networkConfig. This lets an admin add interfaces (e.g. a vxlan LAN)
+  // that survive the app re-pushing its config and survive reboots, without
+  // FireRouter ever mutating the app-owned config. Mirrors how the system
+  // config already overlays routeConfig.json (see util/config.js).
+  getNetworkConfigOverlayPath() {
+    return `${r.getUserConfigFolder()}/network_config_overlay.json`;
+  }
+
+  async getNetworkConfigOverlay() {
+    const f = this.getNetworkConfigOverlayPath();
+    const exists = await fsp.access(f).then(() => true).catch(() => false);
+    if (!exists)
+      return null;
+    try {
+      return JSON.parse(await fsp.readFile(f, "utf8"));
+    } catch (err) {
+      log.error(`Failed to parse network config overlay ${f}`, err.message);
+      return null;
+    }
+  }
+
+  // deep-merge the overlay onto config (overlay wins; arrays are replaced, not merged)
+  async mergeNetworkConfigOverlay(config) {
+    const overlay = await this.getNetworkConfigOverlay();
+    if (!overlay || !config)
+      return config;
+    return _.mergeWith({}, config, overlay, (objVal, srcVal) => {
+      if (_.isArray(srcVal)) return srcVal;
+    });
+  }
+
+  // remove overlay-introduced keys so the overlay is never persisted into the app config
+  async stripNetworkConfigOverlay(config) {
+    const overlay = await this.getNetworkConfigOverlay();
+    if (!overlay || !config)
+      return config;
+    const stripped = _.cloneDeep(config);
+    const prune = (base, ov) => {
+      for (const k of Object.keys(ov)) {
+        if (!(k in base)) continue;
+        if (_.isPlainObject(ov[k]) && _.isPlainObject(base[k])) {
+          prune(base[k], ov[k]);
+          if (_.isEmpty(base[k])) delete base[k];
+        } else {
+          delete base[k];
+        }
+      }
+    };
+    prune(stripped, overlay);
+    return stripped;
+  }
+  // ------------------------------------------------------------------------
+
   async validateConfig(config) {
     if (!config)
       return ["config is not defined"];
@@ -711,6 +767,11 @@ class NetworkConfigManager {
 
   async tryApplyConfig(config, dryRun = false) {
     const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
+    // layer the admin overlay on top of both the new config and the rollback
+    // target, so applying (and rolling back) reflects the same effective state.
+    // The overlay is never persisted — see saveConfig().
+    config = await this.mergeNetworkConfigOverlay(config);
+    const rollbackConfig = await this.mergeNetworkConfigOverlay(currentConfig);
     // convert new config to integrated AP config
     const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
       log.error(`Failed to convert effective config`, err.message);
@@ -720,9 +781,9 @@ class NetworkConfigManager {
     if (errors && errors.length != 0) {
       log.error("Failed to apply network config, rollback to previous setup", errors);
       // convert current config to integrated AP config
-      const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
+      const convertedCurrentConfig = await this.convertIntegratedAPConfig(rollbackConfig).catch((err) => {
         log.error(`Failed to convert effective config`, err.message);
-        return currentConfig;
+        return rollbackConfig;
       });
       await ns.setup(convertedCurrentConfig).catch((err) => {
         log.error("Failed to rollback network config", err);
@@ -764,7 +825,9 @@ class NetworkConfigManager {
     if (!networkConfig.ncid && !transaction) {
       networkConfig.ncid = util.generateUUID();
     }
-    const configString = JSON.stringify(networkConfig);
+    // never persist overlay-defined keys into the app-owned config
+    const toStore = await this.stripNetworkConfigOverlay(networkConfig);
+    const configString = JSON.stringify(toStore);
     if (configString) {
       await rclient.setAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig", configString);
       this._scheduleRedisBackgroundSave();
