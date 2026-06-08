@@ -67,6 +67,9 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         this.log.warn(`Failed to start mstpd service`, err.message);
       });
       if (this.networkConfig.stp !== false) {
+        // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
+        // instead of transitioning to stp_state=2 (BR_USER_STP).
+        await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
         // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
         // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
         await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
