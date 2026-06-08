@@ -10,6 +10,8 @@ TEST_URLS='
 
 init_network_config() {
   _rc=0
+  : ${FIREROUTER_HOME:=/home/pi/firerouter}
+  ${FIREROUTER_HOME}/scripts/update_ca_certificates.sh || true
   redis-cli set "fireboot:status" "apply_network"
   echo "Awaiting FireRouter API available ..."
   sleep 3
