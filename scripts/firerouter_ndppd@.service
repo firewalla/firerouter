@@ -1,0 +1,8 @@
+[Unit]
+Description=FireRouter NDP Proxy Daemon
+After=network.target
+
+[Service]
+Restart=always
+ExecStart=/bin/bash -c '/home/pi/firerouter/scripts/start_ndppd_service.sh %i >/dev/null 2>&1'
+RestartSec=3
