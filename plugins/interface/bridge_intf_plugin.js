@@ -60,8 +60,9 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.debug(`Failed to create bridge interface ${this.name}`, err.message);
     });
-    // STP is only meaningful when the bridge has more than one interface
-    if (this.networkConfig.intf.length > 1) {
+
+    const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
+    if (this.networkConfig.intf.length > 1 && !isVlanBridge) {
       // start mstpd if not already running; no-op if already active
       await exec(`sudo systemctl start firerouter_mstpd`).catch((err) => {
         this.log.warn(`Failed to start mstpd service`, err.message);
