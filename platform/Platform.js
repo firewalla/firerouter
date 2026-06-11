@@ -269,15 +269,17 @@ class Platform {
   }
 
   async installMiniupnpd() {
-    // replace miniupnpd binary if it is using nftables backend,
     // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
-    const nftUsed = await exec(`ldd $(which miniupnpd) | grep libnftnl`).then(() => true).catch((err) => false);
-    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
-    if (nftUsed) {
-      log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
-      await exec(`sudo cp -f --preserve=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
-        log.error(`Failed to update miniupnpd with nft support`, err.message);
-      });
+    if (!await this.isUbuntu22()) return
+    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+    // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
+    const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
+      .then(() => true).catch(() => false);
+    if (needsUpdate) {
+      log.info(`miniupnpd binary differs from in-house version, replacing ...`);
+      await exec(`sudo cp -f --preserve=mode ${srcPath} $(which miniupnpd)`).catch((err) => {
+        log.error(`Failed to update miniupnpd`, err.message);
+      })
     }
   }
 
