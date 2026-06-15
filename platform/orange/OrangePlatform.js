@@ -187,9 +187,11 @@ class OrangePlatform extends Platform {
   async overrideWLANKernelModule() {
     const srcDir = `${r.getFireRouterHome()}/platform/orange/files/firmware`;
     const dstDir = `/lib/firmware/mediatek/mt7996`;
+    const restoreDir = `/media/root-ro/lib/firmware/mediatek/mt7996`;
     let changed = false;
     try {
       const files = await fsp.readdir(srcDir);
+      const copiedFiles = [];
       for (const file of files) {
         const srcPath = `${srcDir}/${file}`;
         const dstPath = `${dstDir}/${file}`;
@@ -199,10 +201,40 @@ class OrangePlatform extends Platform {
           try {
             await exec(`sudo cp -f ${srcPath} ${dstPath}`);
             log.info(`Firmware file ${file} copied to ${dstPath}`);
-            changed = true;
+            copiedFiles.push(file);
           } catch (copyErr) {
             log.error(`Failed to copy firmware file ${file}:`, copyErr);
           }
+        }
+      }
+      if (copiedFiles.length > 0) {
+        let integrityOk = true;
+        for (const file of copiedFiles) {
+          const srcPath = `${srcDir}/${file}`;
+          const dstPath = `${dstDir}/${file}`;
+          try {
+            const { stdout } = await exec(`sha256sum ${srcPath} ${dstPath}`);
+            const hashes = stdout.trim().split('\n').map(l => l.split(/\s+/)[0]);
+            if (hashes[0] !== hashes[1]) {
+              log.error(`Integrity check failed for firmware file ${file}`);
+              integrityOk = false;
+              break;
+            }
+          } catch (err) {
+            log.error(`Failed to verify integrity of firmware file ${file}:`, err);
+            integrityOk = false;
+            break;
+          }
+        }
+        if (!integrityOk) {
+          log.error(`Restoring original firmware files from ${restoreDir}`);
+          for (const file of copiedFiles) {
+            await exec(`sudo cp -f ${restoreDir}/${file} ${dstDir}/${file}`).catch(err =>
+              log.error(`Failed to restore firmware file ${file}:`, err)
+            );
+          }
+        } else {
+          changed = true;
         }
       }
       if (changed) {
