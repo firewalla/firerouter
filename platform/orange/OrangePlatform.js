@@ -185,6 +185,82 @@ class OrangePlatform extends Platform {
   }
 
   async overrideWLANKernelModule() {
+    const srcDir = `${r.getFireRouterHome()}/platform/orange/files/firmware`;
+    const dstDir = `/lib/firmware/mediatek/mt7996`;
+    const restoreDir = `/media/root-ro/lib/firmware/mediatek/mt7996`;
+    let changed = false;
+    try {
+      const files = await fsp.readdir(srcDir);
+      const copiedFiles = [];
+      for (const file of files) {
+        const srcPath = `${srcDir}/${file}`;
+        const dstPath = `${dstDir}/${file}`;
+        try {
+          await exec(`cmp -s ${srcPath} ${dstPath}`);
+        } catch (err) {
+          try {
+            await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+            log.info(`Firmware file ${file} copied to ${dstPath}`);
+            copiedFiles.push(file);
+          } catch (copyErr) {
+            log.error(`Failed to copy firmware file ${file}:`, copyErr);
+          }
+        }
+      }
+      if (copiedFiles.length > 0) {
+        let integrityOk = true;
+        for (const file of copiedFiles) {
+          const srcPath = `${srcDir}/${file}`;
+          const dstPath = `${dstDir}/${file}`;
+          try {
+            const { stdout } = await exec(`sha256sum ${srcPath} ${dstPath}`);
+            const hashes = stdout.trim().split('\n').map(l => l.split(/\s+/)[0]);
+            if (hashes[0] !== hashes[1]) {
+              log.error(`Integrity check failed for firmware file ${file}`);
+              integrityOk = false;
+              break;
+            }
+          } catch (err) {
+            log.error(`Failed to verify integrity of firmware file ${file}:`, err);
+            integrityOk = false;
+            break;
+          }
+        }
+        if (!integrityOk) {
+          log.error(`Restoring original firmware files from ${restoreDir}`);
+          for (const file of copiedFiles) {
+            await exec(`sudo cp -f ${restoreDir}/${file} ${dstDir}/${file}`).catch(err =>
+              log.error(`Failed to restore firmware file ${file}:`, err)
+            );
+          }
+        } else {
+          changed = true;
+        }
+      }
+      if (changed) {
+        await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
+        try {
+          const { stdout } = await exec(`ps -axo pid,comm | grep 'napi/phy'`);
+          const procs = stdout.trim().split('\n')
+            .map(line => {
+              const m = line.trim().match(/^(\d+)\s+napi\/phy.*-(\d+)$/);
+              return m ? { pid: m[1], suffix: parseInt(m[2]) } : null;
+            })
+            .filter(Boolean)
+            .sort((a, b) => b.suffix - a.suffix);
+          if (procs.length >= 2) {
+            log.info(`Assigning CPU 3 to napi/phy process ${procs[0].pid}`);
+            await exec(`sudo taskset -acp 3 ${procs[0].pid}`);
+            log.info(`Assigning CPU 0 to napi/phy process ${procs[1].pid}`);
+            await exec(`sudo taskset -acp 0 ${procs[1].pid}`);
+          }
+        } catch (err) {
+          log.error(`Failed to set CPU affinity for napi/phy processes:`, err);
+        }
+      }
+    } catch (err) {
+      log.error(`Failed to override WLAN firmware:`, err);
+    }
   }
 
   _isPhysicalInterface(iface) {
