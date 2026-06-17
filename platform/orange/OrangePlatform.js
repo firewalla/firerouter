@@ -191,8 +191,20 @@ class OrangePlatform extends Platform {
     let changed = false;
     try {
       const files = await fsp.readdir(srcDir);
+      const binFiles = files.filter(f => f.endsWith('.bin'));
+      for (const file of binFiles) {
+        const srcPath = `${srcDir}/${file}`;
+        const sha256Path = `${srcDir}/${file}.sha256`;
+        const expectedHash = (await fsp.readFile(sha256Path, 'utf8')).trim();
+        const { stdout } = await exec(`sha256sum ${srcPath}`);
+        const actualHash = stdout.split(/\s+/)[0];
+        if (actualHash !== expectedHash) {
+          log.error(`Source firmware file ${file} failed integrity check, skipping firmware override`);
+          return;
+        }
+      }
       const copiedFiles = [];
-      for (const file of files) {
+      for (const file of binFiles) {
         const srcPath = `${srcDir}/${file}`;
         const dstPath = `${dstDir}/${file}`;
         try {
