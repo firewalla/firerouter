@@ -1,0 +1,15 @@
+#!/bin/bash
+
+log() {
+  # echo "$(date) $*" >> /tmp/firerouter_dhcpcd6@$interface.log
+  :
+}
+
+execute_and_log() {
+  if [ -z "$1" ]; then
+    return 1
+  fi
+  command="$*"
+  log "command: $command"
+  eval "$command"
+}

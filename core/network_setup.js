@@ -56,6 +56,8 @@ class NetworkSetup {
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhcpcd /etc/logrotate.d/`);
     // copy logrotate config for dhclient log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhclient /etc/logrotate.d/`);
+    // copy logrotate config for firerouter-dns log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/firerouter-dns /etc/logrotate.d/`);
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
