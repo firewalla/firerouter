@@ -124,7 +124,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async applyDnsSettings() {
-    await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
+    await fs.lstatAsync(r.getInterfaceResolvConfPath(this.name)).then(() => {
       this.log.info(`Remove old resolv conf for ${this.name}`);
       return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
     }).catch((err) => { });

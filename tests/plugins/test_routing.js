@@ -253,7 +253,6 @@ describe('Test Routing WAN', function(){
     let afterResults = await routing.searchRouteRules(null, null, 'eth0', 'main');
     expect(afterResults.length).to.be.equal(beforeResults.length);
   });
-
 });
 
 describe('Test Routing DNS', function(){
