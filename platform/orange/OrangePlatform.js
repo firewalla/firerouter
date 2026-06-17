@@ -15,6 +15,7 @@
 
 const fsp = require('fs').promises;
 const fs = require('fs');
+const crypto = require('crypto');
 const Platform = require('../Platform.js');
 const _ = require('lodash');
 const r = require('../../util/firerouter.js');
@@ -32,6 +33,9 @@ const ETH0_BASE = 0xffff4;
 const ETH1_BASE = 0xffffa;
 const LOCK_ETHERNET_RESET = "LOCK_ETHERNET_RESET";
 const WLAN0_BASE = 0x4;
+const FIRMWARE_PATCH_RELOAD = `${r.getRuntimeFolder()}/firmware_patch_reload`;
+const FIRMWARE_PATCH_COPY = `/dev/shm/firmware_patch_copy`;
+const FIRMWARE_PATCH_SAFE = `${r.getRuntimeFolder()}/firmware_patch_safe`;
 
 
 LOCK_AP_STATE_AUTOMATA = "LOCK_AP_STATE_AUTOMATA";
@@ -185,13 +189,29 @@ class OrangePlatform extends Platform {
   }
 
   async overrideWLANKernelModule() {
+    await this._reloadWLANFirmware();
+  }
+
+  async _isPatchSafe(patchUid) {
+    const exists = p => fsp.access(p, fs.constants.F_OK).then(() => true).catch(() => false);
+    const reloadFlagPath = `${FIRMWARE_PATCH_RELOAD}.${patchUid}`;
+    if (!await exists(reloadFlagPath)) return true;
+    const copyFlagPath = `${FIRMWARE_PATCH_COPY}.${patchUid}`;
+    const safeFlagPath = `${FIRMWARE_PATCH_SAFE}.${patchUid}`;
+    return (await exists(copyFlagPath)) || (await exists(safeFlagPath));
+  }
+
+  async _reloadWLANFirmware() {
     const srcDir = `${r.getFireRouterHome()}/platform/orange/files/firmware`;
     const dstDir = `/lib/firmware/mediatek/mt7996`;
     const restoreDir = `/media/root-ro/lib/firmware/mediatek/mt7996`;
     let changed = false;
     try {
       const files = await fsp.readdir(srcDir);
-      const binFiles = files.filter(f => f.endsWith('.bin'));
+      const binFiles = files.filter(f => f.endsWith('.bin')).sort();
+
+      // source integrity check and collect expected hashes for patchUid
+      const expectedHashes = {};
       for (const file of binFiles) {
         const srcPath = `${srcDir}/${file}`;
         const sha256Path = `${srcDir}/${file}.sha256`;
@@ -202,7 +222,20 @@ class OrangePlatform extends Platform {
           log.error(`Source firmware file ${file} failed integrity check, skipping firmware override`);
           return;
         }
+        expectedHashes[file] = expectedHash;
       }
+
+      const patchUid = crypto.createHash('sha256')
+        .update(binFiles.map(f => expectedHashes[f]).join(''))
+        .digest('hex').slice(0, 16);
+
+      if (!await this._isPatchSafe(patchUid)) {
+        log.error(`Firmware patch ${patchUid} was previously attempted but did not survive, skipping`);
+        return;
+      }
+
+      await fsp.writeFile(`${FIRMWARE_PATCH_COPY}.${patchUid}`, '');
+
       const copiedFiles = [];
       for (const file of binFiles) {
         const srcPath = `${srcDir}/${file}`;
@@ -216,6 +249,7 @@ class OrangePlatform extends Platform {
             copiedFiles.push(file);
           } catch (copyErr) {
             log.error(`Failed to copy firmware file ${file}:`, copyErr);
+            return;
           }
         }
       }
@@ -250,6 +284,8 @@ class OrangePlatform extends Platform {
         }
       }
       if (changed) {
+        await fsp.writeFile(`${FIRMWARE_PATCH_RELOAD}.${patchUid}`, '');
+        await exec(`sync`);
         await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
         try {
           const { stdout } = await exec(`ps -axo pid,comm | grep 'napi/phy'`);
@@ -269,6 +305,11 @@ class OrangePlatform extends Platform {
         } catch (err) {
           log.error(`Failed to set CPU affinity for napi/phy processes:`, err);
         }
+        setTimeout(() => {
+          fsp.writeFile(`${FIRMWARE_PATCH_SAFE}.${patchUid}`, '').catch(err =>
+            log.error(`Failed to create firmware patch safe flag:`, err)
+          );
+        }, 10000);
       }
     } catch (err) {
       log.error(`Failed to override WLAN firmware:`, err);
