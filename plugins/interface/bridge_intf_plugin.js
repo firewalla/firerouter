@@ -57,7 +57,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     }
 
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
-      this.log.error(`Failed to create bridge interface ${this.name}`, err.message);
+      this.log.debug(`Failed to create bridge interface ${this.name}`, err.message);
     });
     // default forward delay is 15 seconds, maybe too long
     await exec(`sudo brctl setfd ${this.name} 2.5`).catch((err) => {
