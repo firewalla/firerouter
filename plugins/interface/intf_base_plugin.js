@@ -657,7 +657,7 @@ class InterfaceBasePlugin extends Plugin {
     pl.acquireApplyLock(async () => {
       await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
         // trigger downstream plugins to reapply, e.g., nat for ipv6
-        this.propagateConfigChanged(Plugin.CHANGE_FULL);
+        this.propagateConfigChanged(Plugin.CHANGE_IP_ONLY);
         this._reapplyNeeded = false;
         pl.scheduleReapply();
         return pl.publishIfaceChangeApplied();
