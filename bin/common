@@ -139,16 +139,20 @@ test_network() {
       led_report_network_down
     fi
 
-    if ! nc -w 5 -z 1.1.1.1 443; then
-      echo "Unable to reach 1.1.1.1:443, trying 8.8.8.8:53 ..."
-      if ! nc -w 5 -z 8.8.8.8 53; then
-        echo "Unable to reach 8.8.8.8:53, trying 8.8.8.8:443 ..."
-        if ! nc -w 5 -z 8.8.8.8 443; then
-          echo "Unable to reach 8.8.8.8:443 ..."
-          _rc=3
-          continue
-        fi
+    _nc_ok=0
+    nc_targets=("captive.firewalla.com 80" "1.1.1.1 443" "8.8.8.8 53" "8.8.8.8 443")
+    for i in "${!nc_targets[@]}"; do
+      read -r host port <<< "${nc_targets[$i]}"
+      echo "Trying $host:$port"
+      if nc -w 5 -z "$host" "$port"; then
+        _nc_ok=1
+        break
       fi
+      echo "Unable to reach $host:$port"
+    done
+    if [[ $_nc_ok -eq 0 ]]; then
+      _rc=3
+      continue
     fi
 
     if ! dig +short +timeout=5 github.com && ! dig +short +timeout=5 +tcp github.com; then
