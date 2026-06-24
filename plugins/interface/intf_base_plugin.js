@@ -1115,18 +1115,20 @@ class InterfaceBasePlugin extends Plugin {
 
   async updateRouteForDNS() {
     await this._removeOldRouteForDNS();
-    const dns = await this.getDNSNameservers();
+    const dns4 = await this.getDns4Nameservers();
+    const dns6 = await this.getRoutableDns6Nameservers();
     const gateway = await routing.getInterfaceGWIP(this.name, 4);
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6);
-    if (!_.isArray(dns) || dns.length === 0 || !gateway)
-      return;
-    for (const dnsIP of dns) {
-      if (new Address4(dnsIP).isValid()) {
+    if (_.isArray(dns4) && dns4.length > 0 && gateway) {
+      for (const dnsIP of dns4) {
         if (dnsIP === gateway) continue;
         await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true)
                       .then(()=>{this._updateDnsRouteCache(dnsIP, gateway, this.name, `${this.name}_default`, 4);})
                       .catch((err) => {});
-      } else {
+      }
+    }
+    if (_.isArray(dns6) && dns6.length > 0 && gateway6) {
+      for (const dnsIP of dns6) {
         if (dnsIP === gateway6) continue;
         await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true)
                       .then(()=>{this._updateDnsRouteCache(dnsIP, gateway6, this.name, `${this.name}_default`, 6);})
@@ -1348,6 +1350,11 @@ class InterfaceBasePlugin extends Plugin {
     if (!this.isIPv6Enabled()) return [];
     const dns = await this.getDNSNameservers() || [];
     return dns.filter(i => new Address6(i).isValid());
+  }
+
+  async getRoutableDns6Nameservers() {
+    const dns = await this.getDns6Nameservers();
+    return dns.filter(i => !new Address6(i).isLinkLocal());
   }
 
   async getOrigDNS6Nameservers() {
