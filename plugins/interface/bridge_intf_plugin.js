@@ -24,7 +24,7 @@ const _ = require('lodash');
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isFlushNeeded(newConfig) {
-    // flush is needed if attributes other than intf and stp are changed
+    // flush is needed if attributes other than stp are changed
     const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "stp"));
     const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "stp"));
     return !_.isEqual(c1, c2);
@@ -34,6 +34,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
+      await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
       await exec(`sudo brctl delbr ${this.name}`).catch((err) => {});
     }
   }
@@ -59,16 +60,26 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.debug(`Failed to create bridge interface ${this.name}`, err.message);
     });
-    // default forward delay is 15 seconds, maybe too long
-    await exec(`sudo brctl setfd ${this.name} 2.5`).catch((err) => {
-      this.log.error(`Failed to change forward delay of bridge interface ${this.name}`, err.message);
-    });
-    // no need to enable stp if there is only one interface in bridge
-    if (this.networkConfig.intf.length > 1) {
-      // Spanning tree protocol is enabled by default
-      await exec(`sudo brctl stp ${this.name} ${this.networkConfig.stp === false ? "off" : "on"}`).catch((err) => {
-        this.log.error(`Failed to ${this.networkConfig.stp === false ? "disable" : "enable"} stp on bridge interface ${this.name}`, err.message);
+
+    const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
+    if (this.networkConfig.intf.length > 1 && !isVlanBridge) {
+      // start mstpd if not already running; no-op if already active
+      await exec(`sudo systemctl start firerouter_mstpd`).catch((err) => {
+        this.log.warn(`Failed to start mstpd service`, err.message);
       });
+      if (this.networkConfig.stp !== false) {
+        // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
+        // instead of transitioning to stp_state=2 (BR_USER_STP).
+        await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
+        // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
+        // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
+        await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
+          this.log.error(`Failed to enable STP on ${this.name}`, err.message);
+        });
+      } else {
+        // brctl stp off invokes /sbin/bridge-stp stop → mstpctl delbridge, stp_state=0
+        await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
+      }
     }
 
     const existingIntf = await fsp.readdir(`/sys/class/net/${this.name}/brif`);
@@ -107,6 +118,13 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isEthernetBasedInterface() {
     return true;
+  }
+
+  static async preparePlugin() {
+    await super.preparePlugin();
+    const r = require('../../util/firerouter.js');
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/firerouter_mstpd.service /etc/systemd/system/`);
+    await exec(`sudo install -m 755 ${r.getFireRouterHome()}/scripts/bridge-stp.sh /sbin/bridge-stp`);
   }
 }
 
