@@ -344,7 +344,7 @@ class RoutingPlugin extends Plugin {
           await this.upsertRouteToTable("default", gw6, intf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
           await this.upsertRouteToTable("default", gw6, intf, routing.RT_MAIN, metric, 6).catch((err) => { this.log.warn('fail to upsert route', err)});
 
-          const dns6 = await intfPlugin.getDns6Nameservers();
+          const dns6 = await intfPlugin.getRoutableDns6Nameservers();
           if (_.isArray(dns6) && dns6.length > 0) {
             for (const dns6IP of dns6) {
               if (dns6IP === gw6) continue;
@@ -591,7 +591,7 @@ class RoutingPlugin extends Plugin {
                 await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
                 await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_MAIN, metric, 6).catch((err) => { });
                 // add route for ipv6 DNS nameserver IP in global_default table
-                const dns6 = await viaIntfPlugin.getDns6Nameservers();
+                const dns6 = await viaIntfPlugin.getRoutableDns6Nameservers();
                 if (_.isArray(dns6) && dns6.length !== 0 ){
                   for (const dns6IP of dns6) {
                     if (dns6IP === gw6) continue;
@@ -728,7 +728,7 @@ class RoutingPlugin extends Plugin {
                   */
                 }
                 // add route for ipv6 DNS nameserver IP in global_default table
-                const dns6 = await viaIntfPlugin.getDns6Nameservers();
+                const dns6 = await viaIntfPlugin.getRoutableDns6Nameservers();
                 if (_.isArray(dns6) && dns6.length !== 0) {
                   for (const dns6IP of dns6) {
                     if (dns6IP === gw6) continue;
