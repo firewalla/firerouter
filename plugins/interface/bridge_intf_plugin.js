@@ -80,6 +80,9 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         // brctl stp off invokes /sbin/bridge-stp stop → mstpctl delbridge, stp_state=0
         await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
       }
+    } else {
+      // VLAN bridges should always have STP disabled; clear any stale kernel STP state
+      await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
     }
 
     const existingIntf = await fsp.readdir(`/sys/class/net/${this.name}/brif`);
