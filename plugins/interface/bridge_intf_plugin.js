@@ -17,6 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const exec = require('child-process-promise').exec;
+const { spawn } = require('child_process');
 const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
@@ -31,6 +32,14 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async flush() {
+    if (this._stateSync) {
+      this._stateSync.stopMonitor();
+      const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
+      if (!isVlanBridge) {
+        for (const physicalIntf of this.networkConfig.intf)
+          await BridgePortStateSync.applyVlanPortStates(physicalIntf, 3, this.log).catch(() => {});
+      }
+    }
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
       await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
@@ -76,9 +85,17 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
           this.log.error(`Failed to enable STP on ${this.name}`, err.message);
         });
+        if (!this._stateSync)
+          this._stateSync = new BridgePortStateSync(this.name, this.log);
+        this._stateSync.startMonitor(this.networkConfig.intf);
       } else {
         // brctl stp off invokes /sbin/bridge-stp stop → mstpctl delbridge, stp_state=0
         await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
+        if (this._stateSync)
+          this._stateSync.stopMonitor();
+        // STP is no longer controlling port states; reset VLAN ports to forwarding
+        for (const physicalIntf of this.networkConfig.intf)
+          await BridgePortStateSync.applyVlanPortStates(physicalIntf, 3, this.log).catch(() => {});
       }
     } else {
       // VLAN bridges should always have STP disabled; clear any stale kernel STP state
@@ -103,6 +120,13 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
           this.log.error(`Failed to add interface ${iface} to bridge ${this.name}`, err.message);
         })
       }
+
+    if (isVlanBridge) {
+      if (!this._stateSync)
+        this._stateSync = new BridgePortStateSync(this.name, this.log);
+      await this._stateSync.syncInitialPortStates(this.networkConfig.intf);
+    }
+
     return true;
   }
 
@@ -132,3 +156,108 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 }
 
 module.exports = BridgeInterfacePlugin;
+
+class BridgePortStateSync {
+  constructor(bridgeName, log) {
+    this._bridgeName = bridgeName;
+    this._log = log;
+    this._monitorProcess = null;
+  }
+
+  // Kill the bridge monitor link subprocess; does not reset any VLAN port states.
+  stopMonitor() {
+    if (this._monitorProcess) {
+      this._monitorProcess.kill();
+      this._monitorProcess = null;
+    }
+  }
+
+  // Sync current native bridge port states to VLAN ports, then watch for future changes via `bridge monitor link`.
+  startMonitor(memberIntfs) {
+    this.stopMonitor();
+    for (const physicalIntf of memberIntfs) {
+      fsp.readFile(`/sys/class/net/${this._bridgeName}/brif/${physicalIntf}/state`, 'utf8')
+        .then(raw => BridgePortStateSync.applyVlanPortStates(physicalIntf, parseInt(raw.trim(), 10), this._log))
+        .catch(() => {});
+    }
+    const proc = spawn('bridge', ['monitor', 'link'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    this._monitorProcess = proc;
+    let buf = '';
+    proc.stdout.on('data', (chunk) => {
+      if (this._monitorProcess !== proc) return;
+      buf += chunk.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) this._handleLine(line);
+    });
+    proc.on('exit', (code, signal) => {
+      if (this._monitorProcess === proc) {
+        this._log.warn(`bridge monitor link exited (code=${code} signal=${signal}); port state sync paused until next apply`);
+        this._monitorProcess = null;
+      }
+    });
+    proc.on('error', (err) => {
+      this._log.warn(`bridge monitor link error`, err.message);
+    });
+  }
+
+  // Set each VLAN sub-interface's bridge port state to match its physical interface's current native bridge state.
+  async syncInitialPortStates(vlanIntfs) {
+    for (const vlanIntf of vlanIntfs) {
+      const physicalIntf = await BridgePortStateSync.getPhysicalIntf(vlanIntf);
+      if (!physicalIntf) continue;
+      const state = await BridgePortStateSync.getNativeBridgePortState(physicalIntf);
+      if (state === undefined) continue;
+      const targetState = (state === null || state === 3) ? 'forwarding' : 'disabled';
+      await exec(`sudo bridge link set dev ${vlanIntf} state ${targetState}`)
+        .catch(err => this._log.debug(`syncInitialPortStates: bridge link set failed for ${vlanIntf}`, err.message));
+    }
+  }
+
+  _handleLine(line) {
+    const masterMatch = line.match(/master\s+(\S+)/);
+    if (!masterMatch || masterMatch[1] !== this._bridgeName) return;
+    const intfMatch = line.match(/^\s*\d+:\s+(\S+?)(?:@\S+)?:/);
+    if (!intfMatch) return;
+    const physicalIntf = intfMatch[1];
+    const stateMatch = line.match(/\bstate\s+(\w+)/);
+    if (!stateMatch) return;
+    const stateMap = { forwarding: 3, blocking: 4, disabled: 0, listening: 1, learning: 2 };
+    const stateNum = stateMap[stateMatch[1]];
+    if (stateNum === undefined) return;
+    BridgePortStateSync.applyVlanPortStates(physicalIntf, stateNum, this._log).catch(() => {});
+  }
+
+  static async getPhysicalIntf(vlanIntf) {
+    if (!vlanIntf.includes('.')) return null;
+    const entries = await fsp.readdir(`/sys/class/net/${vlanIntf}/`).catch(() => null);
+    if (!entries) return null;
+    const lowerEntry = entries.find(e => e.startsWith('lower_'));
+    return lowerEntry ? lowerEntry.slice('lower_'.length) : null;
+  }
+
+  // Returns the STP port state number, null if physicalIntf has no native bridge master,
+  // or undefined if the state file exists but could not be read (caller should skip).
+  static async getNativeBridgePortState(physicalIntf) {
+    const nativeBridge = await fsp.readlink(`/sys/class/net/${physicalIntf}/master`)
+      .then(p => p.split('/').pop())
+      .catch(() => null);
+    if (!nativeBridge) return null;
+    const raw = await fsp.readFile(`/sys/class/net/${nativeBridge}/brif/${physicalIntf}/state`, 'utf8').catch(() => undefined);
+    if (raw === undefined) return undefined;
+    return parseInt(raw.trim(), 10);
+  }
+
+  // Set all VLAN sub-interfaces of physicalIntf to forwarding (stpState===3) or disabled.
+  // All non-forwarding states (blocking, listening, learning, disabled) collapse to disabled:
+  // the VLAN bridge has STP off, so only forwarding/disabled have defined kernel semantics there.
+  static async applyVlanPortStates(physicalIntf, stpState, log) {
+    const targetState = stpState === 3 ? 'forwarding' : 'disabled';
+    const allIntfs = await fsp.readdir('/sys/class/net/').catch(() => []);
+    const vlanIntfs = allIntfs.filter(i => i.startsWith(`${physicalIntf}.`));
+    for (const vlanIntf of vlanIntfs) {
+      await exec(`sudo bridge link set dev ${vlanIntf} state ${targetState}`)
+        .catch(err => { if (log) log.warn(`applyVlanPortStates: bridge link set dev ${vlanIntf} state ${targetState} failed`, err.message); });
+    }
+  }
+}
