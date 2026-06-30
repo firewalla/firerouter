@@ -20,6 +20,7 @@ const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const pl = require('../../plugins/plugin_loader.js');
 const WifiSD = require('../WifiSD.js')
 const fs = require('fs');
 const fsp = fs.promises;
@@ -45,6 +46,50 @@ class GoldPlus2Platform extends Platform {
 
   getWifiAPInterface() {
     return IF_WLAN1;
+  }
+
+  getDefaultBaseIntf(intfName) {
+    if (intfName === this.getWifiAPInterface()) {
+      return this.getWifiClientInterface();
+    }
+    return null;
+  }
+
+  getDefaultWLanType(intfName) {
+    if (intfName === this.getWifiAPInterface()) {
+      return "__ap";
+    }
+    return "managed";
+  }
+
+  getExclusiveWLANSibling(intfName) {
+    if (intfName === IF_WLAN0) {
+      return IF_WLAN1;
+    }
+    if (intfName === IF_WLAN1) {
+      return IF_WLAN0;
+    }
+    return null;
+  }
+
+  shouldBringWLANInterfaceUp(wlanIntfPlugin) {
+    if (wlanIntfPlugin.networkConfig.enabled === false) {
+      return false;
+    }
+    const hostapdActive = (intf) => {
+      const hp = pl.getPluginInstance("hostapd", intf);
+      return hp && hp.networkConfig.enabled !== false;
+    };
+    if (wlanIntfPlugin.name === this.getWifiClientInterface()) {
+      if (hostapdActive(this.getWifiAPInterface())) {
+        return false;
+      }
+    } else if (wlanIntfPlugin.name === this.getWifiAPInterface()) {
+      if (!hostapdActive(wlanIntfPlugin.name)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   wifiSD() {

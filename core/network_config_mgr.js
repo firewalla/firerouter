@@ -447,6 +447,7 @@ class NetworkConfigManager {
   async getWlansViaWpaSupplicant(waitForScan = false) {
     log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
     const pluginLoader = require('../plugins/plugin_loader.js')
+    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin');
     const apScanInterface = platform.getAPScanInterface();
     const intfPlugin = pluginLoader.getPluginInstance('interface', apScanInterface);
     if (!intfPlugin) {
@@ -457,6 +458,8 @@ class NetworkConfigManager {
       log.warn(`WLAN interface ${apScanInterface} is not present yet`);
       return [];
     }
+
+    await WLANInterfacePlugin.prepareAPScanInterface(apScanInterface);
 
     const wpaCliPath = await platform.getWpaCliBinPath();
     const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
@@ -604,8 +607,8 @@ class NetworkConfigManager {
         resolve(final)
       }).catch((err) => {
         reject(err)
-      }).finally(() => {
-        platform.setDFSScanState(false);
+      }).finally(async () => {
+        await platform.setDFSScanState(false);
       });
     });
   }
