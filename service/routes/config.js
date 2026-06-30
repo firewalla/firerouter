@@ -54,7 +54,8 @@ const T_REVERT_TIMEOUT = 120 * 1000; // revert back to previous persisted config
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig(inTransaction);
   if(config) {
-    res.json(config);
+    // report the effective config incl. the admin overlay (never persisted)
+    res.json(await ncm.mergeNetworkConfigOverlay(config));
   } else {
     res.status(404).send('');
   }
