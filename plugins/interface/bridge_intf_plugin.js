@@ -33,7 +33,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     if (this._stateSync) {
-      this._stateSync.stopMonitor();
+      await this._stateSync.stopMonitor();
       const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
       if (!isVlanBridge) {
         for (const physicalIntf of this.networkConfig.intf)
@@ -92,7 +92,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         // brctl stp off invokes /sbin/bridge-stp stop → mstpctl delbridge, stp_state=0
         await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
         if (this._stateSync)
-          this._stateSync.stopMonitor();
+          await this._stateSync.stopMonitor();
         // STP is no longer controlling port states; reset VLAN ports to forwarding
         for (const physicalIntf of this.networkConfig.intf)
           await BridgePortStateSync.applyVlanPortStates(physicalIntf, 3, this.log).catch(() => {});
@@ -158,28 +158,32 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 module.exports = BridgeInterfacePlugin;
 
 class BridgePortStateSync {
+  // upper bound on how long startMonitor() waits for the initial per-interface sync to land
+  static INITIAL_SYNC_TIMEOUT_MS = 3000;
+
   constructor(bridgeName, log) {
     this._bridgeName = bridgeName;
     this._log = log;
     this._monitorProcess = null;
+    this._pendingStates = new Map();
+    this._runningIntfs = new Set();
+    this._runLoopPromises = new Map();
   }
 
-  // Kill the bridge monitor link subprocess; does not reset any VLAN port states.
-  stopMonitor() {
+  // Kill the bridge monitor link subprocess and wait for any in-flight apply to finish, so that
+  // once this resolves, the caller's own state changes are guaranteed to land last.
+  async stopMonitor() {
     if (this._monitorProcess) {
       this._monitorProcess.kill();
       this._monitorProcess = null;
     }
+    this._pendingStates.clear();
+    await Promise.all(this._runLoopPromises.values());
   }
 
-  // Sync current native bridge port states to VLAN ports, then watch for future changes via `bridge monitor link`.
+  // Watch `bridge monitor link` for port state changes, then sync current native bridge port states to VLAN ports.
   async startMonitor(memberIntfs) {
-    this.stopMonitor();
-    for (const physicalIntf of memberIntfs) {
-      const raw = await fsp.readFile(`/sys/class/net/${this._bridgeName}/brif/${physicalIntf}/state`, 'utf8').catch(() => null);
-      if (raw !== null)
-        await BridgePortStateSync.applyVlanPortStates(physicalIntf, parseInt(raw.trim(), 10), this._log).catch(() => {});
-    }
+    await this.stopMonitor();
     const proc = spawn('bridge', ['monitor', 'link'], { stdio: ['ignore', 'pipe', 'ignore'] });
     this._monitorProcess = proc;
     let buf = '';
@@ -199,6 +203,19 @@ class BridgePortStateSync {
     proc.on('error', (err) => {
       this._log.warn(`bridge monitor link error`, err.message);
     });
+    for (const physicalIntf of memberIntfs) {
+      const raw = await fsp.readFile(`/sys/class/net/${this._bridgeName}/brif/${physicalIntf}/state`, 'utf8').catch(() => null);
+      if (raw !== null)
+        this._scheduleApply(physicalIntf, parseInt(raw.trim(), 10));
+    }
+    // bounded wait: the monitor is already live at this point, so a physical interface that keeps
+    // flapping would keep its _runLoop (and this wait) alive indefinitely otherwise
+    const settled = await Promise.race([
+      Promise.all(this._runLoopPromises.values()).then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), BridgePortStateSync.INITIAL_SYNC_TIMEOUT_MS))
+    ]);
+    if (!settled)
+      this._log.warn(`startMonitor: initial VLAN port state sync did not settle within ${BridgePortStateSync.INITIAL_SYNC_TIMEOUT_MS}ms, possibly due to flapping; continuing`);
   }
 
   // Set each VLAN sub-interface's bridge port state to match its physical interface's current native bridge state.
@@ -225,7 +242,28 @@ class BridgePortStateSync {
     const stateMap = { forwarding: 3, blocking: 4, disabled: 0, listening: 1, learning: 2 };
     const stateNum = stateMap[stateMatch[1]];
     if (stateNum === undefined) return;
-    BridgePortStateSync.applyVlanPortStates(physicalIntf, stateNum, this._log).catch(() => {});
+    this._scheduleApply(physicalIntf, stateNum);
+  }
+
+  _scheduleApply(physicalIntf, stateNum) {
+    this._pendingStates.set(physicalIntf, stateNum);
+    if (this._runningIntfs.has(physicalIntf)) return;
+    const p = this._runLoop(physicalIntf).finally(() => this._runLoopPromises.delete(physicalIntf));
+    this._runLoopPromises.set(physicalIntf, p);
+  }
+
+  async _runLoop(physicalIntf) {
+    this._runningIntfs.add(physicalIntf);
+    try {
+      while (this._pendingStates.has(physicalIntf)) {
+        const stateNum = this._pendingStates.get(physicalIntf);
+        this._pendingStates.delete(physicalIntf);
+        await BridgePortStateSync.applyVlanPortStates(physicalIntf, stateNum, this._log)
+          .catch(err => this._log && this._log.warn(`applyVlanPortStates failed for ${physicalIntf}`, err.message));
+      }
+    } finally {
+      this._runningIntfs.delete(physicalIntf);
+    }
   }
 
   static async getPhysicalIntf(vlanIntf) {
