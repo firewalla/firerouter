@@ -31,7 +31,7 @@ const RT_MAIN = "main";
 
 const RT_TYPE_VC = "RT_TYPE_VC";
 const RT_TYPE_REG = "RT_TYPE_REG";
-const MASK_REG = "0x3ff";
+const MASK_REG = "0x1ff";
 const MASK_VC = "0xfc00";
 const MASK_ALL = "0xffff";
 
@@ -48,7 +48,7 @@ async function createCustomizedRoutingTable(tableName, type = RT_TYPE_REG) {
     lock.acquire(LOCK_RT_TABLES, async function(done) {
       // separate bits in fwmark for vpn client and regular WAN
       const bitOffset = type === RT_TYPE_VC ? 10 : 0;
-      const maxTableId = type === RT_TYPE_VC ? 64 : 1024;
+      const maxTableId = type === RT_TYPE_VC ? 64 : 512;
       let cmd = "cat /etc/iproute2/rt_tables | grep -v '#' | awk '{print $1,\"\\011\",$2}'";
       let result = await exec(cmd);
       if (result.stderr !== "") {
