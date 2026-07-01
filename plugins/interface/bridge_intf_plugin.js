@@ -87,7 +87,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         });
         if (!this._stateSync)
           this._stateSync = new BridgePortStateSync(this.name, this.log);
-        this._stateSync.startMonitor(this.networkConfig.intf);
+        await this._stateSync.startMonitor(this.networkConfig.intf);
       } else {
         // brctl stp off invokes /sbin/bridge-stp stop → mstpctl delbridge, stp_state=0
         await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
@@ -173,12 +173,12 @@ class BridgePortStateSync {
   }
 
   // Sync current native bridge port states to VLAN ports, then watch for future changes via `bridge monitor link`.
-  startMonitor(memberIntfs) {
+  async startMonitor(memberIntfs) {
     this.stopMonitor();
     for (const physicalIntf of memberIntfs) {
-      fsp.readFile(`/sys/class/net/${this._bridgeName}/brif/${physicalIntf}/state`, 'utf8')
-        .then(raw => BridgePortStateSync.applyVlanPortStates(physicalIntf, parseInt(raw.trim(), 10), this._log))
-        .catch(() => {});
+      const raw = await fsp.readFile(`/sys/class/net/${this._bridgeName}/brif/${physicalIntf}/state`, 'utf8').catch(() => null);
+      if (raw !== null)
+        await BridgePortStateSync.applyVlanPortStates(physicalIntf, parseInt(raw.trim(), 10), this._log).catch(() => {});
     }
     const proc = spawn('bridge', ['monitor', 'link'], { stdio: ['ignore', 'pipe', 'ignore'] });
     this._monitorProcess = proc;
