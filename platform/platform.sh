@@ -76,6 +76,14 @@ function get_smcrouted_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
 }
 
+function get_mstpd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mstpd"
+}
+
+function get_mstpctl_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mstpctl"
+}
+
 function record_eth_interfaces {
   return
 }
