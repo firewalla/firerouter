@@ -21,6 +21,7 @@ const fsp = fs.promises
 const r = require('../util/firerouter')
 const exec = require('child-process-promise').exec;
 const pl = require('../plugins/plugin_loader.js');
+const util = require('../util/util.js');
 
 const APSafeFreqs = [
   2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
@@ -244,7 +245,7 @@ class Platform {
   }
 
   async setHardwareAddress(iface, hwAddr) {
-    if(!hwAddr) {
+    if(!util.isValidMacAddress(hwAddr)) {
       return; // by default don't reset back when hwAddr is undefined
     }
 
@@ -261,7 +262,7 @@ class Platform {
     });
 
     // 00:00:00:00:00:00 is invalid as a device mac addr
-    if (permAddr && permAddr !== "00:00:00:00:00:00") {
+    if (util.isValidMacAddress(permAddr) && permAddr !== "00:00:00:00:00:00") {
       await exec(`sudo ip link set ${iface} address ${permAddr}`).catch((err) => {
         log.error(`Failed to revert hardware address of ${iface} to ${permAddr}`, err.message);
       });
