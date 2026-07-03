@@ -158,9 +158,6 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 module.exports = BridgeInterfacePlugin;
 
 class BridgePortStateSync {
-  // upper bound on how long startMonitor() waits for the initial per-interface sync to land
-  static INITIAL_SYNC_TIMEOUT_MS = 3000;
-
   constructor(bridgeName, log) {
     this._bridgeName = bridgeName;
     this._log = log;
@@ -299,3 +296,6 @@ class BridgePortStateSync {
     }
   }
 }
+
+// upper bound on how long startMonitor() waits for the initial per-interface sync to land
+BridgePortStateSync.INITIAL_SYNC_TIMEOUT_MS = 3000;
