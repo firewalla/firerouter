@@ -27,6 +27,7 @@ const RT_GLOBAL_DEFAULT = "global_default";
 const RT_STATIC = "static";
 const RT_WAN_ROUTABLE = "wan_routable";
 const RT_LAN_ROUTABLE = "lan_routable";
+const RT_MAIN = "main";
 
 const RT_TYPE_VC = "RT_TYPE_VC";
 const RT_TYPE_REG = "RT_TYPE_REG";
@@ -381,6 +382,7 @@ module.exports = {
   RT_GLOBAL_DEFAULT: RT_GLOBAL_DEFAULT,
   RT_WAN_ROUTABLE: RT_WAN_ROUTABLE,
   RT_LAN_ROUTABLE: RT_LAN_ROUTABLE,
+  RT_MAIN: RT_MAIN,
   RT_STATIC: RT_STATIC,
   RT_TYPE_REG,
   RT_TYPE_VC,
