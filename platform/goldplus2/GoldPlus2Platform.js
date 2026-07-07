@@ -91,6 +91,10 @@ class GoldPlus2Platform extends Platform {
     }
     return true;
   }
+  
+  getMiniupnpdNftPath() {
+    return `${this.getBinaryPath()}/miniupnpd.nft`;
+  }
 
   wifiSD() {
     // only 1 wifi sd supported now

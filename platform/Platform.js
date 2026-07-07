@@ -55,6 +55,10 @@ class Platform {
     return result;
   }
 
+  getMiniupnpdNftPath() {
+    return null;
+  }
+
   getDefaultNetworkJsonFile() {
     return `${__dirname}/../network/default_setup.json`;
   }
@@ -298,7 +302,12 @@ class Platform {
   async installMiniupnpd() {
     // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
     if (!await this.isMiniupnpdUsingNft()) return;
-    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+    const srcPath = this.getMiniupnpdNftPath();
+    if (!srcPath) {
+      log.debug("miniupnpd nft path is not set on this platform, skipping miniupnpd update");
+      return;
+    }
+    log.info(`Checking if miniupnpd binary needs update, srcPath: ${srcPath}`);
     // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
     const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
       .then(() => true).catch(() => false);
