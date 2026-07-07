@@ -1261,8 +1261,10 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
-      if (!ifRegistered)
+      if (!ifRegistered){
+        this.log.warn(`Interface ${this.name} is not present yet, defer applying config until it is hotplugged`);
         return;
+      }
     }
 
     const ifCreated = await this.createInterface();
