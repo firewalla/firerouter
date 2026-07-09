@@ -192,8 +192,153 @@ class OrangePlatform extends Platform {
     return "wlan_ap_scan";
   }
 
+  async _isWorldVersion() {
+    try {
+      const { stdout } = await exec(`sudo xxd -u -p -l 1 -s 0x20 /dev/mtdblock2`);
+      return stdout.trim() === '77';
+    } catch (err) {
+      log.error(`Failed to check world version:`, err);
+      return false;
+    }
+  }
+
+  // Verifies src sha256, copies src→dst if different, verifies dst after copy, and on
+  // failure restores from file.restore (or removes dst if file.restore is '').
+  // Returns true if at least one file was changed and all integrity checks passed.
+  async _copyFilesWithIntegrity(fileList) {
+    for (const file of fileList) {
+      try {
+        const expectedHash = (await fsp.readFile(`${file.src}.sha256`, 'utf8')).trim();
+        const { stdout } = await exec(`sha256sum ${file.src}`);
+        const actualHash = stdout.split(/\s+/)[0];
+        if (actualHash !== expectedHash) {
+          log.error(`Source file ${file.src} failed integrity check`);
+          return false;
+        }
+      } catch (err) {
+        log.error(`Failed to verify source file ${file.src}:`, err);
+        return false;
+      }
+    }
+    const copiedFiles = [];
+    for (const file of fileList) {
+      try {
+        await exec(`cmp -s ${file.src} ${file.dst}`);
+      } catch (err) {
+        try {
+          await exec(`sudo cp -f ${file.src} ${file.dst}`);
+          log.info(`Copied ${file.src} to ${file.dst}`);
+          copiedFiles.push(file);
+        } catch (copyErr) {
+          log.error(`Failed to copy ${file.src}:`, copyErr);
+          return false;
+        }
+      }
+    }
+    if (copiedFiles.length === 0) return false;
+    let integrityOk = true;
+    for (const file of copiedFiles) {
+      try {
+        const { stdout } = await exec(`sha256sum ${file.src} ${file.dst}`);
+        const hashes = stdout.trim().split('\n').map(l => l.split(/\s+/)[0]);
+        if (hashes[0] !== hashes[1]) {
+          log.error(`Integrity check failed for ${file.dst}`);
+          integrityOk = false;
+          break;
+        }
+      } catch (err) {
+        log.error(`Failed to verify integrity of ${file.dst}:`, err);
+        integrityOk = false;
+        break;
+      }
+    }
+    if (!integrityOk) {
+      for (const file of copiedFiles) {
+        if (file.restore) {
+          await exec(`sudo cp -f ${file.restore} ${file.dst}`).catch(err =>
+            log.error(`Failed to restore ${file.dst}:`, err)
+          );
+        } else {
+          await exec(`sudo rm -f ${file.dst}`).catch(err =>
+            log.error(`Failed to remove ${file.dst}:`, err)
+          );
+        }
+      }
+      return false;
+    }
+    return copiedFiles;
+  }
+
+  async _updateWifiKernelModule() {
+    const firerouter = r.getFireRouterHome();
+    const kernelVersion = '6.6.104';
+    const fileList = [
+      {
+        src: `${firerouter}/platform/orange/files/kernel_modules/${kernelVersion}/mt76.ko`,
+        dst: `/lib/modules/${kernelVersion}/kernel/drivers/net/wireless/mediatek/mt76/mt76.ko`,
+        restore: `/media/root-ro/lib/modules/${kernelVersion}/kernel/drivers/net/wireless/mediatek/mt76/mt76.ko`
+      },
+      {
+        src: `${firerouter}/platform/orange/files/kernel_modules/${kernelVersion}/mt7996e_world.ko`,
+        dst: `/lib/modules/${kernelVersion}/kernel/drivers/net/wireless/mediatek/mt76/mt7996/mt7996e.ko`,
+        restore: `/media/root-ro/lib/modules/${kernelVersion}/kernel/drivers/net/wireless/mediatek/mt76/mt7996/mt7996e.ko`
+      },
+      {
+        src: `${firerouter}/platform/orange/files/mt7987a-firewalla-powerlimit.dtbo`,
+        dst: `/lib/firmware/mt7987a-firewalla-powerlimit.dtbo`,
+        restore: ''
+      }
+    ];
+    try {
+      const copied = await this._copyFilesWithIntegrity(fileList);
+      if (!copied) return [];
+      await exec(`sudo depmod -a`);
+      return copied.map(f => f.dst.split('/').pop());
+    } catch (err) {
+      log.error(`Failed to update WiFi kernel module for world version:`, err);
+      return [];
+    }
+  }
+
+  async _reloadWifiKernelModule() {
+    await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
+    try {
+      const { stdout } = await exec(`ps -axo pid,comm | grep 'napi/phy'`);
+      const procs = stdout.trim().split('\n')
+        .map(line => {
+          const m = line.trim().match(/^(\d+)\s+napi\/phy.*-(\d+)$/);
+          return m ? { pid: m[1], suffix: parseInt(m[2]) } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.suffix - a.suffix);
+      if (procs.length >= 2) {
+        log.info(`Assigning CPU 3 to napi/phy process ${procs[0].pid}`);
+        await exec(`sudo taskset -acp 3 ${procs[0].pid}`);
+        log.info(`Assigning CPU 0 to napi/phy process ${procs[1].pid}`);
+        await exec(`sudo taskset -acp 0 ${procs[1].pid}`);
+      }
+    } catch (err) {
+      log.error(`Failed to set CPU affinity for napi/phy processes:`, err);
+    }
+  }
+
+  async _reloadMt76KernelModule() {
+    await exec(`sudo rmmod mt7996e; sudo rmmod mt76_connac_lib; sudo rmmod mt76; sudo modprobe mt76`);
+  }
+
   async overrideWLANKernelModule() {
-    await this._reloadWLANFirmware();
+    let updatedKos = [];
+    if (await this._isWorldVersion()) {
+      updatedKos = await this._updateWifiKernelModule();
+    }
+    // mt76 is the core module; reload it before _reloadWLANFirmware (which reloads mt7996e).
+    if (updatedKos.includes('mt76.ko')) {
+      await this._reloadMt76KernelModule();
+    }
+    const koReloaded = await this._reloadWLANFirmware();
+    if ((updatedKos.includes('mt76.ko') || updatedKos.includes('mt7996e.ko')) && !koReloaded) {
+      await this._reloadWifiKernelModule();
+    }
   }
 
   async _isPatchSafe(patchUid) {
@@ -209,114 +354,44 @@ class OrangePlatform extends Platform {
     const srcDir = `${r.getFireRouterHome()}/platform/orange/files/firmware`;
     const dstDir = `/lib/firmware/mediatek/mt7996`;
     const restoreDir = `/media/root-ro/lib/firmware/mediatek/mt7996`;
-    let changed = false;
     try {
-      const files = await fsp.readdir(srcDir);
-      const binFiles = files.filter(f => f.endsWith('.bin')).sort();
+      const binFiles = (await fsp.readdir(srcDir)).filter(f => f.endsWith('.bin')).sort();
 
-      // source integrity check and collect expected hashes for patchUid
+      // read sha256 files to compute patchUid before copying
       const expectedHashes = {};
       for (const file of binFiles) {
-        const srcPath = `${srcDir}/${file}`;
-        const sha256Path = `${srcDir}/${file}.sha256`;
-        const expectedHash = (await fsp.readFile(sha256Path, 'utf8')).trim();
-        const { stdout } = await exec(`sha256sum ${srcPath}`);
-        const actualHash = stdout.split(/\s+/)[0];
-        if (actualHash !== expectedHash) {
-          log.error(`Source firmware file ${file} failed integrity check, skipping firmware override`);
-          return;
-        }
-        expectedHashes[file] = expectedHash;
+        expectedHashes[file] = (await fsp.readFile(`${srcDir}/${file}.sha256`, 'utf8')).trim();
       }
-
       const patchUid = crypto.createHash('sha256')
         .update(binFiles.map(f => expectedHashes[f]).join(''))
         .digest('hex').slice(0, 16);
 
       if (!await this._isPatchSafe(patchUid)) {
         log.error(`Firmware patch ${patchUid} was previously attempted but did not survive, skipping`);
-        return;
+        return false;
       }
 
       await fsp.writeFile(`${FIRMWARE_PATCH_COPY}.${patchUid}`, '');
 
-      const copiedFiles = [];
-      for (const file of binFiles) {
-        const srcPath = `${srcDir}/${file}`;
-        const dstPath = `${dstDir}/${file}`;
-        try {
-          await exec(`cmp -s ${srcPath} ${dstPath}`);
-        } catch (err) {
-          try {
-            await exec(`sudo cp -f ${srcPath} ${dstPath}`);
-            log.info(`Firmware file ${file} copied to ${dstPath}`);
-            copiedFiles.push(file);
-          } catch (copyErr) {
-            log.error(`Failed to copy firmware file ${file}:`, copyErr);
-            return;
-          }
-        }
-      }
-      if (copiedFiles.length > 0) {
-        let integrityOk = true;
-        for (const file of copiedFiles) {
-          const srcPath = `${srcDir}/${file}`;
-          const dstPath = `${dstDir}/${file}`;
-          try {
-            const { stdout } = await exec(`sha256sum ${srcPath} ${dstPath}`);
-            const hashes = stdout.trim().split('\n').map(l => l.split(/\s+/)[0]);
-            if (hashes[0] !== hashes[1]) {
-              log.error(`Integrity check failed for firmware file ${file}`);
-              integrityOk = false;
-              break;
-            }
-          } catch (err) {
-            log.error(`Failed to verify integrity of firmware file ${file}:`, err);
-            integrityOk = false;
-            break;
-          }
-        }
-        if (!integrityOk) {
-          log.error(`Restoring original firmware files from ${restoreDir}`);
-          for (const file of copiedFiles) {
-            await exec(`sudo cp -f ${restoreDir}/${file} ${dstDir}/${file}`).catch(err =>
-              log.error(`Failed to restore firmware file ${file}:`, err)
-            );
-          }
-        } else {
-          changed = true;
-        }
-      }
-      if (changed) {
-        await fsp.writeFile(`${FIRMWARE_PATCH_RELOAD}.${patchUid}`, '');
-        await exec(`sync`);
-        await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
-        try {
-          const { stdout } = await exec(`ps -axo pid,comm | grep 'napi/phy'`);
-          const procs = stdout.trim().split('\n')
-            .map(line => {
-              const m = line.trim().match(/^(\d+)\s+napi\/phy.*-(\d+)$/);
-              return m ? { pid: m[1], suffix: parseInt(m[2]) } : null;
-            })
-            .filter(Boolean)
-            .sort((a, b) => b.suffix - a.suffix);
-          if (procs.length >= 2) {
-            log.info(`Assigning CPU 3 to napi/phy process ${procs[0].pid}`);
-            await exec(`sudo taskset -acp 3 ${procs[0].pid}`);
-            log.info(`Assigning CPU 0 to napi/phy process ${procs[1].pid}`);
-            await exec(`sudo taskset -acp 0 ${procs[1].pid}`);
-          }
-        } catch (err) {
-          log.error(`Failed to set CPU affinity for napi/phy processes:`, err);
-        }
-        setTimeout(() => {
-          fsp.writeFile(`${FIRMWARE_PATCH_SAFE}.${patchUid}`, '').catch(err =>
-            log.error(`Failed to create firmware patch safe flag:`, err)
-          );
-        }, 10000);
-      }
+      const fileList = binFiles.map(file => ({
+        src: `${srcDir}/${file}`,
+        dst: `${dstDir}/${file}`,
+        restore: `${restoreDir}/${file}`
+      }));
+      if (!await this._copyFilesWithIntegrity(fileList)) return false;
+
+      await fsp.writeFile(`${FIRMWARE_PATCH_RELOAD}.${patchUid}`, '');
+      await exec(`sync`);
+      await this._reloadWifiKernelModule();
+      setTimeout(() => {
+        fsp.writeFile(`${FIRMWARE_PATCH_SAFE}.${patchUid}`, '').catch(err =>
+          log.error(`Failed to create firmware patch safe flag:`, err)
+        );
+      }, 10000);
+      return true;
     } catch (err) {
       log.error(`Failed to override WLAN firmware:`, err);
+      return false;
     }
   }
 
