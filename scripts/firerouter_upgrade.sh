@@ -154,7 +154,13 @@ GIT_COMMAND="(sudo -u pi $MGIT fetch origin $remote_branch && sudo -u pi $MGIT r
 eval $GIT_COMMAND ||
   (sleep 3; eval $GIT_COMMAND) ||
   (sleep 3; eval $GIT_COMMAND) ||
-  (sleep 3; eval $GIT_COMMAND) || (date >> ~/.firerouter.upgrade.failed; exit 1)
+  (sleep 3; eval $GIT_COMMAND) || {
+    date >> ~/.firerouter.upgrade.failed
+    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Failed git fetch/reset "+`date`
+    rm -f /dev/shm/firerouter.upgraded
+    touch /dev/shm/firerouter.upgrade.failed
+    exit 1
+  }
 
 # set node_modules link to the proper directory
 NODE_MODULES_PATH=$(get_node_modules_dir)
