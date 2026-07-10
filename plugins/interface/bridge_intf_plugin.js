@@ -231,10 +231,15 @@ class BridgePortStateSync {
   _handleLine(line) {
     const masterMatch = line.match(/master\s+(\S+)/);
     if (!masterMatch || masterMatch[1] !== this._bridgeName) return;
-    const intfMatch = line.match(/^\s*\d+:\s+(\S+?)(?:@\S+)?:/);
+    // some iproute2 builds (e.g. iproute2-ss180129 on gold) insert an extra "state <ADMIN-STATE>"
+    // token between the ifname and the trailing colon, e.g. "4: eth2 state UP : <flags> ...".
+    const intfMatch = line.match(/^\s*\d+:\s+(\S+?)(?:\s+state\s+\S+)?(?:@\S+)?\s*:/);
     if (!intfMatch) return;
     const physicalIntf = intfMatch[1];
-    const stateMatch = line.match(/\bstate\s+(\w+)/);
+    // look for the STP port state only after "master <bridge>" — the ifname may carry its own
+    // unrelated "state <ADMIN-STATE>" token earlier in the line (see intfMatch above).
+    const afterMaster = line.slice(masterMatch.index + masterMatch[0].length);
+    const stateMatch = afterMaster.match(/\bstate\s+(\w+)/);
     if (!stateMatch) return;
     const stateMap = { forwarding: 3, blocking: 4, disabled: 0, listening: 1, learning: 2 };
     const stateNum = stateMap[stateMatch[1]];
