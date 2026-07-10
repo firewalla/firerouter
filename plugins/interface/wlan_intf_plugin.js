@@ -315,7 +315,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   async createInterface() {
     try {
-      await platform.createWLANInterface(this);
+      const created = await platform.createWLANInterface(this);
+      if (created === false) {
+        return false;
+      }
     } catch (err) {
       this.log.error(`Failed to create wlan interface ${this.name}`, err.message);
       return false;
