@@ -47,6 +47,22 @@ switch_branch() {
     )
 }
 
+cleanup_mstpd_stp_state() {
+  sudo systemctl stop firerouter_mstpd 2>/dev/null || true
+  sudo rm -f /sbin/bridge-stp
+  sudo rm -f /etc/systemd/system/firerouter_mstpd.service
+  sudo systemctl daemon-reload || true
+
+  for br in $(ls /sys/class/net/ 2>/dev/null); do
+    [[ -f /sys/class/net/$br/bridge/stp_state ]] || continue
+    cur_state=$(cat /sys/class/net/$br/bridge/stp_state 2>/dev/null) || continue
+    if [[ "$cur_state" == "2" ]]; then
+      sudo brctl stp "$br" off || true
+      sudo brctl stp "$br" on || logger "WARN: cleanup_mstpd_stp_state: failed to restore STP on $br"
+    fi
+  done
+}
+
 set_redis_flag() {
     redis_flag=
     case $1 in
@@ -79,6 +95,11 @@ test $# -gt 0 || {
 
 branch=$1
 cur_branch=$(git rev-parse --abbrev-ref HEAD)
+
+if [[ ! -f $FIREROUTER_HOME/scripts/bridge-stp.sh ]]; then
+  cleanup_mstpd_stp_state
+fi
+
 switch_branch $cur_branch $branch || exit 1
 rm -f "$FIREROUTER_HIDDEN/config/.no_auto_upgrade"
 # remove prepared flag file to trigger prepare_env during next init_network_config
@@ -99,6 +120,10 @@ else
 fi
 sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
 sudo systemctl daemon-reload
+
+if [[ ! -f $FIREROUTER_HOME/scripts/bridge-stp.sh ]]; then
+  cleanup_mstpd_stp_state
+fi
 
 sync
 logger "FireRouter: SWITCH branch from $cur_branch to $branch"
