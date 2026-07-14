@@ -16,9 +16,16 @@
 'use strict';
 
 const log = require('../util/logger.js')(__filename);
-const fsp = require('fs').promises
+const fs = require('fs');
+const fsp = fs.promises
 const r = require('../util/firerouter')
 const exec = require('child-process-promise').exec;
+const pl = require('../plugins/plugin_loader.js');
+
+const APSafeFreqs = [
+  2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
+  5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
+]
 
 class Platform {
   getName() {
@@ -53,6 +60,10 @@ class Platform {
     return null;
   }
 
+  getAPScanInterface() {
+    return this.getWifiClientInterface();
+  }
+
   async getWpaCliBinPath() {
     return null;
   }
@@ -63,6 +74,10 @@ class Platform {
 
   getBinaryPath() {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/bin`;
+  }
+
+  getFilesPath() {
+    return `${r.getFireRouterHome()}/platform/${this.getName()}/files`;
   }
 
   async ledNormalVisibleStart() {
@@ -109,6 +124,38 @@ class Platform {
     return changed;
   }
 
+  async reloadKernelModule(koName,srcDir,forceReload=false) {
+    const srcPath = `${srcDir}/${koName}.conf`;
+    const dstPath = `/etc/modprobe.d/${koName}.conf`;
+    let koReloaded = false;
+    let confChanged = false;
+    try {
+      await exec(`cmp -s ${srcPath} ${dstPath}`);
+      log.debug(`kernel module ${koName} reload - bypassed due to configuration already up-to-date in ${dstPath}`)
+    } catch (err) {
+      confChanged = true;
+      // copy over .conf
+      await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+      log.info(`kernel module ${koName} reload - configuration updated in ${dstPath}`);
+      // update kernel modules mapping
+      await exec(`sudo depmod -a`);
+      log.debug(`kernel module ${koName} reload - kernel modules mapping updated`);
+    }
+    if (confChanged || forceReload) try {
+      const koLoaded = await this.kernelModuleLoaded(koName);
+      log.debug(`kernel module ${koName} reload - kernel module previously loaded(${koLoaded})`);
+      if (koLoaded || forceReload ) {
+        // reload kernel module
+        await exec(`sudo modprobe -r ${koName}; sudo modprobe ${koName}`);
+        koReloaded = true;
+      }
+      log.info(`kernel module ${koName} reload - kernel module just reloaded(${koReloaded})`);
+    } catch(err) {
+      log.error(`Failed to reload kernel module ${koName}:`,err);
+    }
+    return koReloaded;
+  }
+
   async overrideEthernetKernelModule() {
   }
 
@@ -125,10 +172,65 @@ class Platform {
   async configEthernet() {
   }
 
+  async resetEthernet() {
+  }
+
   async overrideWLANKernelModule() {
   }
 
+  async reloadWLANKernelModule() {
+  }
+
   async installWLANTools() {
+  }
+
+  async installKernelModule(module_name) {
+    const installed = await this.isKernelModuleInstalled(module_name);
+    if (installed) return;
+    // below code seems not needed
+    const codename = await exec(`lsb_release -cs`).then((result) => result.stdout.trim())
+      .catch((err) => {
+        log.error("Failed to get codename of OS distribution", err.message);
+        return null;
+      });
+    if (!codename)
+      return;
+    // end of below code seems not needed
+
+    const koPath = await this.getKoPath(module_name);
+    const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);
+    if (koExists){
+      await exec(`sudo insmod ${koPath}`).catch((err) => {
+        log.error(`Failed to install ${module_name}.ko`, err.message);
+      });
+    }
+  }
+
+  async isKernelModuleInstalled(module_name) {
+    if (!this.installedModules) {
+      this.installedModules = {};
+    }
+    if (this.installedModules[module_name]) {
+      return this.installedModules[module_name];
+    }
+    const cmdResult = await exec(`lsmod | grep ${module_name} | awk '{print $1}'`);
+    const results = cmdResult.stdout.toString().trim().split('\n');
+    for (const result of results) {
+      if (result == module_name) {
+        this.installedModules[module_name] = true;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async getKernelModulesPath() {
+    const kernelRelease = await exec("uname -r").then(result => result.stdout.trim());
+    return `${r.getFireRouterHome()}/platform/${this.getName()}/files/kernel_modules/${kernelRelease}`;
+  }
+
+  async getKoPath(module_name) {
+    return `${await this.getKernelModulesPath()}/${module_name}.ko`;
   }
 
   getModelName() {
@@ -167,15 +269,17 @@ class Platform {
   }
 
   async installMiniupnpd() {
-    // replace miniupnpd binary if it is using nftables backend,
     // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
-    const nftUsed = await exec(`ldd $(which miniupnpd) | grep libnftnl`).then(() => true).catch((err) => false);
-    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
-    if (nftUsed) {
-      log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
-      await exec(`sudo cp -f --preserve=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
-        log.error(`Failed to update miniupnpd with nft support`, err.message);
-      });
+    if (!await this.isUbuntu22()) return
+    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+    // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
+    const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
+      .then(() => true).catch(() => false);
+    if (needsUpdate) {
+      log.info(`miniupnpd binary differs from in-house version, replacing ...`);
+      await exec(`sudo cp -f --preserve=mode ${srcPath} $(which miniupnpd)`).catch((err) => {
+        log.error(`Failed to update miniupnpd`, err.message);
+      })
     }
   }
 
@@ -183,6 +287,128 @@ class Platform {
 
   }
 
+  async setMTU(iface, mtu) {
+    await exec(`sudo ip link set ${iface} mtu ${mtu}`).catch((err) => {
+      log.error(`Failed to set MTU of ${iface} to ${mtu}`, err.message);
+    });
+  }
+
+  async createWLANInterface(wlanIntfPlugin) {
+    const ifaceExists = await exec(`ip link show dev ${wlanIntfPlugin.name}`).then(() => true).catch((err) => false);
+    if (!ifaceExists) {
+      if (wlanIntfPlugin.networkConfig.baseIntf) {
+        const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+        const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
+        if (baseIntfPlugin) {
+          wlanIntfPlugin.subscribeChangeFrom(baseIntfPlugin);
+          if (await baseIntfPlugin.isInterfacePresent() === false) {
+            wlanIntfPlugin.log.warn(`Base interface ${baseIntf} is not present yet`);
+            return false;
+          }
+        } else {
+          wlanIntfPlugin.fatal(`Lower interface plugin not found ${baseIntf}`);
+        }
+        const type = wlanIntfPlugin.networkConfig.type || "managed";
+        await exec(`sudo iw dev ${baseIntf} interface add ${wlanIntfPlugin.name} type ${type}`);
+      }
+    } else {
+      wlanIntfPlugin.log.warn(`Interface ${wlanIntfPlugin.name} already exists`);
+    }
+  }
+
+  async removeWLANInterface(wlanIntfPlugin) {
+    if (wlanIntfPlugin.networkConfig && wlanIntfPlugin.networkConfig.baseIntf) {
+      const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+      const basePhy = await exec(`readlink -f /sys/class/net/${baseIntf}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const myPhy = await exec(`readlink -f /sys/class/net/${wlanIntfPlugin.name}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      if (basePhy && myPhy && basePhy === myPhy)
+        await exec(`sudo iw dev ${wlanIntfPlugin.name} del`).catch((err) => {});
+      else
+        wlanIntfPlugin.log.warn(`${wlanIntfPlugin.name} and ${baseIntf} are not pointing to the same wifi phy, interface ${wlanIntfPlugin.name} will not be deleted`);
+    }
+  }
+
+  isWLANManagedByAPC() {
+    return false;
+  }
+
+  isHotplugSupported(intf) {
+    return true;
+  }
+
+  isPDOSupported() {
+    return false;
+  }
+
+  async loadPDOInfo() {
+  }
+
+  getEffectivePowerMode(pdoInfo, configuredPowerMode) {
+  }
+
+  getWpaSupplicantGlobalDefaultConfig() {
+    return {
+      bss_expiration_age: 630,
+      bss_expiration_scan_count: 5,
+
+      // sets freq_list globally limits the frequencies being scaned
+      freq_list: APSafeFreqs,
+      pmf: 1,
+    }
+  }
+
+  getWpaSupplicantNetworkDefaultConfig() {
+    return {
+      // sets freq_list again on each network limits the frequencies being used for connection
+      freq_list: APSafeFreqs,
+    }
+  }
+
+  async enableHostapd(iface, parameters) {
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    await exec(`sudo systemctl restart firerouter_hostapd@${iface}`).catch((err) => {});
+  }
+
+  async disableHostapd(iface) {
+    await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
+    await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`).catch((err) => {});
+  }
+
+  async processWpaSupplicantLog(line, config) {
+    // Base implementation - can be overridden by platform-specific implementations
+  }
+
+  needResetLinkBeforeSwitchWifi() {
+    return true;
+  }
+
+  async setDFSScanState(state) {
+
+  }
+
+  async skipDFSCAC() {
+
+  }
+
+  async prepareSwitchWifi() {
+
+  }
+
+  getWpaSupplicantDefaultConfig() {
+    return [];
+  }
+
+  getWpaCliScanResultCommand() {
+    return 'scan_result';
+  }
+
+  isWDSSupported() {
+    return false;
+  }
+
+  async setWifiDynamicDebug() {
+    return;
+  }
 }
 
 module.exports = Platform;

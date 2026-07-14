@@ -56,8 +56,18 @@ class PlatformLoader {
 
     switch (uname) {
     case "x86_64": {
-      const GoldPlatform = require('./gold/GoldPlatform.js');
-      this.platform = new GoldPlatform();
+      const boardName = this.getBoardName();
+      switch (boardName) {
+        case "gold-pro": {
+          const GoldProPlatform = require('./goldpro/GoldProPlatform.js');
+          this.platform = new GoldProPlatform();
+          break;
+        }
+        default: {
+          const GoldPlatform = require('./gold/GoldPlatform.js');
+          this.platform = new GoldPlatform();
+        }
+      }
       break;
     }
     case "aarch64": {
@@ -76,6 +86,16 @@ class PlatformLoader {
         case "purple-se": {
           const PSEPlatform = require('./pse/PSEPlatform.js');
           this.platform = new PSEPlatform();
+          break;
+        }
+        case "gold-se": {
+          const GSEPlatform = require('./gse/GSEPlatform.js');
+          this.platform = new GSEPlatform();
+          break;
+        }
+        case "orange": {
+          const OrangePlatform = require('./orange/OrangePlatform.js');
+          this.platform = new OrangePlatform();
           break;
         }
         default: {

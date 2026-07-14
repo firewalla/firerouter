@@ -1,0 +1,195 @@
+#!/bin/bash
+
+# NOTE: log() is defined in firerouter_dhcpcd_common, which dhcpcd-run-hooks
+# sources before this script (alphabetical order: common < record_lease).
+# Do NOT rename firerouter_dhcpcd_common in a way that breaks that ordering.
+
+check_is_private_address() {
+  if [ -z "$interface" ]; then
+    log "check_is_private_addr: interface is empty"
+    return 1
+  fi
+  ipv4_address=$(ip -4 addr show dev "$interface" 2>/dev/null | grep -oP 'inet\s+\K[\d.]+' | head -n 1)
+
+  if [ -z "$ipv4_address" ]; then
+    log "check_is_private_addr: no IPv4 address on $interface"
+    return 1
+  fi
+
+  first_octet=$(echo "$ipv4_address" | cut -d'.' -f1)
+  second_octet=$(echo "$ipv4_address" | cut -d'.' -f2)
+
+  # A Class private: 10.0.0.0/8
+  if [ "$first_octet" -eq 10 ]; then
+    log "check_is_private_addr: $interface $ipv4_address is private (10.0.0.0/8)"
+    return 0
+  fi
+
+  # B Class private: 172.16.0.0/12
+  if [ "$first_octet" -eq 172 ] && [ "$second_octet" -ge 16 ] && [ "$second_octet" -le 31 ]; then
+    log "check_is_private_addr: $interface $ipv4_address is private (172.16.0.0/12)"
+    return 0
+  fi
+
+  # C Class private: 192.168.0.0/16
+  if [ "$first_octet" -eq 192 ] && [ "$second_octet" -eq 168 ]; then
+    log "check_is_private_addr: $interface $ipv4_address is private (192.168.0.0/16)"
+    return 0
+  fi
+
+  log "check_is_private_addr: $interface $ipv4_address is not private"
+  return 1
+}
+
+case $reason in
+  ROUTERADVERT)
+    log "ROUTERADVERT interface=$interface ra_dump:\n$(env | grep -E '^nd[0-9]+_' | sort)"
+
+    # If the IPv6 address of the upstream router changes, 
+    # we may recieve sevaral groups of nd_* variables, take the last complete ND option set.
+    nd_id=10
+    gw6=""
+    vltime=""
+
+    check_is_private_address
+    IS_PRIVATE_ADDR=$?
+
+    # fallback_gw6: best candidate when router RA fields is present but lifetime=0
+    fallback_gw6=""
+    fallback_nd_id=0
+    while [ $nd_id -gt 0 ]; do
+      nd_name="nd${nd_id}_from"
+      eval "nd_from_val=\$$nd_name"
+
+      if [ -n "$nd_from_val" ]; then
+        # interface to ISP should not recieve RA which only include "Route Information" from IOT gateway
+        if [ "$IS_PRIVATE_ADDR" -ne 0 ]; then
+          gw6="$nd_from_val"
+          break
+        fi
+        # otherwise check other value
+        eval "nd_mtu_val=\$nd${nd_id}_mtu"
+        eval "nd_rdnss1_servers_val=\$nd${nd_id}_rdnss1_servers"
+        eval "nd_addr1_val=\$nd${nd_id}_addr1"
+        eval "nd_source_val=\$nd${nd_id}_source_address"
+        eval "nd_lifetime_val=\$nd${nd_id}_lifetime"
+        if [ -n "$nd_mtu_val" ] || [ -n "$nd_rdnss1_servers_val" ] || [ -n "$nd_addr1_val" ] || [ -n "$nd_source_val" ]; then
+          if [ "${nd_lifetime_val:-0}" != "0" ]; then
+            # ideal: has router RA fields and non-zero lifetime
+            log "select gw6: nd$nd_id ($nd_from_val) selected (mtu=$nd_mtu_val rdnss=$nd_rdnss1_servers_val addr=$nd_addr1_val source=$nd_source_val lifetime=$nd_lifetime_val)"
+            gw6="$nd_from_val"
+            break
+          elif [ -z "$fallback_gw6" ]; then
+            # has router RA fields but lifetime=0, keep as fallback
+            log "select gw6: nd$nd_id ($nd_from_val) has router RA fields but lifetime=0, recorded as fallback"
+            fallback_gw6="$nd_from_val"
+            fallback_nd_id=$nd_id
+          fi
+        else
+          log "select gw6: nd$nd_id ($nd_from_val) has no router RA fields, skipping"
+        fi
+      fi
+      nd_id=$((nd_id - 1))
+    done
+
+    # No ideal nd found; fall back to one with router RA fields but lifetime=0
+    if [ -z "$gw6" ] && [ -n "$fallback_gw6" ]; then
+      log "select gw6: fallback to nd$fallback_nd_id ($fallback_gw6) with lifetime=0"
+      gw6="$fallback_gw6"
+      nd_id=$fallback_nd_id
+    fi
+
+    # If no suitable nd_from was found but only one set exists (nd1_from), use it and set nd_id=1
+    if [ -z "$gw6" ]; then
+      eval "nd1_from_val=\$nd1_from"
+      if [ -n "$nd1_from_val" ]; then
+        only_one=1
+        check_id=2
+        while [ $check_id -le 10 ]; do
+          check_name="nd${check_id}_from"
+          eval "check_val=\$$check_name"
+          if [ -n "$check_val" ]; then
+            only_one=0
+            break
+          fi
+          check_id=$((check_id + 1))
+        done
+        if [ "$only_one" -eq 1 ]; then
+          log "select gw6: fallback to the only nd1 ($nd1_from_val) despite no router RA fields"
+          gw6="$nd1_from_val"
+          nd_id=1
+        fi
+      fi
+    fi
+
+    # firerouter_dhcpcd_update_rt now using these
+    RECORD_LEASE_GW6="$gw6"
+    RECORD_LEASE_ND_ID="$nd_id"
+
+    if [ -n "$gw6" ]; then
+      vltime_name="nd${nd_id}_prefix_information1_vltime"
+      eval "vltime=\$$vltime_name"
+
+      new_addrs=""
+      addr_id=10
+      while [ $addr_id -gt 0 ]; do
+        var_name="nd${nd_id}_addr$addr_id"
+        eval "addr=\$$var_name"
+        if [ -n "$addr" ]; then
+          new_addrs="$addr"
+          break
+        fi
+        addr_id=$((addr_id - 1))
+      done
+
+      # Find first SLAAC-capable (/A flag) prefix from the selected ND group
+      slaac_prefix=""
+      pi_id=1
+      while true; do
+        eval "pi_prefix=\$nd${nd_id}_prefix_information${pi_id}_prefix"
+        [ -z "$pi_prefix" ] && break
+        eval "pi_flags=\$nd${nd_id}_prefix_information${pi_id}_flags"
+        if echo "$pi_flags" | grep -qi 'a'; then
+          slaac_prefix="$pi_prefix"
+          break
+        fi
+        pi_id=$((pi_id + 1))
+      done
+
+      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)\nprefix=$slaac_prefix\n" > /dev/shm/dhcpcd.ra.$interface
+    fi
+    ;;
+  BOUND6|REBOOT6|RENEW6|REBIND6)
+    pd_id=1
+    ia_pd_vltimes=""
+    while [ $pd_id -lt 10 ]; do
+      new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
+      eval "new_prefix=\$$new_prefix_name"
+      new_prefix_length_name="new_dhcp6_ia_pd1_prefix${pd_id}_length"
+      eval "new_prefix_length=\$$new_prefix_length_name"
+      new_prefix_val="$new_prefix/$new_prefix_length"
+      new_prefix_vltime_name="new_dhcp6_ia_pd1_prefix${pd_id}_vltime"
+      eval "new_prefix_vltime=\$$new_prefix_vltime_name"
+      if [ $new_prefix_val != "/" ]; then
+        ia_pd_vltimes="$ia_pd_vltimes$new_prefix_val@$new_prefix_vltime,"
+      fi
+      pd_id=$((pd_id + 1))
+    done
+    echo $ia_pd_vltimes > /dev/shm/dhcpcd.ia_pd_vltime.${interface}
+
+    addr_id=1
+    ia_na_vltimes=""
+    while [ $addr_id -lt 10 ]; do
+      new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
+      eval "new_addr=\$$new_var_name"
+      new_vltime_name="new_dhcp6_ia_na1_ia_addr${addr_id}_vltime"
+      eval "new_vltime=\$$new_vltime_name"
+      if [ -n "$new_addr" ]; then
+        ia_na_vltimes="$ia_na_vltimes$new_addr@$new_vltime,"
+      fi
+      addr_id=$((addr_id + 1))
+    done
+    echo $ia_na_vltimes > /dev/shm/dhcpcd.ia_na_vltime.${interface}
+    echo "ia_pd_vltimes=$ia_pd_vltimes\nia_na_vltimes=$ia_na_vltimes\nts=$(date +%s)" > /dev/shm/dhcpcd.lease6.${interface}
+  ;;
+esac

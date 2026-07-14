@@ -1,5 +1,15 @@
 #!/bin/bash
 
+prefix_and_mac_to_ipv6() {
+  prefix=$1
+  mac=$2
+  if [ "$(echo $prefix | grep -o ":" | wc -l)" -gt 4 ]; then
+    prefix=$(echo $prefix | sed 's/.$//')
+  fi
+  IFS=':'; set $mac; unset IFS
+  echo "$prefix$(printf %02x $((0x$1 ^ 2)))$2:${3}ff:fe$4:$5$6"
+}
+
 metric=${ifmetric:-'1024'}
 reject_route_metric=$((metric - 1))
 
@@ -12,21 +22,31 @@ if [ -z "$default_rt_tables" ]; then
 fi
 
 pd_changed=""
+self_mac=$(cat /sys/class/net/eth0/address)
 
 case $reason in
 
   BOUND6|REBOOT6)
-    pd_changed="1"
     pd_id=1
     pds=""
+    pd_self_addr=""
     while [ $pd_id -lt 10 ]; do
+      status_code_name="new_dhcp6_ia_pd1_prefix${pd_id}_status_code"
+      eval "status_code=\$$status_code_name"
+      if [ "$status_code" = "6" ]; then
+        pd_id=$((pd_id + 1))
+        continue
+      fi
       new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
       eval "new_prefix=\$$new_prefix_name"
       new_prefix_length_name="new_dhcp6_ia_pd1_prefix${pd_id}_length"
       eval "new_prefix_length=\$$new_prefix_length_name"
       new_prefix_val="$new_prefix/$new_prefix_length"
       if [ $new_prefix_val != "/" ]; then
+        pd_changed="1"
         pds="$pds$new_prefix_val\n"
+        prefix=$(echo $new_prefix_val | cut -d "/" -f 1)
+        pd_self_addr=$(prefix_and_mac_to_ipv6 $prefix $self_mac)
         for default_rt_table in $default_rt_tables; do
           sudo ip -6 r add unreachable $new_prefix_val dev lo metric $reject_route_metric table $default_rt_table
         done
@@ -34,10 +54,19 @@ case $reason in
       pd_id=$((pd_id + 1))
     done
     echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
+    prev_pd_self_addr=$(cat /dev/shm/pd_self_addr.$interface || echo "")
+    if [ -n "$prev_pd_self_addr" ] && [ "$prev_pd_self_addr" != "$pd_self_addr" ]; then
+      sudo ip -6 a del $prev_pd_self_addr dev $interface &> /dev/null
+    fi
+    if [ -n "$pd_self_addr" ] && [ -z "$nd1_addr1" ] && [ -z "$new_dhcp6_ia_na1_ia_addr1" ]; then
+      echo $pd_self_addr > /dev/shm/pd_self_addr.$interface
+      sudo ip -6 a add $pd_self_addr dev $interface &> /dev/null
+    fi
     ;;
   RENEW6|REBIND6)
     pd_id=1
     pds=""
+    pd_self_addr=""
     while [ $pd_id -lt 10 ]; do
       old_prefix_name="old_dhcp6_ia_pd1_prefix${pd_id}"
       eval "old_prefix=\$$old_prefix_name"
@@ -54,6 +83,8 @@ case $reason in
       fi
       if [ "$new_prefix_val" != "/" ]; then
         pds="$pds$new_prefix_val\n"
+        prefix=$(echo $new_prefix_val | cut -d "/" -f 1)
+        pd_self_addr=$(prefix_and_mac_to_ipv6 $prefix $self_mac)
         for default_rt_table in $default_rt_tables; do
           sudo ip -6 r add unreachable $new_prefix_val dev lo metric $reject_route_metric table $default_rt_table
         done
@@ -61,6 +92,14 @@ case $reason in
       pd_id=$((pd_id + 1))
     done
     echo $pds > /home/pi/.router/run/dhcpcd/$interface/delegated_prefix
+    prev_pd_self_addr=$(cat /dev/shm/pd_self_addr.$interface || echo "")
+    if [ -n "$prev_pd_self_addr" ] && [ "$prev_pd_self_addr" != "$pd_self_addr" ]; then
+      sudo ip -6 a del $prev_pd_self_addr dev $interface &> /dev/null
+    fi
+    if [ -n "$pd_self_addr" ] && [ -z "$nd1_addr1" ] && [ -z "$new_dhcp6_ia_na1_ia_addr1" ]; then
+      echo $pd_self_addr > /dev/shm/pd_self_addr.$interface
+      sudo ip -6 a add $pd_self_addr dev $interface &> /dev/null
+    fi
     ;;
 esac
 

@@ -3,6 +3,7 @@
 set -e
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
+: ${FIREROUTER_HIDDEN:=/home/pi/.router}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
 source ${FIREROUTER_HOME}/platform/platform.sh
 CMD=$(basename $0)
@@ -79,6 +80,7 @@ test $# -gt 0 || {
 branch=$1
 cur_branch=$(git rev-parse --abbrev-ref HEAD)
 switch_branch $cur_branch $branch || exit 1
+rm -f "$FIREROUTER_HIDDEN/config/.no_auto_upgrade"
 # remove prepared flag file to trigger prepare_env during next init_network_config
 rm -f /dev/shm/firerouter.prepared
 # set node_modules link to the proper directory

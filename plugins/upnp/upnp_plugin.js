@@ -27,6 +27,7 @@ const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
+const rclientDB0 = require('../../util/redis_manager').getPrimaryDBRedisClient();
 
 class UPnPPlugin extends Plugin {
   static async preparePlugin() {
@@ -34,7 +35,6 @@ class UPnPPlugin extends Plugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_upnpd@.service /etc/systemd/system/`);
     // redirect miniupnpd log to specific log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/10-miniupnpd.conf /etc/rsyslog.d/`);
-    await exec(`sudo systemctl daemon-reload`);
     pl.scheduleRestartRsyslog();
     // copy logrotate config for miniupnpd log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/miniupnpd /etc/logrotate.d/`);
@@ -84,6 +84,12 @@ class UPnPPlugin extends Plugin {
     const allowNetworks = internalNetworks.map(n => `allow 1024-65535 ${n} 1024-65535`);
     content = content.replace(/%ALLOW_NETWORK%/g, allowNetworks.join("\n"));
     await fs.writeFileAsync(this._getConfigFilePath(), content, {encoding: 'utf8'});
+
+    // delete lease file on turning off
+    if (!upnpEnabled) {
+      await exec(`sudo rm /var/run/upnp.${this.name}.leases`).catch((err) => {});
+      await rclientDB0.hdelAsync('sys:scan:nat', 'upnp');
+    }
   }
 
   async apply() {

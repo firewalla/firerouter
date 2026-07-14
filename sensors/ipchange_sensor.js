@@ -39,6 +39,9 @@ class IPChangeSensor extends Sensor {
         case "dhcpcd6.pd_change":
           eventType = event.EVENT_PD_CHANGE;
           break;
+        case "dhcpcd6.dns_change":
+          eventType = event.EVENT_DNS6_CHANGE;
+          break;
         case "pppoe.ipv6_up":
           eventType = event.EVENT_PPPOE_IPV6_UP;
           break;
@@ -68,6 +71,7 @@ class IPChangeSensor extends Sensor {
     sclient.subscribe("pppoe.ip_change");
     sclient.subscribe("dhcpcd6.ip_change");
     sclient.subscribe("dhcpcd6.pd_change");
+    sclient.subscribe("dhcpcd6.dns_change");
     sclient.subscribe("pppoe.ipv6_up");
   }
 }

@@ -26,6 +26,8 @@ const routing = require('../../util/routing.js');
 const ip = require('ip');
 const _ = require('lodash');
 Promise.promisifyAll(fs);
+const Address6 = require('ip-address').Address6;
+const Plugin = require('../plugin.js');
 
 class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
   // this is a semi-stub now, it is not used to bring up to shutdown interface
@@ -52,9 +54,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     
   }
 
-  async changeRoutingTables() {
-    // stub implementation
-    await super.changeRoutingTables();
+  async changeIpv4RoutingTables() {
     if (this.networkConfig.type === "server") {
       const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
       if (up) {
@@ -83,6 +83,46 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  async changeIpv6RoutingTables() {
+    if (this.networkConfig.type === "server") {
+      const up = await exec(`ip -6 link show dev ${this.name}`).then(() => true).catch(() => false);
+      if (up) {
+        const subnet = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.subnet6`, {encoding: "utf8"})
+          .then(content => content.trim())
+          .catch((err) => {
+            this.log.error(`Failed to read .subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            return null;
+          });
+        const peer = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.gateway6`, {encoding: "utf8"})
+          .then(content => content.trim())
+          .catch((err) => {
+            this.log.error(`Failed to read .gateway file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            return null;
+          });
+        if (subnet && peer) {
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_WAN_ROUTABLE, null, 6).catch((err) => {});
+          if (this.networkConfig.isolated !== true) {
+            // routable to/from other routable lans
+            await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
+          }
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_local`, null, 6).catch((err) => {});
+          await routing.addRouteToTable(`${subnet}`, peer, this.name, `${this.name}_default`, null, 6).catch((err) => {});
+        }
+      }
+    }
+  }
+
+  async changeRoutingTables() {
+    // stub implementation
+    await super.changeRoutingTables();
+    await this.changeIpv4RoutingTables();
+    await this.changeIpv6RoutingTables();
+  }
+
+  hasHardwareAddress() {
+    return false;
+  }
+
   onEvent(e) {
     // stub implementation
     if (!event.isLoggingSuppressed(e))
@@ -92,7 +132,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
       case event.EVENT_IF_UP: 
       case event.EVENT_IF_DOWN: {
         this._reapplyNeeded = true;
-        this.propagateConfigChanged(true);
+        this.propagateConfigChanged(Plugin.CHANGE_FULL);
         pl.scheduleReapply();
         break;
       }
@@ -102,10 +142,15 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async getIPv4Addresses() {
     const ip4s = []
+    // check if file /sys/class/net/${this.name} exists
+    const fileExists = await fs.accessAsync(`/sys/class/net/${this.name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return ip4s;
+    }
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
-        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
         return null;
       });
     if (localIp) {
@@ -116,6 +161,30 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
       ip4s.push(ip4);
     }
     return ip4s;
+  }
+
+  async getIPv6Addresses() {
+    const ip6s = []
+    // check if file /sys/class/net/${this.name} exists
+    const fileExists = await fs.accessAsync(`/sys/class/net/${this.name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) {
+      return ip6s;
+    }
+    const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local6`, { encoding: "utf8" })
+      .then(content => content.trim())
+      .catch((err) => {
+        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+        return null;
+      });
+    if (localIp) {
+      const addr = localIp.split('/')[0];
+      if (new Address6(addr).isValid()) {
+        const mask = localIp.split('/')[1] || "64";
+        const ip6 = `${addr}/${mask}`;
+        ip6s.push(ip6);
+      }
+    }
+    return ip6s;
   }
 
   async state() {
@@ -129,12 +198,23 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
           state.ip4s = ip4s;
           state.ip4 = ip4s[0];
         }
+        const ip6s = await this.getIPv6Addresses();
+        if (!_.isEmpty(ip6s)) {
+          state.ip6 = ip6s;
+        }
       }
     }
     if (!state.mac)
     // a place holder for mac address
       state.mac = "02:01:11:11:11:11"
     return state;
+  }
+
+  async applyIpSettings() {
+    return;
+  }
+  async applyIpv6Settings() {
+    return;
   }
 
 }
