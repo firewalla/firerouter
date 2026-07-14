@@ -33,6 +33,7 @@ class NATPassthroughPlugin extends Plugin {
         await exec("sudo rmmod nf_conntrack_pptp").catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
+        await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p tcp --dport 1723 -j CT --helper pptp")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
         break;
@@ -57,6 +58,7 @@ class NATPassthroughPlugin extends Plugin {
       case "sip": {
         await exec("sudo rmmod nf_nat_sip").catch((err) => {});
         await exec("sudo rmmod nf_conntrack_sip").catch((err) => {});
+        await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p udp --dport 5060 -j CT --helper sip")}`).catch((err) => {});
         break;
       }
       default:
@@ -73,9 +75,23 @@ class NATPassthroughPlugin extends Plugin {
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
+
+          await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p gre -j ACCEPT")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j ACCEPT")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p gre -j ACCEPT")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j ACCEPT")}`).catch((err) => {});
+
+          await exec(`${util.wrapIptables("sudo iptables -w -t raw -A PREROUTING -p tcp --dport 1723 -j CT --helper pptp")}`).catch((err) => {});
         } else {
           await exec("sudo rmmod nf_nat_pptp").catch((err) => {});
           await exec("sudo rmmod nf_conntrack_pptp").catch((err) => {});
+          await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j ACCEPT")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j ACCEPT")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j ACCEPT")}`).catch((err) => {});
+          await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j ACCEPT")}`).catch((err) => {});
+
+          await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p tcp --dport 1723 -j CT --helper pptp")}`).catch((err) => {});
+
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -A FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo ip6tables -w -A FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
@@ -119,9 +135,11 @@ class NATPassthroughPlugin extends Plugin {
       case "sip": {
         if (enabled) {
           await exec("sudo modprobe ip_nat_sip").catch((err) => {}); // this will load nf_nat_sip and nf_conntrack_sip
+          await exec(`${util.wrapIptables("sudo iptables -w -t raw -A PREROUTING -p udp --dport 5060 -j CT --helper sip")}`).catch((err) => {});
         } else {
           await exec("sudo rmmod nf_nat_sip").catch((err) => {});
           await exec("sudo rmmod nf_conntrack_sip").catch((err) => {});
+          await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p udp --dport 5060 -j CT --helper sip")}`).catch((err) => {});
         }
         break;
       }

@@ -5,4 +5,13 @@ INTF=$1
 LOCAL_IP=$4
 PEER_IP=$5
 
+LOCAL_RT_TABLE="${INTF}_local"
+DEFAULT_RT_TABLE="${INTF}_default"
+
+if [[ -n $PEER_IP ]]; then
+  sudo ip -6 r add $LOCAL_IP dev $INTF table $LOCAL_RT_TABLE
+  sudo ip -6 r add $LOCAL_IP dev $INTF table $DEFAULT_RT_TABLE
+  sudo ip -6 r add default via $PEER_IP dev $INTF table $DEFAULT_RT_TABLE
+fi
+
 redis-cli -n 1 publish "pppoe.ipv6_up" "$INTF"

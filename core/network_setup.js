@@ -20,6 +20,7 @@ let instance = null;
 const pl = require('../plugins/plugin_loader.js');
 const routing = require('../util/routing.js');
 const r = require('../util/firerouter.js');
+const fsp = require('fs').promises;
 const util = require('../util/util.js');
 
 const exec = require('child-process-promise').exec;
@@ -55,9 +56,12 @@ class NetworkSetup {
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhcpcd /etc/logrotate.d/`);
     // copy logrotate config for dhclient log file
     await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhclient /etc/logrotate.d/`);
+    // copy logrotate config for firerouter-dns log file
+    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/firerouter-dns /etc/logrotate.d/`);
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
+
     // create routing tables
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_LOCAL);
     await routing.createCustomizedRoutingTable(routing.RT_GLOBAL_DEFAULT);
@@ -68,8 +72,26 @@ class NetworkSetup {
     await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
   }
 
+  async booting_finish() {
+    if(!this.runOnce) {
+      this.runOnce = true;
+      await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
+    }
+  }
+
+  async post_setup(dryRun = false) {
+    if (!dryRun && !this.postDone) {
+      this.postDone = true;
+      await exec(`${util.wrapIptables("sudo iptables -w -t nat -D POSTROUTING -j FR_SNAT_TMP")}`).catch((err) => {});
+      await exec(`sudo iptables -w -t nat -F FR_SNAT_TMP`).catch((err) => {});
+    }
+  }
+
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
+    await this.post_setup(dryRun);
+    // no need to await
+    this.booting_finish();
     return errors;
   }
 

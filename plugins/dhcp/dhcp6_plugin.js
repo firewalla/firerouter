@@ -26,7 +26,7 @@ const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 
 
 class DHCP6Plugin extends DHCPPlugin {
-  
+
   _getConfFilePath() {
     return `${dhcpConfDir}/${this.name}_v6.conf`;
   }
@@ -38,20 +38,28 @@ class DHCP6Plugin extends DHCPPlugin {
     this._restartService();
   }
 
-  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, prefixLen, leaseTime = 86400) {
+  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200) {
     tags = tags || [];
+    nameservers = nameservers || [];
     let extraTags = "";
     type = type || "stateless";
     if (tags.length > 0) {
       extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
     }
     const content = [];
+
+    if (nameservers.length > 0){
+      content.push(`dhcp-option=tag:${iface},option6:dns-server,${nameservers.map(a => `[${a}]`).join(",")}`);
+    } else { // return global address as RDNSS option in ra
+      content.push(`dhcp-option=tag:${iface},option6:dns-server,[::]`);
+    }
+
     switch (type) {
       case "stateless": {
         // simply use slaac to configure client IPv6 address
         content.push(`dhcp-range=tag:${iface},${extraTags}::,constructor:${this.name},slaac,${leaseTime}`);
         content.push('enable-ra');
-        content.push(`ra-param=${iface},15,3600`);
+        content.push(`ra-param=${iface},${raInterval},3600`);
         break;
       }
       case "stateful": {
@@ -61,7 +69,7 @@ class DHCP6Plugin extends DHCPPlugin {
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be at least 64`);
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
-        content.push(`ra-param=${iface},15,3600`);
+        content.push(`ra-param=${iface},${raInterval},3600`);
         break;
       }
       default:
@@ -85,8 +93,8 @@ class DHCP6Plugin extends DHCPPlugin {
       this.log.warn(`Interface ${this.name} is not present yet`);
       return;
     }
-    await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, 
-      this.networkConfig.prefixLen, this.networkConfig.lease);
+    await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,
+      this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval);
     this._restartService();
   }
 }

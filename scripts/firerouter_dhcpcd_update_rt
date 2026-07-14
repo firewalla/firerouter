@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# NOTE: log() / execute_and_log() are defined in firerouter_dhcpcd_common, and
+# RECORD_LEASE_GW6 / RECORD_LEASE_ND_ID are set by firerouter_dhcpcd_record_lease.
+# dhcpcd-run-hooks sources all hook files in alphabetical order, so the loading
+# sequence is: common < record_lease < update_rt. Do NOT rename these files in
+# a way that breaks that ordering.
+
 metric=${ifmetric:-'1024'}
 mtu=${ifmtu:-'1500'}
 
@@ -16,42 +22,128 @@ ip_changed=""
 case $reason in
 
   ROUTERADVERT)
-    new_addrs="";
-    addr_id=1
-    while [ $addr_id -lt 10 ]; do
-      var_name="nd1_addr$addr_id"
-      eval "addr=\$$var_name"
-      if [ -n "$addr" ]; then
-        new_addrs="$new_addrs$addr,"
-        for rt_table in $rt_tables; do
-          sudo ip -6 r add $addr dev $interface metric $metric mtu $mtu table $rt_table
-        done
-      else
-        break;
-      fi
-      addr_id=$((addr_id + 1))
-    done
+    # using var set in firerouter_dhcpcd_record_lease
+    nd_from="$RECORD_LEASE_GW6"
+    nd_id="$RECORD_LEASE_ND_ID"
 
-    if [ -n "$nd1_from" ]; then
+    if [ -z "$nd_from" ]; then
+      log "ROUTERADVERT: no gw6 selected on $interface, skipping route update"
+    else
+      if [ -n "$ipv6_passthrough" ]; then
+        ra_file="/dev/shm/dhcpcd.ra.$interface"
+        prefix=$(grep -oP '^prefix=\K.+' "$ra_file" 2>/dev/null || true)
+        log "Get prefix $prefix from $ra_file"
+        if [ -z "$prefix" ]; then
+          unset ipv6_passthrough
+        fi
+      else
+        # only contain 1 address in current logic
+        new_addrs=""
+        addr_id=10
+        while [ $addr_id -gt 0 ]; do
+          var_name="nd${nd_id}_addr$addr_id"
+          eval "addr=\$$var_name"
+          if [ -n "$addr" ] && [ -z "$new_addrs" ]; then
+            new_addrs="$addr"
+          elif [ -n "$addr" ]; then
+            # here we should take other addresses as the old addresses and remove them and related routes.
+            for rt_table in $rt_tables; do
+              execute_and_log "sudo ip -6 r del $addr dev $interface table $rt_table"
+            done
+            execute_and_log "sudo ip -6 addr del $addr dev $interface"
+          fi
+          addr_id=$((addr_id - 1))
+        done
+      fi
+
+      if [ -n "$ipv6_passthrough" ]; then
+        # Compute the SLAAC address manually:
+        # combine the /64 prefix upper bits with the EUI-64 derived from the interface MAC.
+        # prefix format is "2001:db8:0:1::" (no /64 suffix), strip trailing :: to get upper bits.
+        mac=$(cat /sys/class/net/"$interface"/address 2>/dev/null)
+        if [ -n "$mac" ]; then
+          b1=$(printf '%d' "0x$(echo "$mac" | cut -d: -f1)")
+          b2=$(echo "$mac" | cut -d: -f2)
+          b3=$(echo "$mac" | cut -d: -f3)
+          b4=$(echo "$mac" | cut -d: -f4)
+          b5=$(echo "$mac" | cut -d: -f5)
+          b6=$(echo "$mac" | cut -d: -f6)
+          # Flip U/L bit (bit 1 from LSB) to form modified EUI-64
+          b1=$(printf '%02x' $((b1 ^ 2)))
+
+          # Strip trailing :: to get the upper 64-bit groups
+          prefix_upper="${prefix%::*}"
+          if [ -z "$prefix_upper" ]; then
+            prefix_upper="0:0:0:0"
+          else
+            n=$(echo "$prefix_upper" | awk -F: '{print NF}')
+            while [ "$n" -lt 4 ]; do
+              prefix_upper="${prefix_upper}:0"
+              n=$((n + 1))
+            done
+          fi
+
+          slaac_addr="${prefix_upper}:${b1}${b2}:${b3}ff:fe${b4}:${b5}${b6}"
+          log "prefix=$prefix slaac_addr=$slaac_addr"
+          execute_and_log "sudo ip -6 addr add ${slaac_addr}/128 dev $interface"
+        fi
+      fi
+
+      if [ -n "$new_addrs" ]; then
+        for rt_table in $rt_tables; do
+          case "$new_addrs" in
+            # seen in one customer's environment that RA assigns a /47 address that overlaps with PD address range.
+            # this solution is not perfect, if there are other cases that RA assigns a /64 address that overlaps with PD address range (I don't think it's likely), we need to do more work.
+            */64)
+              execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+              ;;
+            *)
+              log "invalid RA addr that does not end with /64: $new_addrs"
+              ;;
+          esac
+        done
+      fi
+
       for default_rt_table in $default_rt_tables; do
-        sudo ip -6 r replace default via $nd1_from dev $interface mtu $mtu table $default_rt_table
+        execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
       done
+      old_gw=`cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo ""`
+      if [ "$nd_from" != "$old_gw" ]; then
+        echo $nd_from > /dev/shm/dhcpcd.gw6.$interface
+        log "ip_changed: gw6 changed from $old_gw to $nd_from on $interface"
+        ip_changed="1"
+      fi
     fi
+
     old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
-    if [ "$new_addrs" != "$old_addrs" ]; then
-      echo $new_addrs > /dev/shm/dhcpcd.ip6.$interface
+    if [ "$new_addrs," != "$old_addrs" ]; then
+      old_addrs="${old_addrs%,}"
+      if [ -n "$old_addrs" ]; then
+        for rt_table in $rt_tables; do
+          execute_and_log "sudo ip -6 r del $old_addrs dev $interface table $rt_table"
+        done
+      fi
+      echo "$new_addrs," > /dev/shm/dhcpcd.ip6.$interface
+      log "ip_changed: ip6 addrs changed from $old_addrs to $new_addrs on $interface"
       ip_changed="1"
     fi
     ;;
   BOUND6|REBOOT6)
-    ip_changed="1"
     addr_id=1
     while [ $addr_id -lt 10 ]; do
       old_var_name="old_dhcp6_ia_na1_ia_addr$addr_id"
       eval "old_addr=\$$old_var_name"
       new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
+      status_code_name="new_dhcp6_ia_na1_ia_addr${addr_id}_status_code"
+      eval "status_code=\$$status_code_name"
+      if [ "$status_code" = "2" ]; then
+        addr_id=$((addr_id + 1))
+        continue
+      fi
       eval "new_addr=\$$new_var_name"
       if [ -n "$new_addr" ]; then
+        log "ip_changed: BOUND6/REBOOT6 new addr $new_addr on $interface"
+        ip_changed="1"
         for rt_table in $rt_tables; do
           sudo ip -6 r add $new_addr dev $interface metric $metric mtu $mtu table $rt_table
         done
@@ -68,6 +160,7 @@ case $reason in
       new_var_name="new_dhcp6_ia_na1_ia_addr$addr_id"
       eval "new_addr=\$$new_var_name"
       if [ "$old_addr" != "$new_addr" ]; then
+        log "ip_changed: RENEW6/REBIND6 addr changed from $old_addr to $new_addr on $interface"
         ip_changed="1"
       fi
       if [ -n "$new_addr" ]; then

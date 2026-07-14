@@ -17,7 +17,6 @@
 
 const express = require('express');
 const router = express.Router();
-const bodyParser = require('body-parser');
 const log = require('../../util/logger.js')(__filename, 'info')
 
 router.get('/:intf', async (req, res, next) => {

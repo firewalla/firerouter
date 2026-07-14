@@ -53,6 +53,10 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
     await super.changeRoutingTables();
     await routing.addRouteToTable("default", null, this.name, `${this.name}_default`, null)
   }
+
+  hasHardwareAddress() {
+    return false;
+  }
 }
 
 module.exports = GenericTunInterfacePlugin;

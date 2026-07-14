@@ -1,0 +1,13 @@
+[Unit]
+Description=FireRouter Static Multicast Routing Daemon
+After=network.target
+
+[Service]
+User=root
+Restart=always
+ExecStart=/bin/bash /home/pi/firerouter/scripts/firerouter_smcrouted.sh
+RemainAfterExit=true
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

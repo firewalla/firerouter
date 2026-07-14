@@ -24,6 +24,7 @@ const { spawn } = require('child_process')
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
 const _ = require('lodash');
+const uuid = require('uuid');
 const pl = require('../platform/PlatformLoader.js');
 const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
@@ -34,6 +35,7 @@ const fsp = require('fs').promises;
 const util = require('../util/util.js');
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
+const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
 
 const Promise = require('bluebird');
 
@@ -113,6 +115,9 @@ class NetworkConfigManager {
           }
           const wpaCliPath = await platform.getWpaCliBinPath();
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
+          const isWPAComplate = async () => {
+            return await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+          };
           const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
             // TODO: taking care of SSID with '\t'?
             const [id, ssid, bssid, flags] = line.split('\t', 4);
@@ -132,9 +137,18 @@ class NetworkConfigManager {
             return []
           });
           const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
+          const state = await isWPAComplate();
+          if (_.get(currentNetwork, 'ssid') === ssid && state === true) {
+            log.info(`WPA state is already complete on current SSID ${ssid}, no need to switch`);
+            done(null, []);
+            return;
+          }
+          await platform.prepareSwitchWifi();
           // refresh interface link state to relinquish resources due to potential driver bug
-          await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-          await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+          if (platform.needResetLinkBeforeSwitchWifi()) {
+            await exec(`sudo ip link set ${intf} down`).catch((err) => {});
+            await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+          }
           let selectedNetwork = networks.find(n => n.ssid === ssid || n.ssidHex === ssidHex); // in case of non-ascii characters, need to compare with hex string
           if (!selectedNetwork) {
             log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
@@ -163,10 +177,11 @@ class NetworkConfigManager {
           const t1 = Date.now() / 1000;
           let t2 = null;
           const checkTask = setInterval(async () => {
-            const state = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+            const state = await isWPAComplate();
             if (state === true) {
               if (!testOnly) {
                 clearInterval(checkTask);
+                log.info(`WPA state complete on new SSID ${ssid}, enabling other networks`);
                 for (const network of networks) {
                   // select_network will disable all other ssids, re-enable other ssid
                   if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
@@ -177,13 +192,16 @@ class NetworkConfigManager {
               }
             } else {
               t2 = Date.now() / 1000;
+              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} bssid_ignore clear`).catch((err) => { });
             }
             // if timeout exceeded or test only is set and connection is successful, switch back to previous setup
-            if (t2 - t1 > 15 || state === true && testOnly) {
+            if (t2 - t1 > 30 || state === true && testOnly) {
               clearInterval(checkTask);
               // refresh interface link state to relinquish resources due to potential driver bug
-              await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-              await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+              if (platform.needResetLinkBeforeSwitchWifi()) {
+                await exec(`sudo ip link set ${intf} down`).catch((err) => {});
+                await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+              }
               // restore config from configuration file
               await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} reconfigure`).catch((err) => { });
               if (currentNetwork) // switch back to previous ssid
@@ -205,6 +223,7 @@ class NetworkConfigManager {
           done(null, [err])
         }
       }, (err, ret) => {
+        platform.setDFSScanState(false);
         if (err)
           reject(err);
         else
@@ -223,6 +242,9 @@ class NetworkConfigManager {
 
     let result = {};
 
+    // always enable ping/dns test in manual test
+    options.pingTestEnabled = true;
+    options.dnsTestEnabled = true;
     result = await intfPlugin.checkWanConnectivity(["1.1.1.1", "8.8.8.8", "9.9.9.9"], 1, 0.5, "github.com", options);
     if (result.dns === null) {
       result.dns = false;
@@ -232,17 +254,20 @@ class NetworkConfigManager {
     if(result.carrier) {
       const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
 
+      // use firewalla-hosted captive check page to check status code as well as content
+      let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
+      if (!httpResult) {
+        httpResult = await Promise.any(sites.map(async (site) => {
+          const result = await intfPlugin.checkHttpStatus(site);
+          if(!result) {
+            throw new Error("http check failed on site " + site);
+          }
+          return result;
+        })).catch((err) => {
+          log.error("Failed to check http status on all sites, err:", err.message);
+        });
+      }
       // return if any of them succeeds
-      const httpResult = await Promise.any(sites.map(async (site) => {
-        const result = await intfPlugin.checkHttpStatus(site);
-        if(!result) {
-          throw new Error("http check failed on site " + site);
-        }
-        return result;
-      })).catch((err) => {
-        log.error("Failed to check http status on all sites, err:", err.message);
-      });
-
       if (httpResult) {
         result.http = httpResult;
       }
@@ -251,6 +276,12 @@ class NetworkConfigManager {
     result.ts = Math.floor(new Date() / 1000);
 
     this.wanTestResult[iface] = result.ts;
+
+    if (result.active) {
+      // if the wan is active after live check, immediately set the wan connectivity status to true on this wan to speed up the status update
+      const event = require('./event.js');
+      intfPlugin.onEvent(event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: iface, active: true, forceState: true, failures: []}));
+    }
 
     return result;
   }
@@ -298,6 +329,7 @@ class NetworkConfigManager {
   }
 
   async getWlanAvailable(intf) {
+    await platform.setDFSScanState(true);
     const iwScan = spawn('sudo', ['timeout', '20s', 'iw', 'dev', intf, 'scan'])
     iwScan.on('error', err => {
       log.error('Error running wpa_cli', err.message)
@@ -395,6 +427,7 @@ class NetworkConfigManager {
       const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
+    await platform.setDFSScanState(false);
 
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }
@@ -403,24 +436,19 @@ class NetworkConfigManager {
   async getWlansViaWpaSupplicant(waitForScan = false) {
     log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
     const pluginLoader = require('../plugins/plugin_loader.js')
-    const plugins = pluginLoader.getPluginInstances('interface')
-    if (!plugins) {
-      log.warn('No interface found, probably still initializing')
-      return []
+    const apScanInterface = platform.getAPScanInterface();
+    const intfPlugin = pluginLoader.getPluginInstance('interface', apScanInterface);
+    if (!intfPlugin) {
+      log.warn(`AP scan interface ${apScanInterface} is not found in network config`);
+      return [];
     }
-    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin')
-    const targetWlan = Object.values(plugins).find(p => p instanceof WLANInterfacePlugin && _.get(p, 'networkConfig.wpaSupplicant'))
-    if (!targetWlan) {
-      log.warn('No wlan interface configured for wpa_supplicant')
-      return []
-    }
-    if (await targetWlan.isInterfacePresent() === false) {
-      log.warn(`WLAN interface ${targetWlan.name} is not present yet`);
+    if (await intfPlugin.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${apScanInterface} is not present yet`);
       return [];
     }
 
     const wpaCliPath = await platform.getWpaCliBinPath();
-    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${targetWlan.name}`
+    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
 
     // manually create a promise to return right after result parsing is finished, without waiting for process exit
     const deferred = {}
@@ -429,7 +457,8 @@ class NetworkConfigManager {
       deferred.reject = reject
     })
 
-    const wpaCli = spawn('sudo', ['timeout', '15s', wpaCliPath, '-p', ctlSocket, '-i', targetWlan.name])
+    await platform.setDFSScanState(true);
+    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
     wpaCli.on('error', err => {
       log.error('Error running wpa_cli', err.message)
     })
@@ -439,6 +468,7 @@ class NetworkConfigManager {
         case 124: // timeout
         case 255: // wpa_supplicant not initialized
           deferred.reject(new Error(`wpa_cli exited with ${code}`))
+          break;
         default:
           log.info('wpa_cli exited with code', code)
       }
@@ -448,12 +478,15 @@ class NetworkConfigManager {
     const results = []
 
     let state = 'waitForResult'
+    const scanResultCommand = platform.getWpaCliScanResultCommand();
 
     // not using readline here as the final prompt after result won't be followed by line feed
     // readline will wait for that and cause a 5s delay
     wpaCli.stdout.on('data', data => {
       if (!data) return
-      const lines = data.toString().split('\n')
+      // Keep trailing spaces: SSID is the last field in scan_result output,
+      // so trim() would corrupt SSIDs like "MyWiFi ".
+      const lines = data.toString().split('\n').map(line => line.replace(/\r$/, '').trimStart())
       for (const line of lines) try {
         log.debug(state, line)
 
@@ -462,16 +495,24 @@ class NetworkConfigManager {
 
         // wait for scan finish
         // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+        if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
+          wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+            log.verbose('quit written')
+          })
+          // reject immediately instead of waiting for timeout
+          deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
+          continue
+        }
         if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
           waitForScan = false
           log.info('scan done, getting result')
-          wpaCli.stdin.writable && wpaCli.stdin.write('scan_result\n', () => {
-            log.verbose('scan_result written')
+          wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
+            log.verbose(scanResultCommand + ' written')
           })
           continue
         }
 
-        if (line.startsWith('bssid / frequency')) {
+        if (line.match(/^(> )?bssid \/ frequency/)) {
           log.verbose('result header seen, state => parsingResult')
           state = 'parsingResult'
           continue
@@ -495,6 +536,10 @@ class NetworkConfigManager {
             }
 
             const split = line.split('\t');
+            if (split.length < 4) { 
+              log.verbose('ignoring line', line)
+              break
+            }
 
             const mac = split.shift().toUpperCase()
             const freq = parseInt(split.shift())
@@ -526,8 +571,8 @@ class NetworkConfigManager {
       // only write after previous one finishes
       if (!waitForScan) {
         log.info('not waitForScan, getting result')
-        wpaCli.stdin.write('scan_result\n', () => {
-          log.info('scan_result written')
+        wpaCli.stdin.write(scanResultCommand + '\n', () => {
+          log.info(scanResultCommand + ' written')
         })
       }
     })
@@ -540,12 +585,18 @@ class NetworkConfigManager {
       selfWlanMacs.push(buffer.toString().trim().toUpperCase())
     }
 
-    await deferred.promise
-    log.verbose('returning')
-
-    const final = results.filter(r => !selfWlanMacs.includes(r.mac))
-    log.info(`Found ${final.length} SSIDs`)
-    return final
+    return new Promise((resolve, reject) => {
+      deferred.promise.then(() => {
+        log.verbose('returning')
+        const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+        log.info(`Found ${final.length} SSIDs`)
+        resolve(final)
+      }).catch((err) => {
+        reject(err)
+      }).finally(() => {
+        platform.setDFSScanState(false);
+      });
+    });
   }
 
   async getAvailableChannelsHostapd() {
@@ -565,8 +616,8 @@ class NetworkConfigManager {
     return result
   }
 
-  async getActiveConfig() {
-    const configString = await rclient.getAsync("sysdb:networkConfig");
+  async getActiveConfig(transaction = false) {
+    const configString = await rclient.getAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig");
     if(configString) {
       try {
         const config = JSON.parse(configString);
@@ -596,7 +647,11 @@ class NetworkConfigManager {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
         const iface = ifaces[name];
-        const wanType = iface.meta && iface.meta.type;
+        const meta = iface.meta || {};
+        if (!meta.uuid)
+          meta.uuid = uuid.v4();
+        iface.meta = meta;
+        const wanType = meta.type;
         if (wanType === "wan")
           wanIntfs.push(name);
         if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
@@ -625,20 +680,79 @@ class NetworkConfigManager {
     return [];
   }
 
+  async acquireConfigRWLock(func) {
+    return lock.acquire(LOCK_CONFIG_RW, async () => {
+      log.info("Config RW Lock acquired");
+      return func();
+    }).finally(() => {
+      log.info("Config RW Lock released");
+    });
+  }
+
+  async tryApplyConfigWithRWLock(config, dryRun = false) {
+    return await lock.acquire(LOCK_CONFIG_RW, async () => {
+      const errors = await this.tryApplyConfig(config, dryRun);
+      return errors;
+    }).catch((err) => {
+      return [err.message];
+    });
+  }
+
   async tryApplyConfig(config, dryRun = false) {
     const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
-
-    const errors = await ns.setup(config, dryRun);
+    // convert new config to integrated AP config
+    const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
+      log.error(`Failed to convert effective config`, err.message);
+      return config;
+    });
+    const errors = await ns.setup(convertedConfig, dryRun);
     if (errors && errors.length != 0) {
       log.error("Failed to apply network config, rollback to previous setup", errors);
-      await ns.setup(currentConfig).catch((err) => {
+      // convert current config to integrated AP config
+      const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
+        log.error(`Failed to convert effective config`, err.message);
+        return currentConfig;
+      });
+      await ns.setup(convertedCurrentConfig).catch((err) => {
         log.error("Failed to rollback network config", err);
       });
     }
     return errors;
   }
 
+  async convertIntegratedAPConfig(config) {
+    if (!platform.isWLANManagedByAPC()) {
+      return config;
+    }
+    const fwapcExecPath = r.getFwapcExecPath();
+    const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
+    await fsp.writeFile(tempFile, JSON.stringify(config));
+    // turn off log output on stdout to avoid inteference with JSON parsing
+    const response = await exec(`FW_LOG=OFF ${fwapcExecPath} ciap ${tempFile}`);
+    const data = JSON.parse(response.stdout);
+    await fsp.unlink(tempFile).catch((err) => {});
+    log.debug(`Converted effective config`, data);
+    return data;
+  }
+
+  async validateNcidOrReqId(networkConfig, inTransaction = false, skipNcid = false) {
+    const originConfig = await this.getActiveConfig(inTransaction);
+    // reqId is generated by client, if reqId matches, skip ncid validation
+    // This is usually used if WAN is disconnected during the process of applying config change.
+    // The client may retry with the same config but ncid mismatches after the WAN is back
+    if (originConfig && originConfig.reqId && networkConfig.reqId && originConfig.reqId == networkConfig.reqId) {
+      return;
+    }
+    if (originConfig && originConfig.ncid && networkConfig.ncid && originConfig.ncid !== networkConfig.ncid) {
+      if (!skipNcid) return ["ncid not match"];
+    }
+  }
+
   async saveConfig(networkConfig, transaction = false) {
+    // do not generate ncid in transaction
+    if (!networkConfig.ncid && !transaction) {
+      networkConfig.ncid = util.generateUUID();
+    }
     const configString = JSON.stringify(networkConfig);
     if (configString) {
       await rclient.setAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig", configString);
@@ -654,6 +768,80 @@ class NetworkConfigManager {
         log.error("Redis background save returns error", err.message);
       });
     }, 3000);
+  }
+
+  async renewDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    const info = await plugin.renewDHCPLease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
+      return null;
+    });
+    return info;
+  }
+
+  async renewDHCP6Lease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    if (!_.isObject(_.get(plugin, "networkConfig.dhcp6"))) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    const info = await plugin.renewDHCP6Lease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
+      return null;
+    });
+    return info;
+  }
+
+  async getDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    const info = await plugin.getLastDHCPLeaseInfo();
+    return info;
+  }
+
+  async getDHCP6Lease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (!_.isObject(_.get(plugin, "networkConfig.dhcp6"))) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    const info = await plugin.getLastDHCP6LeaseInfo();
+    return info;
   }
 }
 

@@ -58,6 +58,7 @@ function run() {
    */
 
   server = http.createServer(app);
+  server.setTimeout(300 * 1000);
 
   /**
    * Listen on provided port, on localhost only unless it is development branch.

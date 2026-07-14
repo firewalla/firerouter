@@ -19,6 +19,7 @@ const fs = require('fs');
 const ncm = require('../core/network_config_mgr.js');
 const platform = require('../platform/PlatformLoader.js').getPlatform();
 const r = require('../util/firerouter.js');
+const util = require('../util/util.js');
 
 class WlanConfUpdateSensor extends Sensor {
   async run() {
@@ -47,29 +48,37 @@ class WlanConfUpdateSensor extends Sensor {
   }
 
   async checkAndUpdateNetworkConfig(iface) {
-    const currentConfig = await ncm.getActiveConfig();
-    if (currentConfig && currentConfig.interface) { // assume "interface" exists under root
-      if (!currentConfig.interface.wlan || !currentConfig.interface.wlan[iface]) {
-        if (!currentConfig.interface.wlan)
-          currentConfig.interface.wlan = {};
-        const wlanConfig = {};
-        wlanConfig[iface] = {
-          enabled: true,
-          wpaSupplicant: {},
-          allowHotplug: true
-        };
-        currentConfig.interface.wlan = Object.assign({}, currentConfig.interface.wlan, wlanConfig);
-        const errors = await ncm.tryApplyConfig(currentConfig).catch((err) => {
-          this.log.error(`Failed to apply updated config`, err.message);
-          return;
-        });
-        if (errors && errors.length != 0) {
-          this.log.error(`Error occured while applying updated config`, errors);
-          return;
-        }
-        await ncm.saveConfig(currentConfig, false);
-      }
+    if (!await r.verifyPermanentMAC(iface)) {
+      this.log.error(`Permanent MAC address of ${iface} is not valid, ignore it`);
+      return;
     }
+    await ncm.acquireConfigRWLock(async () => {
+      const currentConfig = await ncm.getActiveConfig();
+      if (currentConfig && currentConfig.interface) { // assume "interface" exists under root
+        if (!currentConfig.interface.wlan || !currentConfig.interface.wlan[iface]) {
+          if (!currentConfig.interface.wlan)
+            currentConfig.interface.wlan = {};
+          const wlanConfig = {};
+          wlanConfig[iface] = {
+            enabled: true,
+            wpaSupplicant: {},
+            allowHotplug: true
+          };
+          currentConfig.interface.wlan = Object.assign({}, currentConfig.interface.wlan, wlanConfig);
+          const errors = await ncm.tryApplyConfig(currentConfig).catch((err) => {
+            this.log.error(`Failed to apply updated config`, err.message);
+            return;
+          });
+          if (errors && errors.length != 0) {
+            this.log.error(`Error occured while applying updated config`, errors);
+            return;
+          }
+          currentConfig.ncid = util.generateUUID();
+          this.log.info("New ncid generated", currentConfig.ncid);
+          await ncm.saveConfig(currentConfig, false);
+        }
+      }
+    });
   }
 }
 

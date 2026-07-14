@@ -1,0 +1,83 @@
+#!/bin/sh
+
+execute_and_log() {
+  if [ -z "$1" ]; then
+    return 1
+  fi
+  command="$*"
+  # echo "command: $command" >> /tmp/dhclient.log
+  eval "$command"
+}
+
+add_route() {
+  iface="$1"
+  dhcp_server="$2"
+  gateway="$3"
+
+  if [ -z "$iface" ] || [ -z "$dhcp_server" ]; then
+    return 0
+  fi
+
+  # when dhcp_server and gateway are the same, no need to add a separate host route
+  if [ "$dhcp_server" = "$gateway" ]; then
+    return 0
+  fi
+
+  for rt_table in $rt_tables; do
+    if [ -z "$gateway" ]; then
+      execute_and_log "sudo ip route replace $dhcp_server dev $iface table $rt_table"
+    else
+      execute_and_log "sudo ip route replace $dhcp_server via $gateway dev $iface table $rt_table"
+    fi
+  done
+}
+
+delete_route() {
+  dhcp_server="$1"
+  for rt_table in $rt_tables; do
+    execute_and_log "sudo ip route del $dhcp_server table $rt_table"
+  done
+}
+
+echo "Reason: $reason" >> /tmp/dhclient.log
+
+if [ -z "$rt_tables" ]; then
+  rt_tables="main"
+fi
+
+iface="$interface"
+dhcp_server="${new_dhcp_server_identifier}"
+gateway="$(echo "$new_routers" | awk '{print $1}')"
+subnet_mask="${new_subnet_mask}"
+if [ "$subnet_mask" = "255.255.255.255" ]; then
+  # point-to-point gateway does not need via argument
+  gateway=""
+  # loosen arp flux filtering settings for point-to-point gateway
+  echo 0 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
+  echo 0 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_announce
+else
+  echo 1 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_ignore
+  echo 1 | sudo tee /proc/sys/net/ipv4/conf/${iface}/arp_announce
+fi
+
+case "$reason" in
+  BOUND|REBOOT)
+    add_route "$iface" "$dhcp_server" "$gateway"
+    ;;
+  RENEW|REBIND)
+    old_dhcp_server="${old_dhcp_server_identifier}"
+    old_gateway="$(echo "$old_routers" | awk '{print $1}')"
+
+    if [ "$old_dhcp_server" = "$dhcp_server" ] && [ "$old_gateway" = "$gateway" ]; then
+      return 0
+    fi
+
+    add_route "$iface" "$dhcp_server" "$gateway"
+    ;;
+  EXPIRE|FAIL|STOP)
+    dhcp_server="${old_dhcp_server_identifier}"
+    if [ -n "$dhcp_server" ]; then
+      delete_route "$dhcp_server"
+    fi
+    ;;
+esac
