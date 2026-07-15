@@ -17,6 +17,9 @@
       },
       "eth3": {
         "enabled": true
+      },
+      "eth4": {
+        "enabled": true
       }
     },
     "bridge": {
@@ -29,7 +32,8 @@
         "intf": [
           "eth1",
           "eth2",
-          "eth3"
+          "eth3",
+          "eth4"
         ],
         "enabled": true
       }
