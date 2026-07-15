@@ -11,6 +11,18 @@ MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo
 
 source ${FIREROUTER_HOME}/platform/platform.sh
 
+# release verification, shared implementation maintained in the firewalla
+# repo (same release key and floor, firerouter-specific repo name)
+UV_OFFICIAL_REPO=firerouter
+UV_RELEASE_PUBKEY=$FIREROUTER_HOME/etc/keys/release_pub.key
+if [[ -s /home/pi/scripts/upgrade_verify.sh ]]; then
+  source /home/pi/scripts/upgrade_verify.sh
+elif [[ -s $FIREWALLA_HOME/scripts/upgrade_verify.sh ]]; then
+  source $FIREWALLA_HOME/scripts/upgrade_verify.sh
+else
+  /usr/bin/logger -t FWUPGRADE.VERIFY "upgrade_verify.sh not found, firerouter upgrade runs unverified"
+fi
+
 # timeout_check - timeout control given process or last background process
 # returns:
 #   0 - process exits before timeout
@@ -130,10 +142,12 @@ $MGIT fetch
 current_hash=$(git rev-parse HEAD)
 latest_hash=$(git rev-parse origin/$remote_branch)
 
+/home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.CHECK Starting, local hash: $current_hash, remote hash $latest_hash"
+
 if [ "$current_hash" == "$latest_hash" ]; then
-   /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
-   rm -f /dev/shm/firerouter.upgraded
-   exit 0
+  /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
+  rm -f /dev/shm/firerouter.upgraded
+  exit 0
 fi 
 
 # continue to try upgrade even github api is not successfully.
@@ -142,25 +156,47 @@ fi
 echo "upgrade on branch $branch"
 
 if [[ -e "/home/pi/.router/config/.no_auto_upgrade" ]]; then
-  /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO UPGRADE"
+  /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO AUTO UPGRADE"
   echo '======= SKIP UPGRADING BECAUSE OF FLAG /home/pi/.router/config/.no_auto_upgrade ======='
   rm -f /dev/shm/firerouter.upgraded
   exit 0
 fi
 
+/home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE Starting $current_hash to $latest_hash"
+
 if $(/bin/systemctl -q is-active watchdog.service) ; then sudo /bin/systemctl stop watchdog.service ; fi
 sudo rm -f /home/pi/firerouter/.git/*.lock
-GIT_COMMAND="(sudo -u pi $MGIT fetch origin $remote_branch && sudo -u pi $MGIT reset --hard FETCH_HEAD)"
-eval $GIT_COMMAND ||
-  (sleep 3; eval $GIT_COMMAND) ||
-  (sleep 3; eval $GIT_COMMAND) ||
-  (sleep 3; eval $GIT_COMMAND) || {
-    date >> ~/.firerouter.upgrade.failed
-    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Failed git fetch/reset "+`date`
+
+# release verification setup: key import reads the currently installed tree,
+# must run before the fetched commit is applied
+if type -t uv_ensure_release_key &>/dev/null; then
+  uv_ensure_release_key
+  uv_update_version_floor
+fi
+
+git_failed() {
+  date >> ~/.firerouter.upgrade.failed
+  /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE($mode) Failed git fetch/reset "+`date`
+  rm -f /dev/shm/firerouter.upgraded
+  touch /dev/shm/firerouter.upgrade.failed
+  exit 1
+}
+
+GIT_FETCH="(sudo -u pi $MGIT fetch origin $remote_branch)"
+if eval $GIT_FETCH ||
+  (sleep 3; eval $GIT_FETCH) ||
+  (sleep 3; eval $GIT_FETCH) ||
+  (sleep 3; eval $GIT_FETCH); then
+  if ! type -t uv_verify_release_commit &>/dev/null || uv_verify_release_commit FETCH_HEAD; then
+    sudo -u pi $MGIT reset --hard FETCH_HEAD || git_failed
+  else
+    /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE REJECTED unverified update on $remote_branch"
     rm -f /dev/shm/firerouter.upgraded
-    touch /dev/shm/firerouter.upgrade.failed
     exit 1
-  }
+  fi
+else
+  git_failed
+fi
 
 # set node_modules link to the proper directory
 NODE_MODULES_PATH=$(get_node_modules_dir)
