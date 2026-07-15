@@ -4,9 +4,22 @@ set -e
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 : ${FIREROUTER_HIDDEN:=/home/pi/.router}
+: ${FIREWALLA_HOME:=/home/pi/firewalla}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
 source ${FIREROUTER_HOME}/platform/platform.sh
 CMD=$(basename $0)
+
+# release verification, shared implementation maintained in the firewalla
+# repo (same release key and floor, firerouter-specific repo name)
+UV_OFFICIAL_REPO=firerouter
+UV_RELEASE_PUBKEY=$FIREROUTER_HOME/etc/keys/release_pub.key
+if [[ -s /home/pi/scripts/upgrade_verify.sh ]]; then
+  source /home/pi/scripts/upgrade_verify.sh
+elif [[ -s $FIREWALLA_HOME/scripts/upgrade_verify.sh ]]; then
+  source $FIREWALLA_HOME/scripts/upgrade_verify.sh
+else
+  /usr/bin/logger -t FWUPGRADE.VERIFY "upgrade_verify.sh not found, firerouter branch switch runs unverified"
+fi
 
 usage() {
     cat <<EOU
@@ -41,8 +54,16 @@ switch_branch() {
     remote_branch=$(map_target_branch $tgt_branch)
     # firerouter repo
     ( cd $FIREROUTER_HOME
+    if type -t uv_ensure_release_key &>/dev/null; then
+      uv_ensure_release_key
+      uv_update_version_floor
+    fi
     git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
     $MGIT fetch origin $remote_branch
+    if type -t uv_verify_release_commit &>/dev/null && ! uv_verify_release_commit "origin/$remote_branch"; then
+      err "target branch $remote_branch failed release verification, abort"
+      exit 1
+    fi
     git checkout -f -B $tgt_branch origin/$remote_branch
     )
 }
