@@ -142,10 +142,12 @@ $MGIT fetch
 current_hash=$(git rev-parse HEAD)
 latest_hash=$(git rev-parse origin/$remote_branch)
 
+/home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.CHECK Starting, local hash: $current_hash, remote hash $latest_hash"
+
 if [ "$current_hash" == "$latest_hash" ]; then
-   /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
-   rm -f /dev/shm/firerouter.upgraded
-   exit 0
+  /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADECHECK.DONE.NOTHING"
+  rm -f /dev/shm/firerouter.upgraded
+  exit 0
 fi 
 
 # continue to try upgrade even github api is not successfully.
@@ -154,11 +156,13 @@ fi
 echo "upgrade on branch $branch"
 
 if [[ -e "/home/pi/.router/config/.no_auto_upgrade" ]]; then
-  /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO UPGRADE"
+  /home/pi/firerouter/scripts/firelog -t debug -m "FIREROUTER.UPGRADE NO AUTO UPGRADE"
   echo '======= SKIP UPGRADING BECAUSE OF FLAG /home/pi/.router/config/.no_auto_upgrade ======='
   rm -f /dev/shm/firerouter.upgraded
   exit 0
 fi
+
+/home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE Starting $current_hash to $latest_hash"
 
 if $(/bin/systemctl -q is-active watchdog.service) ; then sudo /bin/systemctl stop watchdog.service ; fi
 sudo rm -f /home/pi/firerouter/.git/*.lock
