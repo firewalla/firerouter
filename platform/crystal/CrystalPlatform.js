@@ -21,10 +21,6 @@ class CrystalPlatform extends Platform {
   getName() {
     return "crystal";
   }
-
-  getDefaultNetworkJsonFile() {
-    return `${__dirname}/files/default_setup.json`;
-  }
 }
 
 module.exports = CrystalPlatform;

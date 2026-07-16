@@ -263,6 +263,7 @@ module.exports = {
   getLatestCommitHash:getLatestCommitHash,
   getFireRouterHome:getFireRouterHome,
   getFirewallaHome,
+  getFirewallaHiddenFolder,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
   getFwapcExecPath,
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
