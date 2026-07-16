@@ -642,6 +642,19 @@ class NetworkConfigManager {
   }
 
   async getDefaultConfig() {
+    // use onboard-config.json when first apply network on crystal platform.
+    const onboardConfigFile = `${r.getFirewallaHiddenFolder()}/onboard-config.json`;
+    try {
+      const parsed = JSON.parse(await fsp.readFile(onboardConfigFile, {encoding: "utf8"}));
+      const config = parsed && parsed.network && parsed.network.interface ? parsed.network : null;
+      if (config) {
+        log.info(`Using provisioned network config from ${onboardConfigFile}`);
+        return config;
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT")
+        log.error(`Failed to load ${onboardConfigFile}, fall back to default_setup`, err.message);
+    }
     const defaultConfigJson = platform.getDefaultNetworkJsonFile();
     const config = require(defaultConfigJson);
     return config;
