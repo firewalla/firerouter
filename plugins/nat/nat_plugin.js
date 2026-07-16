@@ -34,7 +34,7 @@ class NatPlugin extends Plugin {
     return false;
   }
 
-  async _updateSNATRules(ips, oif, action, family = 4) {
+  async _updateSNATRules(ips, oif, action, family = 4, owner = null) {
     if (action !== 'add' && action !== 'del') {
       this.log.error(`Invalid action: must be 'add' or 'del', got ${action}`);
       return;
@@ -42,10 +42,11 @@ class NatPlugin extends Plugin {
 
     const cmd = family === 4 ? "iptables" : "ip6tables";
     const flag = action === 'add' ? '-A' : '-D';
+    const comment = owner ? ` -m comment --comment ${owner}` : "";
 
     if (!_.isEmpty(ips)) {
       for (const ip of ips) {
-        await exec(util.wrapIptables(`sudo ${cmd} -w -t nat ${flag} FR_SNAT -s ${ip} -o ${oif} -j MASQUERADE`)).catch((err) => { });
+        await exec(util.wrapIptables(`sudo ${cmd} -w -t nat ${flag} FR_SNAT -s ${ip} -o ${oif}${comment} -j MASQUERADE`)).catch((err) => { });
       }
     }
   }
@@ -67,11 +68,11 @@ class NatPlugin extends Plugin {
 
     const iifPlugin = pl.getPluginInstance("interface", iif);
     if (iifPlugin) {
-      await this._updateSNATRules(this._ip4s, oif, "del");
+      await this._updateSNATRules(this._ip4s, oif, "del", 4, this.name);
       this._ip4s = [];
 
       if (this.networkConfig.ipv6) {
-        await this._updateSNATRules(this._ip6s, oif, "del", 6);
+        await this._updateSNATRules(this._ip6s, oif, "del", 6, this.name);
         this._ip6s = [];
       }
     }
@@ -128,20 +129,20 @@ class NatPlugin extends Plugin {
 
       const ip4s = await iifPlugin.getIPv4Addresses();
       const newIp4s = _.difference(ip4s, this._ip4s);
-      await this._updateSNATRules(newIp4s, oif, "add");
+      await this._updateSNATRules(newIp4s, oif, "add", 4, this.name);
       
       const oldIp4s = _.difference(this._ip4s, ip4s);
-      await this._updateSNATRules(oldIp4s, oif, "del");
+      await this._updateSNATRules(oldIp4s, oif, "del", 4, this.name);
       
       this._ip4s = ip4s || [];
 
       if (this.networkConfig.ipv6) {
         const ip6s = await iifPlugin.getRoutableIPv6Addresses();
         const newIp6s = _.difference(ip6s, this._ip6s);
-        await this._updateSNATRules(newIp6s, oif, "add", 6);
+        await this._updateSNATRules(newIp6s, oif, "add", 6, this.name);
         
         const oldIp6s = _.difference(this._ip6s, ip6s);
-        await this._updateSNATRules(oldIp6s, oif, "del", 6);
+        await this._updateSNATRules(oldIp6s, oif, "del", 6, this.name);
         
         this._ip6s = ip6s || [];
       }
