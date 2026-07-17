@@ -657,11 +657,21 @@ class NetworkConfigManager {
     return null;
   }
 
+  // resolve which iface on this OS owns the MAC, null if none
+  async getIntfNameByMac(mac) {
+    for (const intf of await this.getPhyInterfaceNames()) {
+      const addr = await fsp.readFile(`/sys/class/net/${intf}/address`, {encoding: "utf8"}).then(c => c.trim().toLowerCase()).catch(() => null);
+      if (addr === mac)
+        return intf;
+    }
+    return null;
+  }
+
   // fix wan iface name with the MAC recorded at flash time, names may differ across kernels
   async correctWanByMac(config, wanMac) {
     if (!wanMac || !_.isString(wanMac))
       return config;
-    wanMac = wanMac.toLowerCase();
+    wanMac = wanMac.trim().toLowerCase();
 
     // step 1: the wan name written in the config, e.g. eth0
     const phyConfigs = _.get(config, ["interface", "phy"], {});
@@ -673,14 +683,7 @@ class NetworkConfigManager {
     const configName = wanNames[0];
 
     // step 2: the iface name owning that MAC on this OS, e.g. eth3
-    let actualName = null;
-    for (const intf of await this.getPhyInterfaceNames()) {
-      const mac = await fsp.readFile(`/sys/class/net/${intf}/address`, {encoding: "utf8"}).then(c => c.trim().toLowerCase()).catch(() => null);
-      if (mac === wanMac) {
-        actualName = intf;
-        break;
-      }
-    }
+    const actualName = await this.getIntfNameByMac(wanMac);
     if (!actualName) {
       log.warn(`No interface with MAC ${wanMac} found, skip wan correction`);
       return config;
@@ -691,10 +694,11 @@ class NetworkConfigManager {
     // step 3: exchange the two names everywhere via JSON text, covers keys and values alike
     // only whole "eth0"-style tokens match, so compound keys like "br0_eth0" stay untouched
     log.info(`Correcting wan interface ${configName} -> ${actualName} by MAC ${wanMac}`);
+    const placeholder = `__WAN_SWAP_${uuid.v4()}__`;
     const swappedJson = JSON.stringify(config)
-      .split(`"${configName}"`).join(`"__WAN_SWAP__"`)
+      .split(`"${configName}"`).join(`"${placeholder}"`)
       .split(`"${actualName}"`).join(`"${configName}"`)
-      .split(`"__WAN_SWAP__"`).join(`"${actualName}"`);
+      .split(`"${placeholder}"`).join(`"${actualName}"`);
     return JSON.parse(swappedJson);
   }
 
@@ -734,8 +738,12 @@ class NetworkConfigManager {
       // wan already corrected in place by consumeOnboardConfig, return as-is
       const data = await this.readOnboardConfig();
       if (data) {
-        log.info("Using provisioned network config from onboard-config");
-        return data.parsed.network;
+        const errors = await this.validateConfig(data.parsed.network);
+        if (_.isEmpty(errors)) {
+          log.info("Using provisioned network config from onboard-config");
+          return data.parsed.network;
+        }
+        log.error("Invalid onboard network config, fall back to default setup", errors);
       }
     }
     const defaultConfigJson = platform.getDefaultNetworkJsonFile();
