@@ -32,6 +32,7 @@ const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 
 const fsp = require('fs').promises;
+const crypto = require('crypto');
 const util = require('../util/util.js');
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
@@ -641,19 +642,109 @@ class NetworkConfigManager {
     }
   }
 
-  async getDefaultConfig() {
-    // use onboard-config.json when first apply network on crystal platform.
+  // read onboard-config.json baked by the installer, returns {parsed, raw, path} or null
+  async readOnboardConfig() {
     const onboardConfigFile = `${r.getFirewallaHiddenFolder()}/onboard-config.json`;
     try {
-      const parsed = JSON.parse(await fsp.readFile(onboardConfigFile, {encoding: "utf8"}));
-      const config = parsed && parsed.network && parsed.network.interface ? parsed.network : null;
-      if (config) {
-        log.info(`Using provisioned network config from ${onboardConfigFile}`);
-        return config;
-      }
+      const raw = await fsp.readFile(onboardConfigFile, {encoding: "utf8"});
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.network && parsed.network.interface)
+        return {parsed, raw, path: onboardConfigFile};
     } catch (err) {
       if (err.code !== "ENOENT")
-        log.error(`Failed to load ${onboardConfigFile}, fall back to default_setup`, err.message);
+        log.error(`Failed to load ${onboardConfigFile}`, err.message);
+    }
+    return null;
+  }
+
+  // resolve which iface on this OS owns the MAC, null if none
+  async getIntfNameByMac(mac) {
+    for (const intf of await this.getPhyInterfaceNames()) {
+      const addr = await fsp.readFile(`/sys/class/net/${intf}/address`, {encoding: "utf8"}).then(c => c.trim().toLowerCase()).catch(() => null);
+      if (addr === mac)
+        return intf;
+    }
+    return null;
+  }
+
+  // fix wan iface name with the MAC recorded at flash time, names may differ across kernels
+  async correctWanByMac(config, wanMac) {
+    if (!wanMac || !_.isString(wanMac))
+      return config;
+    wanMac = wanMac.trim().toLowerCase();
+
+    // step 1: the wan name written in the config, e.g. eth0
+    const phyConfigs = _.get(config, ["interface", "phy"], {});
+    const wanNames = Object.keys(phyConfigs).filter(name => _.get(phyConfigs[name], ["meta", "type"]) === "wan");
+    if (wanNames.length !== 1) {
+      log.warn(`Expect exactly 1 wan in onboard config for MAC correction, found ${wanNames.length}, skip`);
+      return config;
+    }
+    const configName = wanNames[0];
+
+    // step 2: the iface name owning that MAC on this OS, e.g. eth3
+    const actualName = await this.getIntfNameByMac(wanMac);
+    if (!actualName) {
+      log.warn(`No interface with MAC ${wanMac} found, skip wan correction`);
+      return config;
+    }
+    if (actualName === configName)
+      return config;
+
+    // step 3: exchange the two names everywhere via JSON text, covers keys and values alike
+    // only whole "eth0"-style tokens match, so compound keys like "br0_eth0" stay untouched
+    log.info(`Correcting wan interface ${configName} -> ${actualName} by MAC ${wanMac}`);
+    const placeholder = `__WAN_SWAP_${uuid.v4()}__`;
+    const swappedJson = JSON.stringify(config)
+      .split(`"${configName}"`).join(`"${placeholder}"`)
+      .split(`"${actualName}"`).join(`"${configName}"`)
+      .split(`"${placeholder}"`).join(`"${actualName}"`);
+    return JSON.parse(swappedJson);
+  }
+
+  // one-shot per flashed config: correct wan by MAC, write correction back to the file,
+  // then persist as active config, overriding redis leftovers
+  async consumeOnboardConfig() {
+    if (!platform.isOnboardConfigSupported())
+      return false;
+    const data = await this.readOnboardConfig();
+    if (!data)
+      return false;
+    const hash = crypto.createHash('sha256').update(data.raw).digest('hex');
+    const consumedHash = await rclient.getAsync("sysdb:onboardConfigHash");
+    if (consumedHash === hash)
+      return false;
+    const wanMac = _.get(data.parsed, ["provision", "wanMac"]);
+    const config = await this.correctWanByMac(data.parsed.network, wanMac);
+    const errors = await this.validateConfig(config);
+    if (!_.isEmpty(errors)) {
+      log.error("Invalid onboard network config, keep existing config", errors);
+      return false;
+    }
+    // write the corrected network back so the file always matches what is applied
+    data.parsed.network = config;
+    const newRaw = JSON.stringify(data.parsed, null, 2);
+    await fsp.writeFile(`${data.path}.tmp`, newRaw, {encoding: "utf8", mode: 0o644});
+    await fsp.rename(`${data.path}.tmp`, data.path);
+    await this.saveConfig(config);
+    await rclient.setAsync("sysdb:onboardConfigHash", crypto.createHash('sha256').update(newRaw).digest('hex'));
+    log.info("Onboard network config is set as active config");
+    return true;
+  }
+
+  async getDefaultConfig() {
+    // use onboard-config.json when first apply network on crystal platform.
+    if (platform.isOnboardConfigSupported()) {
+      // wan already corrected in place by consumeOnboardConfig, return as-is
+      const data = await this.readOnboardConfig();
+      if (data) {
+        const errors = await this.validateConfig(data.parsed.network);
+        if (_.isEmpty(errors)) {
+          log.info("Using provisioned network config from onboard-config");
+          return data.parsed.network;
+        }
+        log.error("Invalid onboard network config, fall back to default setup", errors);
+      }
     }
     const defaultConfigJson = platform.getDefaultNetworkJsonFile();
     const config = require(defaultConfigJson);
