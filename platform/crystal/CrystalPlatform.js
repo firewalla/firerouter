@@ -21,6 +21,10 @@ class CrystalPlatform extends Platform {
   getName() {
     return "crystal";
   }
+
+  isOnboardConfigSupported() {
+    return true;
+  }
 }
 
 module.exports = CrystalPlatform;

@@ -333,6 +333,11 @@ class Platform {
     return false;
   }
 
+  // whether installer-provisioned onboard-config.json drives the first network config
+  isOnboardConfigSupported() {
+    return false;
+  }
+
   isHotplugSupported(intf) {
     return true;
   }
