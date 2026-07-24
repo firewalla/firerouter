@@ -231,6 +231,10 @@ class HostapdPlugin extends Plugin {
       parameters.vht_capab = Array.from(parameters.vht_capab).map(c => `[${c}]`).join("");
     }
 
+    if (platform.getName() === 'goldplus2' && parameters.channel) {
+      Object.assign(parameters, HostapdPlugin.getVhtOperConfig(parameters.channel));
+    }
+
     const vendorConfig = pluginConfig.vendor[await platform.getWlanVendor()];
     const vendorExtra = vendorConfig && vendorConfig.extra;
     if (vendorExtra) {
@@ -284,6 +288,23 @@ class HostapdPlugin extends Plugin {
 
   static async getAvailableChannels() {
     return pluginConfig.vendor[await platform.getWlanVendor()].channels
+  }
+
+  static getVhtOperConfig(channel) {
+    const ch = Number(channel);
+    if ([36, 40, 44, 48].includes(ch)) {
+      return {
+        vht_oper_chwidth: 1,
+        vht_oper_centr_freq_seg0_idx: 42,
+      };
+    }
+    if ([149, 153, 157, 161].includes(ch)) {
+      return {
+        vht_oper_chwidth: 1,
+        vht_oper_centr_freq_seg0_idx: 155,
+      };
+    }
+    return {};
   }
 
   static calculateChannelScores(availableWLANs, withWeight = true) {

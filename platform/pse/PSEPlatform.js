@@ -39,6 +39,10 @@ class PSEPlatform extends Platform {
     return "wlan0";
   }
 
+  getMiniupnpdNftPath() {
+    return `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+  }
+
   wifiSD() {
     // only 1 wifi sd supported now
     if (!this._wifiSD) {
