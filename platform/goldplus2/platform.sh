@@ -48,3 +48,7 @@ function get_wpa_cli_path {
 function get_ndppd_path {
   echo "ndppd"
 }
+
+function get_dhcpcd_path {
+  echo "dhcpcd"
+}
