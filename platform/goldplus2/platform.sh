@@ -44,3 +44,7 @@ function get_wpa_supplicant_path {
 function get_wpa_cli_path {
   echo "wpa_cli"
 }
+
+function get_ndppd_path {
+  echo "ndppd"
+}
