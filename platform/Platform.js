@@ -49,6 +49,16 @@ class Platform {
     return await this.getLSBCodeName() === 'jammy';
   }
 
+  async isMiniupnpdUsingNft() {
+    const cmd = "miniupnpd --version | grep -w nftables";
+    const result = await exec(cmd, {encoding: 'utf8'}).then(() => true).catch(() => false);
+    return result;
+  }
+
+  getMiniupnpdNftPath() {
+    return null;
+  }
+
   getDefaultNetworkJsonFile() {
     return `${__dirname}/../network/default_setup.json`;
   }
@@ -61,8 +71,28 @@ class Platform {
     return null;
   }
 
+  getWifiAPInterface() {
+    return null;
+  }
+
   getAPScanInterface() {
     return this.getWifiClientInterface();
+  }
+
+  getDefaultBaseIntf(intfName) {
+    return null;
+  }
+
+  getDefaultWLanType(intfName) {
+    return "managed";
+  }
+
+  getExclusiveWLANSibling(intfName) {
+    return null;
+  }
+
+  shouldBringWLANInterfaceUp(wlanIntfPlugin) {
+    return wlanIntfPlugin.networkConfig.enabled !== false;
   }
 
   async getWpaCliBinPath() {
@@ -271,8 +301,13 @@ class Platform {
 
   async installMiniupnpd() {
     // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
-    if (!await this.isUbuntu22()) return
-    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+    if (!await this.isMiniupnpdUsingNft()) return;
+    const srcPath = this.getMiniupnpdNftPath();
+    if (!srcPath) {
+      log.debug("miniupnpd nft path is not set on this platform, skipping miniupnpd update");
+      return;
+    }
+    log.info(`Checking if miniupnpd binary needs update, srcPath: ${srcPath}`);
     // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
     const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
       .then(() => true).catch(() => false);
@@ -297,8 +332,8 @@ class Platform {
   async createWLANInterface(wlanIntfPlugin) {
     const ifaceExists = await exec(`ip link show dev ${wlanIntfPlugin.name}`).then(() => true).catch((err) => false);
     if (!ifaceExists) {
-      if (wlanIntfPlugin.networkConfig.baseIntf) {
-        const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+      const baseIntf = wlanIntfPlugin.getBaseIntf();
+      if (baseIntf) {
         const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
         if (baseIntfPlugin) {
           wlanIntfPlugin.subscribeChangeFrom(baseIntfPlugin);
@@ -309,7 +344,7 @@ class Platform {
         } else {
           wlanIntfPlugin.fatal(`Lower interface plugin not found ${baseIntf}`);
         }
-        const type = wlanIntfPlugin.networkConfig.type || "managed";
+        const type = wlanIntfPlugin.getWlanType();
         await exec(`sudo iw dev ${baseIntf} interface add ${wlanIntfPlugin.name} type ${type}`);
       }
     } else {
@@ -318,8 +353,8 @@ class Platform {
   }
 
   async removeWLANInterface(wlanIntfPlugin) {
-    if (wlanIntfPlugin.networkConfig && wlanIntfPlugin.networkConfig.baseIntf) {
-      const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+    const baseIntf = wlanIntfPlugin.getBaseIntf();
+    if (baseIntf) {
       const basePhy = await exec(`readlink -f /sys/class/net/${baseIntf}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       const myPhy = await exec(`readlink -f /sys/class/net/${wlanIntfPlugin.name}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       if (basePhy && myPhy && basePhy === myPhy)
@@ -409,6 +444,10 @@ class Platform {
 
   async setWifiDynamicDebug() {
     return;
+  }
+
+  getSSHKeyTypes() {
+    return ['dsa', 'ecdsa', 'ed25519', 'rsa'];
   }
 }
 

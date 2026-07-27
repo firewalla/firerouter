@@ -18,6 +18,8 @@ const Sensor = require('./sensor.js');
 const fs = require('fs');
 const ncm = require('../core/network_config_mgr.js');
 const platform = require('../platform/PlatformLoader.js').getPlatform();
+const pl = require('../plugins/plugin_loader.js');
+const Plugin = require('../plugins/plugin.js');
 const r = require('../util/firerouter.js');
 const util = require('../util/util.js');
 
@@ -27,11 +29,14 @@ class WlanConfUpdateSensor extends Sensor {
     if (!iface)
       return;
     const filename = `/sys/class/net/${iface}`;
-    fs.watchFile(filename, {interval: 2000}, (curr, prev) => {
+    fs.watchFile(filename, {interval: 2000}, async (curr, prev) => {
       if (curr.ctimeMs > prev.ctimeMs) {
         this.log.info(`${iface} appears, check and update network config if necessary ...`);
-        this.checkAndUpdateNetworkConfig(iface).catch((err) => {
+        await this.checkAndUpdateNetworkConfig(iface).catch((err) => {
           this.log.error(`Failed to check and update network config for ${iface}`, err.message);
+        });
+        await this.checkAndUpdateAPInterface(iface).catch((err) => {
+          this.log.error(`Failed to check and update AP interface for ${iface}`, err.message);
         });
       }
     });
@@ -42,6 +47,9 @@ class WlanConfUpdateSensor extends Sensor {
         this.log.info(`${iface} appears, check and update network config if necessary ...`);
         await this.checkAndUpdateNetworkConfig(iface).catch((err) => {
           this.log.error(`Failed to check and update network config for ${iface}`, err.message);
+        });
+        await this.checkAndUpdateAPInterface(iface).catch((err) => {
+          this.log.error(`Failed to check and update AP interface for ${iface}`, err.message);
         });
       }
     }, 45000);
@@ -55,30 +63,60 @@ class WlanConfUpdateSensor extends Sensor {
     await ncm.acquireConfigRWLock(async () => {
       const currentConfig = await ncm.getActiveConfig();
       if (currentConfig && currentConfig.interface) { // assume "interface" exists under root
-        if (!currentConfig.interface.wlan || !currentConfig.interface.wlan[iface]) {
-          if (!currentConfig.interface.wlan)
-            currentConfig.interface.wlan = {};
-          const wlanConfig = {};
+        if (!currentConfig.interface.wlan)
+          currentConfig.interface.wlan = {};
+
+        const wlanConfig = {};
+        if (!currentConfig.interface.wlan[iface]) {
           wlanConfig[iface] = {
             enabled: true,
             wpaSupplicant: {},
             allowHotplug: true
           };
-          currentConfig.interface.wlan = Object.assign({}, currentConfig.interface.wlan, wlanConfig);
-          const errors = await ncm.tryApplyConfig(currentConfig).catch((err) => {
-            this.log.error(`Failed to apply updated config`, err.message);
-            return;
-          });
-          if (errors && errors.length != 0) {
-            this.log.error(`Error occured while applying updated config`, errors);
-            return;
-          }
-          currentConfig.ncid = util.generateUUID();
-          this.log.info("New ncid generated", currentConfig.ncid);
-          await ncm.saveConfig(currentConfig, false);
         }
+        const apIntf = platform.getWifiAPInterface();
+        if (apIntf && !currentConfig.interface.wlan[apIntf] && platform.getDefaultBaseIntf(apIntf) === iface) {
+          wlanConfig[apIntf] = {
+            enabled: true,
+            allowHotplug: true
+          };
+        }
+        if (Object.keys(wlanConfig).length === 0)
+          return;
+        currentConfig.interface.wlan = Object.assign({}, currentConfig.interface.wlan, wlanConfig);
+        const errors = await ncm.tryApplyConfig(currentConfig).catch((err) => {
+          this.log.error(`Failed to apply updated config`, err.message);
+          return;
+        });
+        if (errors && errors.length != 0) {
+          this.log.error(`Error occured while applying updated config`, errors);
+          return;
+        }
+        currentConfig.ncid = util.generateUUID();
+        this.log.info("New ncid generated", currentConfig.ncid);
+        await ncm.saveConfig(currentConfig, false);
       }
     });
+  }
+
+  async checkAndUpdateAPInterface(baseIntf) {
+    const apIntf = platform.getWifiAPInterface();
+    if (!apIntf)
+      return;
+    const apPlugin = pl.getPluginInstance("interface", apIntf);
+    if (!apPlugin)
+      return;
+    if (apPlugin.getBaseIntf() !== baseIntf)
+      return;
+    if (await apPlugin.isInterfacePresent())
+      return;
+    this.log.info(`${baseIntf} appears, create AP interface ${apIntf} ...`);
+    await platform.createWLANInterface(apPlugin);
+    if (!await apPlugin.isInterfacePresent()) {
+      this.log.warn(`AP interface ${apIntf} is still not present after creation attempt`);
+      return;
+    }
+    platform.clearMacCache(apIntf);
   }
 }
 
