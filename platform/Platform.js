@@ -216,43 +216,59 @@ class Platform {
   }
 
   async installKernelModule(module_name) {
-    const installed = await this.isKernelModuleInstalled(module_name);
-    if (installed) return;
-    // below code seems not needed
-    const codename = await exec(`lsb_release -cs`).then((result) => result.stdout.trim())
-      .catch((err) => {
-        log.error("Failed to get codename of OS distribution", err.message);
-        return null;
-      });
-    if (!codename)
-      return;
-    // end of below code seems not needed
-
     const koPath = await this.getKoPath(module_name);
     const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);
-    if (koExists){
-      await exec(`sudo insmod ${koPath}`).catch((err) => {
-        log.error(`Failed to install ${module_name}.ko`, err.message);
+
+    // No local .ko: fall back to system module via modprobe (idempotent)
+    if (!koExists) {
+      await exec(`sudo modprobe ${module_name}`).catch((err) => {
+        log.error(`Failed to modprobe ${module_name}`, err.message);
       });
+      return;
     }
+
+    // Local .ko exists: load / refresh via insmod
+    const loaded = await this.isKernelModuleLoaded(module_name);
+    if (!loaded) {
+      await this.insmodKernelModule(module_name, koPath);
+      return;
+    }
+
+    const loadedSrcVersion = await this.getLoadedModuleSrcVersion(module_name);
+    const localSrcVersion = await this.getKoFileSrcVersion(koPath);
+    // Both empty (e.g. in-tree builds without SRCVERSION) are treated as the same module
+    if (loadedSrcVersion === localSrcVersion) return;
+
+    log.info(`Reloading ${module_name}: srcversion changed (${loadedSrcVersion || '<empty>'} -> ${localSrcVersion || '<empty>'})`);
+    const unloaded = await exec(`sudo rmmod ${module_name}`).then(() => true).catch((err) => {
+      log.error(`Failed to unload ${module_name} before reload`, err.message);
+      return false;
+    });
+    if (!unloaded) return;
+
+    await this.insmodKernelModule(module_name, koPath);
   }
 
-  async isKernelModuleInstalled(module_name) {
-    if (!this.installedModules) {
-      this.installedModules = {};
-    }
-    if (this.installedModules[module_name]) {
-      return this.installedModules[module_name];
-    }
-    const cmdResult = await exec(`lsmod | grep ${module_name} | awk '{print $1}'`);
-    const results = cmdResult.stdout.toString().trim().split('\n');
-    for (const result of results) {
-      if (result == module_name) {
-        this.installedModules[module_name] = true;
-        return true;
-      }
-    }
-    return false;
+  async insmodKernelModule(module_name, koPath) {
+    await exec(`sudo insmod ${koPath}`).catch((err) => {
+      log.error(`Failed to install ${module_name}.ko`, err.message);
+    });
+  }
+
+  async isKernelModuleLoaded(module_name) {
+    return await fsp.access(`/sys/module/${module_name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+  }
+
+  async getLoadedModuleSrcVersion(module_name) {
+    return await fsp.readFile(`/sys/module/${module_name}/srcversion`, {encoding: 'utf8'})
+      .then((result) => result.trim())
+      .catch(() => "");
+  }
+
+  async getKoFileSrcVersion(koPath) {
+    const stdout = await exec(`modinfo ${koPath}`).then((result) => result.stdout.toString()).catch(() => "");
+    const match = stdout.match(/^srcversion:\s*(\S+)/m);
+    return match ? match[1] : "";
   }
 
   async getKernelModulesPath() {
