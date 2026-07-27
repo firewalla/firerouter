@@ -26,8 +26,9 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isFlushNeeded(newConfig) {
     // flush is needed if attributes other than stp are changed
-    const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "stp"));
-    const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "stp"));
+    const noFlushKeys = ["stp", "vlanFiltering"];
+    const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => !noFlushKeys.includes(k)));
+    const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => !noFlushKeys.includes(k)));
     return !_.isEqual(c1, c2);
   }
 
@@ -69,6 +70,19 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
       this.log.debug(`Failed to create bridge interface ${this.name}`, err.message);
     });
+
+    if (this.networkConfig.vlanFiltering) {
+      await exec(`sudo ip link set dev ${this.name} type bridge vlan_default_pvid 1`).catch((err) => {
+        this.log.error(`Failed to set default PVID on ${this.name}`, err.message);
+      });
+      await exec(`sudo ip link set dev ${this.name} type bridge vlan_filtering 1`).catch((err) => {
+        this.log.error(`Failed to enable VLAN filtering on ${this.name}`, err.message);
+      });
+    } else {
+      await exec(`sudo ip link set dev ${this.name} type bridge vlan_filtering 0`).catch((err) => {
+        this.log.error(`Failed to disable VLAN filtering on ${this.name}`, err.message);
+      });
+    }
 
     const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
     if (this.networkConfig.intf.length > 1 && !isVlanBridge) {
