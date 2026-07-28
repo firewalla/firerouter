@@ -187,7 +187,7 @@ if eval $GIT_FETCH ||
   (sleep 3; eval $GIT_FETCH) ||
   (sleep 3; eval $GIT_FETCH) ||
   (sleep 3; eval $GIT_FETCH); then
-  if ! type -t uv_verify_release_commit &>/dev/null || uv_verify_release_commit FETCH_HEAD; then
+  if ! type -t uv_gate &>/dev/null || uv_gate FETCH_HEAD "$branch"; then
     sudo -u pi $MGIT reset --hard FETCH_HEAD || git_failed
   else
     /home/pi/firerouter/scripts/firelog -t local -m "FIREROUTER.UPGRADE REJECTED unverified update on $remote_branch"

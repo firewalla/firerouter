@@ -60,7 +60,7 @@ switch_branch() {
     fi
     git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
     $MGIT fetch origin $remote_branch
-    if type -t uv_verify_release_commit &>/dev/null && ! uv_verify_release_commit "origin/$remote_branch"; then
+    if type -t uv_gate &>/dev/null && ! uv_gate "origin/$remote_branch" "$tgt_branch"; then
       err "target branch $remote_branch failed release verification, abort"
       exit 1
     fi
