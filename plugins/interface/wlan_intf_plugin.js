@@ -120,9 +120,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     });
   }
 
-  static _apScanRestoreTimer = null;
-  static _apScanExclusiveOp = Promise.resolve();
-
   static _runExclusiveWLANOp(op) {
     const result = this._apScanExclusiveOp.then(op);
     this._apScanExclusiveOp = result.catch((err) => {
@@ -515,5 +512,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 }
+
+WLANInterfacePlugin._apScanRestoreTimer = null;
+WLANInterfacePlugin._apScanExclusiveOp = Promise.resolve();
 
 module.exports = WLANInterfacePlugin;
