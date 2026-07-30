@@ -28,6 +28,7 @@ const uuid = require('uuid');
 const pl = require('../platform/PlatformLoader.js');
 const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
+const op = require('./onboard_profile.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 
@@ -648,7 +649,9 @@ class NetworkConfigManager {
     try {
       const raw = await fsp.readFile(onboardConfigFile, {encoding: "utf8"});
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.network && parsed.network.interface)
+      // either a full network config, or the compact profile the cloud emits when it cannot know
+      // how many ports the box has
+      if (parsed && parsed.network && (parsed.network.interface || op.isProfileConfig(parsed.network)))
         return {parsed, raw, path: onboardConfigFile};
     } catch (err) {
       if (err.code !== "ENOENT")
@@ -657,53 +660,24 @@ class NetworkConfigManager {
     return null;
   }
 
-  // resolve which iface on this OS owns the MAC, null if none
-  async getIntfNameByMac(mac) {
-    for (const intf of await this.getPhyInterfaceNames()) {
-      const addr = await fsp.readFile(`/sys/class/net/${intf}/address`, {encoding: "utf8"}).then(c => c.trim().toLowerCase()).catch(() => null);
-      if (addr === mac)
-        return intf;
+  // turn the onboard network block into a full config: a compact profile is expanded against the
+  // ports this box actually has, a full config is taken as-is. Returns null if it cannot be built.
+  async resolveOnboardNetwork(network) {
+    if (!op.isProfileConfig(network))
+      return network;
+    try {
+      const phyNames = await this.getPhyInterfaceNames();
+      const config = op.expandProfile(network, phyNames);
+      log.info(`Expanded '${network.profile}' network profile over ports ${phyNames.join(", ")}`);
+      return config;
+    } catch (err) {
+      log.error("Failed to expand onboard network profile", err.message);
+      return null;
     }
-    return null;
   }
 
-  // fix wan iface name with the MAC recorded at flash time, names may differ across kernels
-  async correctWanByMac(config, wanMac) {
-    if (!wanMac || !_.isString(wanMac))
-      return config;
-    wanMac = wanMac.trim().toLowerCase();
-
-    // step 1: the wan name written in the config, e.g. eth0
-    const phyConfigs = _.get(config, ["interface", "phy"], {});
-    const wanNames = Object.keys(phyConfigs).filter(name => _.get(phyConfigs[name], ["meta", "type"]) === "wan");
-    if (wanNames.length !== 1) {
-      log.warn(`Expect exactly 1 wan in onboard config for MAC correction, found ${wanNames.length}, skip`);
-      return config;
-    }
-    const configName = wanNames[0];
-
-    // step 2: the iface name owning that MAC on this OS, e.g. eth3
-    const actualName = await this.getIntfNameByMac(wanMac);
-    if (!actualName) {
-      log.warn(`No interface with MAC ${wanMac} found, skip wan correction`);
-      return config;
-    }
-    if (actualName === configName)
-      return config;
-
-    // step 3: exchange the two names everywhere via JSON text, covers keys and values alike
-    // only whole "eth0"-style tokens match, so compound keys like "br0_eth0" stay untouched
-    log.info(`Correcting wan interface ${configName} -> ${actualName} by MAC ${wanMac}`);
-    const placeholder = `__WAN_SWAP_${uuid.v4()}__`;
-    const swappedJson = JSON.stringify(config)
-      .split(`"${configName}"`).join(`"${placeholder}"`)
-      .split(`"${actualName}"`).join(`"${configName}"`)
-      .split(`"${placeholder}"`).join(`"${actualName}"`);
-    return JSON.parse(swappedJson);
-  }
-
-  // one-shot per flashed config: correct wan by MAC, write correction back to the file,
-  // then persist as active config, overriding redis leftovers
+  // one-shot per flashed config: expand the onboard network and persist it as the active config,
+  // overriding redis leftovers. The file itself is never rewritten — it is the record of intent.
   async consumeOnboardConfig() {
     if (!platform.isOnboardConfigSupported())
       return false;
@@ -714,20 +688,16 @@ class NetworkConfigManager {
     const consumedHash = await rclient.getAsync("sysdb:onboardConfigHash");
     if (consumedHash === hash)
       return false;
-    const wanMac = _.get(data.parsed, ["provision", "wanMac"]);
-    const config = await this.correctWanByMac(data.parsed.network, wanMac);
+    const config = await this.resolveOnboardNetwork(data.parsed.network);
+    if (!config)
+      return false;
     const errors = await this.validateConfig(config);
     if (!_.isEmpty(errors)) {
       log.error("Invalid onboard network config, keep existing config", errors);
       return false;
     }
-    // write the corrected network back so the file always matches what is applied
-    data.parsed.network = config;
-    const newRaw = JSON.stringify(data.parsed, null, 2);
-    await fsp.writeFile(`${data.path}.tmp`, newRaw, {encoding: "utf8", mode: 0o644});
-    await fsp.rename(`${data.path}.tmp`, data.path);
     await this.saveConfig(config);
-    await rclient.setAsync("sysdb:onboardConfigHash", crypto.createHash('sha256').update(newRaw).digest('hex'));
+    await rclient.setAsync("sysdb:onboardConfigHash", hash);
     log.info("Onboard network config is set as active config");
     return true;
   }
@@ -735,13 +705,13 @@ class NetworkConfigManager {
   async getDefaultConfig() {
     // use onboard-config.json when first apply network on crystal platform.
     if (platform.isOnboardConfigSupported()) {
-      // wan already corrected in place by consumeOnboardConfig, return as-is
       const data = await this.readOnboardConfig();
       if (data) {
-        const errors = await this.validateConfig(data.parsed.network);
+        const config = await this.resolveOnboardNetwork(data.parsed.network);
+        const errors = config ? await this.validateConfig(config) : ["cannot resolve onboard network"];
         if (_.isEmpty(errors)) {
           log.info("Using provisioned network config from onboard-config");
-          return data.parsed.network;
+          return config;
         }
         log.error("Invalid onboard network config, fall back to default setup", errors);
       }
