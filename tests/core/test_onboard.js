@@ -21,106 +21,170 @@ const _ = require('lodash');
 const fsp = require('fs').promises;
 
 const ncm = require('../../core/network_config_mgr.js');
+const op = require('../../core/onboard_profile.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const rclient = require('../../util/redis_manager').getRedisClient();
 
-// a minimal 3-port onboard network, eth0 as wan
-const onboardNetwork = () => JSON.parse(JSON.stringify({
-  interface: {
-    phy: {
-      eth0: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true},
-      eth1: {enabled: true},
-      eth2: {enabled: true}
-    },
-    bridge: {
-      br0: {meta: {name: "LAN", type: "lan"}, ipv4: "10.10.0.1/24", intf: ["eth1", "eth2"], enabled: true}
-    }
-  },
-  routing: {global: {default: {viaIntf: "eth0"}}},
-  nat: {br0_eth0: {in: "br0", out: "eth0"}},
-  sshd: {eth0: {enabled: true}, br0: {enabled: true}}
+// the compact block the cloud emits: it knows the wan method and the lan subnet, not the port count
+const adaptiveNetwork = (wan) => JSON.parse(JSON.stringify({
+  profile: "adaptive",
+  wan: wan || {type: "dhcp"},
+  lan: {ip: "192.168.49.1", mask: "255.255.255.0"}
 }));
+
+const ports = (n) => Array.from({length: n}, (_v, i) => `eth${i}`);
+
+describe('Test onboard network profile', function() {
+  this.timeout(30000);
+
+  describe('maskToPrefix', () => {
+    it('should convert valid netmasks', () => {
+      expect(op.maskToPrefix("255.255.255.0")).to.equal(24);
+      expect(op.maskToPrefix("255.255.0.0")).to.equal(16);
+      expect(op.maskToPrefix("255.255.255.252")).to.equal(30);
+      expect(op.maskToPrefix("0.0.0.0")).to.equal(0);
+    });
+
+    it('should reject non-contiguous or malformed masks', () => {
+      expect(op.maskToPrefix("255.0.255.0")).to.be.null;
+      expect(op.maskToPrefix("255.255.255")).to.be.null;
+      expect(op.maskToPrefix("256.255.255.0")).to.be.null;
+      expect(op.maskToPrefix("not-a-mask")).to.be.null;
+    });
+  });
+
+  describe('expandProfile', () => {
+    it('should make eth0 the wan and bridge every other port', () => {
+      const config = op.expandProfile(adaptiveNetwork(), ports(4));
+      expect(_.get(config, ["interface", "phy", "eth0", "meta", "type"])).to.equal("wan");
+      expect(_.get(config, ["interface", "phy", "eth0", "dhcp"])).to.be.true;
+      expect(_.get(config, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
+      expect(_.get(config, ["interface", "bridge", "br0", "ipv4"])).to.equal("192.168.49.1/24");
+      expect(_.get(config, ["routing", "global", "default", "viaIntf"])).to.equal("eth0");
+      expect(_.get(config, ["nat", "br0_eth0"])).to.eql({in: "br0", out: "eth0"});
+      expect(_.get(config, ["dhcp", "br0", "range"])).to.eql({from: "192.168.49.10", to: "192.168.49.250"});
+      expect(_.get(config, ["dhcp", "br0", "gateway"])).to.equal("192.168.49.1");
+      // every lan member is declared as an enabled phy
+      for (const intf of ["eth1", "eth2", "eth3"])
+        expect(_.get(config, ["interface", "phy", intf])).to.eql({enabled: true});
+    });
+
+    it('should adapt to any port count', () => {
+      expect(_.get(op.expandProfile(adaptiveNetwork(), ports(10)), ["interface", "bridge", "br0", "intf"]))
+        .to.eql(["eth1", "eth2", "eth3", "eth4", "eth5", "eth6", "eth7", "eth8", "eth9"]);
+      expect(_.get(op.expandProfile(adaptiveNetwork(), ports(2)), ["interface", "bridge", "br0", "intf"]))
+        .to.eql(["eth1"]);
+      expect(_.get(op.expandProfile(adaptiveNetwork(), ports(1)), ["interface", "bridge", "br0", "intf"]))
+        .to.eql([]);
+    });
+
+    it('should sort ports numerically rather than lexically', () => {
+      const config = op.expandProfile(adaptiveNetwork(), ["eth10", "eth2", "eth0", "eth1"]);
+      expect(_.get(config, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth10"]);
+    });
+
+    it('should ignore interfaces that are not ethernet ports', () => {
+      const config = op.expandProfile(adaptiveNetwork(), ["eth0", "eth1", "wlan0", "usb0"]);
+      expect(_.get(config, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1"]);
+      expect(_.get(config, ["interface", "phy", "wlan0"])).to.be.undefined;
+    });
+
+    it('should build a static wan', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "static", ip: "203.0.113.5", mask: "255.255.255.0", gateway: "203.0.113.1", dns: "1.1.1.1"
+      }), ports(3));
+      const wan = _.get(config, ["interface", "phy", "eth0"]);
+      expect(wan.ipv4).to.equal("203.0.113.5/24");
+      expect(wan.gateway).to.equal("203.0.113.1");
+      expect(wan.nameservers).to.eql(["1.1.1.1"]);
+      expect(wan.dhcp).to.be.undefined;
+      expect(_.get(config, ["routing", "global", "default", "viaIntf"])).to.equal("eth0");
+    });
+
+    it('should accept several dns servers for a static wan', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "static", ip: "203.0.113.5", mask: "255.255.255.0", gateway: "203.0.113.1", dns: "1.1.1.1, 8.8.8.8"
+      }), ports(2));
+      expect(_.get(config, ["interface", "phy", "eth0", "nameservers"])).to.eql(["1.1.1.1", "8.8.8.8"]);
+    });
+
+    it('should put a pppoe wan on top of eth0 and route through ppp0', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "pppoe", username: "user@isp", password: "secret"
+      }), ports(3));
+      // eth0 carries the ppp session, so it stays a plain port with no address and no wan meta
+      expect(_.get(config, ["interface", "phy", "eth0"])).to.eql({enabled: true});
+      const ppp = _.get(config, ["interface", "pppoe", "ppp0"]);
+      expect(ppp.intf).to.equal("eth0");
+      expect(ppp.username).to.equal("user@isp");
+      expect(_.get(ppp, ["meta", "type"])).to.equal("wan");
+      expect(_.get(config, ["routing", "global", "default", "viaIntf"])).to.equal("ppp0");
+      expect(_.get(config, ["nat", "br0_ppp0"])).to.eql({in: "br0", out: "ppp0"});
+      expect(_.get(config, ["nat", "br0_eth0"])).to.be.undefined;
+    });
+
+    it('should keep sshd reachable on both wan and lan', () => {
+      const config = op.expandProfile(adaptiveNetwork(), ports(4));
+      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.true;
+      expect(_.get(config, ["sshd", "br0", "enabled"])).to.be.true;
+    });
+
+    it('should produce a config that passes validateConfig', async () => {
+      for (const wan of [{type: "dhcp"},
+                         {type: "pppoe", username: "u", password: "p"},
+                         {type: "static", ip: "203.0.113.5", mask: "255.255.255.0", gateway: "203.0.113.1", dns: "1.1.1.1"}]) {
+        const errors = await ncm.validateConfig(op.expandProfile(adaptiveNetwork(wan), ports(5)));
+        expect(errors).to.eql([]);
+      }
+    });
+
+    it('should reject a profile it cannot build', () => {
+      expect(() => op.expandProfile(adaptiveNetwork(), ["eth1", "eth2"])).to.throw(/eth0 is not present/);
+      expect(() => op.expandProfile({profile: "whatever"}, ports(4))).to.throw(/unsupported network profile/);
+      expect(() => op.expandProfile(adaptiveNetwork({type: "carrier-pigeon"}), ports(4))).to.throw(/unsupported wan type/);
+      expect(() => op.expandProfile(adaptiveNetwork({type: "pppoe", username: "u"}), ports(4))).to.throw(/username and password/);
+      expect(() => op.expandProfile(adaptiveNetwork({type: "static", ip: "203.0.113.5", mask: "255.255.255.0", gateway: "nope", dns: "1.1.1.1"}), ports(4))).to.throw(/gateway/);
+      const badLan = adaptiveNetwork();
+      badLan.lan.mask = "255.0.255.0";
+      expect(() => op.expandProfile(badLan, ports(4))).to.throw(/lan mask/);
+      const tinyLan = adaptiveNetwork();
+      tinyLan.lan.mask = "255.255.255.252";
+      expect(() => op.expandProfile(tinyLan, ports(4))).to.throw(/too small/);
+    });
+  });
+});
 
 describe('Test onboard config consumption', function() {
   this.timeout(30000);
 
-  let origGetIntfNameByMac, origReadOnboardConfig, origIsOnboardConfigSupported;
+  let origReadOnboardConfig, origIsOnboardConfigSupported, origGetPhyInterfaceNames;
 
   beforeEach(() => {
-    origGetIntfNameByMac = ncm.getIntfNameByMac;
     origReadOnboardConfig = ncm.readOnboardConfig;
     origIsOnboardConfigSupported = platform.isOnboardConfigSupported;
+    origGetPhyInterfaceNames = ncm.getPhyInterfaceNames;
+    ncm.getPhyInterfaceNames = async () => ports(4);
   });
 
   afterEach(() => {
-    ncm.getIntfNameByMac = origGetIntfNameByMac;
     ncm.readOnboardConfig = origReadOnboardConfig;
     platform.isOnboardConfigSupported = origIsOnboardConfigSupported;
-  });
-
-  describe('correctWanByMac', () => {
-    it('should move wan to the iface owning the MAC, including all name references', async () => {
-      ncm.getIntfNameByMac = async (mac) => mac === "dd:dd:dd:dd:dd:dd" ? "eth3" : null;
-      const fixed = await ncm.correctWanByMac(onboardNetwork(), " DD:DD:DD:DD:DD:DD ");
-      expect(_.get(fixed, ["interface", "phy", "eth3", "meta", "type"])).to.equal("wan");
-      expect(_.get(fixed, ["interface", "phy", "eth3", "dhcp"])).to.be.true;
-      expect(_.get(fixed, ["interface", "phy", "eth0"])).to.be.undefined;
-      expect(_.get(fixed, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2"]);
-      expect(_.get(fixed, ["routing", "global", "default", "viaIntf"])).to.equal("eth3");
-      expect(_.get(fixed, ["nat", "br0_eth0", "out"])).to.equal("eth3");
-      expect(_.get(fixed, ["sshd", "eth3", "enabled"])).to.be.true;
-      expect(_.get(fixed, ["sshd", "eth0"])).to.be.undefined;
-    });
-
-    it('should exchange roles when the real wan port is already used in config', async () => {
-      ncm.getIntfNameByMac = async () => "eth2";
-      const fixed = await ncm.correctWanByMac(onboardNetwork(), "cc:cc:cc:cc:cc:cc");
-      expect(_.get(fixed, ["interface", "phy", "eth2", "meta", "type"])).to.equal("wan");
-      expect(_.get(fixed, ["interface", "phy", "eth0"])).to.eql({enabled: true});
-      expect(_.get(fixed, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth0"]);
-    });
-
-    it('should be a no-op when the MAC owner matches the configured wan', async () => {
-      ncm.getIntfNameByMac = async () => "eth0";
-      const config = onboardNetwork();
-      const fixed = await ncm.correctWanByMac(config, "aa:aa:aa:aa:aa:aa");
-      expect(fixed).to.eql(onboardNetwork());
-    });
-
-    it('should be a no-op when no iface owns the MAC', async () => {
-      ncm.getIntfNameByMac = async () => null;
-      const fixed = await ncm.correctWanByMac(onboardNetwork(), "ff:ff:ff:ff:ff:ff");
-      expect(fixed).to.eql(onboardNetwork());
-    });
-
-    it('should be a no-op without a wanMac', async () => {
-      const fixed = await ncm.correctWanByMac(onboardNetwork(), undefined);
-      expect(fixed).to.eql(onboardNetwork());
-    });
-
-    it('should skip correction when config has multiple wans', async () => {
-      ncm.getIntfNameByMac = async () => "eth2";
-      const config = onboardNetwork();
-      config.interface.phy.eth1 = {meta: {name: "WAN2", type: "wan"}, enabled: true, dhcp: true};
-      const fixed = await ncm.correctWanByMac(config, "cc:cc:cc:cc:cc:cc");
-      expect(fixed).to.eql(config);
-    });
-
-    it('should converge when correcting an already-corrected config', async () => {
-      ncm.getIntfNameByMac = async () => "eth3";
-      const fixed = await ncm.correctWanByMac(onboardNetwork(), "dd:dd:dd:dd:dd:dd");
-      const again = await ncm.correctWanByMac(fixed, "dd:dd:dd:dd:dd:dd");
-      expect(again).to.eql(fixed);
-    });
+    ncm.getPhyInterfaceNames = origGetPhyInterfaceNames;
   });
 
   describe('getDefaultConfig', () => {
-    it('should fall back to default setup when onboard network is invalid', async () => {
+    it('should expand an adaptive profile', async () => {
       platform.isOnboardConfigSupported = () => true;
-      const invalid = onboardNetwork();
-      // duplicate subnet on two lan bridges fails validateConfig
-      invalid.interface.bridge.br1 = {meta: {name: "LAN2", type: "lan"}, ipv4: "10.10.0.2/24", intf: [], enabled: true};
-      ncm.readOnboardConfig = async () => ({parsed: {network: invalid}, raw: JSON.stringify({network: invalid}), path: "/tmp/nonexistent.json"});
+      const network = adaptiveNetwork();
+      ncm.readOnboardConfig = async () => ({parsed: {network}, raw: JSON.stringify({network}), path: "/tmp/nonexistent.json"});
+      const config = await ncm.getDefaultConfig();
+      expect(_.get(config, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
+    });
+
+    it('should fall back to default setup when the profile cannot be expanded', async () => {
+      platform.isOnboardConfigSupported = () => true;
+      const network = adaptiveNetwork({type: "carrier-pigeon"});
+      ncm.readOnboardConfig = async () => ({parsed: {network}, raw: JSON.stringify({network}), path: "/tmp/nonexistent.json"});
       const config = await ncm.getDefaultConfig();
       expect(config).to.eql(require('../../network/default_setup.json'));
     });
@@ -132,6 +196,11 @@ describe('Test onboard config consumption', function() {
     let origSaveConfig, origGetAsync, origSetAsync;
     let savedConfig, hashStore;
 
+    const writeOnboard = async (network) => {
+      const content = {network, license: {uuid: "test"}, provision: {ifmap: {eth0: "20:6d:31:51:04:c7"}}};
+      await fsp.writeFile(testFile, JSON.stringify(content, null, 2));
+    };
+
     beforeEach(async () => {
       savedConfig = null;
       hashStore = {};
@@ -141,10 +210,8 @@ describe('Test onboard config consumption', function() {
       ncm.saveConfig = async (config) => { savedConfig = config; };
       rclient.getAsync = async (key) => key === "sysdb:onboardConfigHash" ? (hashStore[key] || null) : origGetAsync.call(rclient, key);
       rclient.setAsync = async (key, value) => { hashStore[key] = value; return "OK"; };
-      const content = {network: onboardNetwork(), provision: {wanMac: "dd:dd:dd:dd:dd:dd"}, license: {uuid: "test"}};
-      await fsp.writeFile(testFile, JSON.stringify(content, null, 2));
+      await writeOnboard(adaptiveNetwork());
       platform.isOnboardConfigSupported = () => true;
-      ncm.getIntfNameByMac = async (mac) => mac === "dd:dd:dd:dd:dd:dd" ? "eth3" : null;
       ncm.readOnboardConfig = async () => {
         const raw = await fsp.readFile(testFile, {encoding: "utf8"});
         return {parsed: JSON.parse(raw), raw, path: testFile};
@@ -158,25 +225,40 @@ describe('Test onboard config consumption', function() {
       await fsp.unlink(testFile).catch(() => undefined);
     });
 
-    it('should consume once, rewrite the file with corrected wan, then no-op', async () => {
+    it('should consume once, leave the file untouched, then no-op', async () => {
+      const before = await fsp.readFile(testFile, {encoding: "utf8"});
       const consumed = await ncm.consumeOnboardConfig();
       expect(consumed).to.be.true;
-      // file rewritten with wan on eth3, other sections preserved
-      const rewritten = JSON.parse(await fsp.readFile(testFile, {encoding: "utf8"}));
-      expect(_.get(rewritten, ["network", "interface", "phy", "eth3", "meta", "type"])).to.equal("wan");
-      expect(_.get(rewritten, ["license", "uuid"])).to.equal("test");
-      expect(_.get(rewritten, ["provision", "wanMac"])).to.equal("dd:dd:dd:dd:dd:dd");
-      // corrected config saved as active config
-      expect(_.get(savedConfig, ["interface", "phy", "eth3", "meta", "type"])).to.equal("wan");
-      // second run is a no-op
+      // the expanded config becomes active, the file stays as the record of intent
+      expect(_.get(savedConfig, ["interface", "phy", "eth0", "meta", "type"])).to.equal("wan");
+      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
+      expect(await fsp.readFile(testFile, {encoding: "utf8"})).to.equal(before);
       const consumedAgain = await ncm.consumeOnboardConfig();
       expect(consumedAgain).to.be.false;
     });
 
-    it('should not consume nor rewrite when onboard network is invalid', async () => {
-      const content = {network: onboardNetwork(), provision: {wanMac: "dd:dd:dd:dd:dd:dd"}};
-      content.network.interface.bridge.br1 = {meta: {name: "LAN2", type: "lan"}, ipv4: "10.10.0.2/24", intf: [], enabled: true};
-      await fsp.writeFile(testFile, JSON.stringify(content, null, 2));
+    it('should follow the port count of the box it runs on', async () => {
+      ncm.getPhyInterfaceNames = async () => ports(10);
+      await ncm.consumeOnboardConfig();
+      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"]).length).to.equal(9);
+    });
+
+    it('should still accept a full network config', async () => {
+      await writeOnboard({
+        interface: {
+          phy: {eth0: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true}, eth1: {enabled: true}},
+          bridge: {br0: {meta: {name: "LAN", type: "lan"}, ipv4: "10.10.0.1/24", intf: ["eth1"], enabled: true}}
+        },
+        routing: {global: {default: {viaIntf: "eth0"}}},
+        nat: {br0_eth0: {in: "br0", out: "eth0"}}
+      });
+      const consumed = await ncm.consumeOnboardConfig();
+      expect(consumed).to.be.true;
+      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1"]);
+    });
+
+    it('should not consume when the profile cannot be expanded', async () => {
+      await writeOnboard(adaptiveNetwork({type: "carrier-pigeon"}));
       const before = await fsp.readFile(testFile, {encoding: "utf8"});
       const consumed = await ncm.consumeOnboardConfig();
       expect(consumed).to.be.false;
