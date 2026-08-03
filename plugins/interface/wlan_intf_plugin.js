@@ -110,12 +110,6 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
-  static async _isInterfaceLinkUp(iface) {
-    // IFF_UP (0x1): administratively enabled, not operstate (carrier/L2 readiness)
-    return fs.readFileAsync(`/sys/class/net/${iface}/flags`, {encoding: 'utf8'})
-      .then(result => (parseInt(result.trim(), 0) & 0x1) !== 0)
-      .catch(() => false);
-  }
 
   static async _setInterfaceLinkState(iface, up) {
     const isWifiClient = iface === platform.getWifiClientInterface();
@@ -162,11 +156,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     await this._runExclusiveWLANOp(async () => {
       this._cancelAPScanRestoreTimer();
-      if (!(await this._isInterfaceLinkUp(apScanInterface))) {
-        log.info(`AP scan: ${sibling} down, then ${apScanInterface} up`);
-        await this._setInterfaceLinkState(sibling, false);
-        await this._setInterfaceLinkState(apScanInterface, true);
-      }
+      // _setInterfaceLinkState is an idempotent operation; consider executing it every time to avoid unexpected issues.
+      log.info(`AP scan: ${sibling} down, then ${apScanInterface} up`);
+      await this._setInterfaceLinkState(sibling, false);
+      await this._setInterfaceLinkState(apScanInterface, true);
       this._apScanRefCount++;
       this._apScanRestoreArgs = { apScanInterface, sibling };
       // Watchdog only: restore if release never arrives (e.g. hung wpa_cli).
@@ -363,7 +356,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     // refresh interface state in case something is not relinquished in driver
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    if (platform.shouldBringWLANInterfaceUp(this)) {
+    const shouldUp = platform.shouldBringWLANInterfaceUp(this);
+    if (shouldUp) {
       await this._downExclusiveWLANSibling();
       await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
     }
@@ -382,7 +376,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
       await this.writeConfigFile()
 
-      if (this.networkConfig.enabled) {
+      if (shouldUp) {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
