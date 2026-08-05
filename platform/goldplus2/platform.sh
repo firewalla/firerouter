@@ -8,13 +8,13 @@ function get_pppoe_rps_cpus {
 function map_target_branch {
   case "$1" in
   "release_6_0")
-    echo "release_11_0"
+    echo "release_14_0"
     ;;
   "beta_6_0")
-    echo "beta_16_0"
+    echo "beta_22_0"
     ;;
   "beta_7_0")
-    echo "beta_17_0"
+    echo "beta_23_0"
     ;;
   "master")
     echo "master"
@@ -43,4 +43,12 @@ function get_wpa_supplicant_path {
 
 function get_wpa_cli_path {
   echo "wpa_cli"
+}
+
+function get_ndppd_path {
+  echo "ndppd"
+}
+
+function get_dhcpcd_path {
+  echo "dhcpcd"
 }

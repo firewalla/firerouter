@@ -112,7 +112,7 @@ class InterfaceBasePlugin extends Plugin {
   async flushIP(af = null) {
     if (!af || af == 4) {
       await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
-        this.log.error(`Failed to flush ip address of ${this.name}`, err);
+        // interface may not exist, ignore error here
       });
       // make sure to stop dhclient no matter if dhcp is enabled
       if (this.networkConfig.dhcp) {
@@ -369,6 +369,10 @@ class InterfaceBasePlugin extends Plugin {
       // ip address is set but neither dhcp nor gateway is set, considered as LAN interface
       return true;
     return false;
+  }
+
+  getBaseIntf() {
+    return null;
   }
 
   async createInterface() {
@@ -1261,8 +1265,10 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
-      if (!ifRegistered)
+      if (!ifRegistered && !this.getBaseIntf()) {
+        this.log.warn(`Interface ${this.name} is not present yet, defer applying config until it is hotplugged`);
         return;
+      }
     }
 
     const ifCreated = await this.createInterface();
