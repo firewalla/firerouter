@@ -36,6 +36,9 @@ const _ = require('lodash');
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
+const AP_SCAN_RESTORE_DEBOUNCE_MS = 2000;
+const AP_SCAN_RESTORE_WATCHDOG_MS = 35000;
+
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
@@ -107,21 +110,27 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
-  static async _isInterfaceLinkUp(iface) {
-    // IFF_UP (0x1): administratively enabled, not operstate (carrier/L2 readiness)
-    return fs.readFileAsync(`/sys/class/net/${iface}/flags`, {encoding: 'utf8'})
-      .then(result => (parseInt(result.trim(), 0) & 0x1) !== 0)
-      .catch(() => false);
-  }
 
   static async _setInterfaceLinkState(iface, up) {
-    await exec(`sudo ip link set ${iface} ${up ? 'up' : 'down'}`).catch((err) => {
-      log.error(`Failed to set ${iface} link ${up ? 'up' : 'down'}`, err.message);
-    });
-  }
+    const isWifiClient = iface === platform.getWifiClientInterface();
+    const wpaService = `firerouter_wpa_supplicant@${iface}`;
 
-  static _apScanRestoreTimer = null;
-  static _apScanExclusiveOp = Promise.resolve();
+    if (!up && isWifiClient) {
+      await exec(`sudo systemctl stop ${wpaService}`).catch((err) => {
+        log.error(`Failed to stop ${wpaService}`, err.message);
+      });
+    }
+
+    await exec(`sudo ip link set ${iface} ${up ? 'up' : 'down'}`).catch((err) => {
+      // interface link may not exist, ignore error here
+    });
+
+    if (up && isWifiClient) {
+      await exec(`sudo systemctl start ${wpaService}`).catch((err) => {
+        log.error(`Failed to start ${wpaService}`, err.message);
+      });
+    }
+  }
 
   static _runExclusiveWLANOp(op) {
     const result = this._apScanExclusiveOp.then(op);
@@ -138,31 +147,52 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  // Acquire exclusive WLAN for AP scan. Returns true if acquired (caller must release).
   static async prepareAPScanInterface(apScanInterface) {
     const sibling = platform.getExclusiveWLANSibling(apScanInterface);
     if (!sibling) {
-      return;
+      return false;
     }
 
-    return this._runExclusiveWLANOp(async () => {
-      if (!(await this._isInterfaceLinkUp(apScanInterface))) {
-        log.info(`AP scan: ${sibling} down, then ${apScanInterface} up`);
-        await this._setInterfaceLinkState(sibling, false);
-        await this._setInterfaceLinkState(apScanInterface, true);
-      }
-      // Always (re)schedule restore in case WLAN config reapply happens during the scan.
-      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling);
+    await this._runExclusiveWLANOp(async () => {
+      this._cancelAPScanRestoreTimer();
+      // _setInterfaceLinkState is an idempotent operation; consider executing it every time to avoid unexpected issues.
+      log.info(`AP scan: ${sibling} down, then ${apScanInterface} up`);
+      await this._setInterfaceLinkState(sibling, false);
+      await this._setInterfaceLinkState(apScanInterface, true);
+      this._apScanRefCount++;
+      this._apScanRestoreArgs = { apScanInterface, sibling };
+      // Watchdog only: restore if release never arrives (e.g. hung wpa_cli).
+      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling, AP_SCAN_RESTORE_WATCHDOG_MS);
     });
+    return true;
   }
 
-  static _scheduleAPScanInterfaceRestore(apScanInterface, sibling) {
+  // Release after scan completes (success or failure). Debounces restore for back-to-back scans.
+  static releaseAPScanInterface() {
+    if (!this._apScanRestoreArgs) {
+      return;
+    }
+    const { apScanInterface, sibling } = this._apScanRestoreArgs;
+    if (this._apScanRefCount > 0) {
+      this._apScanRefCount--;
+    }
+    if (this._apScanRefCount === 0) {
+      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling, AP_SCAN_RESTORE_DEBOUNCE_MS);
+    }
+  }
+
+  static _scheduleAPScanInterfaceRestore(apScanInterface, sibling, delayMs) {
     this._cancelAPScanRestoreTimer();
     this._apScanRestoreTimer = setTimeout(() => {
       this._apScanRestoreTimer = null;
       this._runExclusiveWLANOp(async () => {
+        // Clear state even on watchdog path (refcount may have leaked).
+        this._apScanRefCount = 0;
+        this._apScanRestoreArgs = null;
         await this._restoreExclusiveWLANForAPScan(apScanInterface, sibling);
       });
-    }, 10000); 
+    }, delayMs);
   }
 
   static async _restoreExclusiveWLANForAPScan(apScanInterface, sibling) {
@@ -196,7 +226,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       return;
     }
     await exec(`sudo ip link set ${sibling} down`).catch((err) => {
-      this.log.warn(`Failed to turn off exclusive WLAN sibling ${sibling}`, err.message);
+      // interface link may not exist, ignore error here
     });
     return;
   }
@@ -326,7 +356,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     // refresh interface state in case something is not relinquished in driver
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    if (platform.shouldBringWLANInterfaceUp(this)) {
+    const shouldUp = platform.shouldBringWLANInterfaceUp(this);
+    if (shouldUp) {
       await this._downExclusiveWLANSibling();
       await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
     }
@@ -345,7 +376,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
       await this.writeConfigFile()
 
-      if (this.networkConfig.enabled) {
+      if (shouldUp) {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
@@ -515,5 +546,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 }
+
+WLANInterfacePlugin._apScanRestoreTimer = null;
+WLANInterfacePlugin._apScanExclusiveOp = Promise.resolve();
+WLANInterfacePlugin._apScanRefCount = 0;
+WLANInterfacePlugin._apScanRestoreArgs = null;
 
 module.exports = WLANInterfacePlugin;
