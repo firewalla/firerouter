@@ -112,7 +112,7 @@ class InterfaceBasePlugin extends Plugin {
   async flushIP(af = null) {
     if (!af || af == 4) {
       await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
-        this.log.error(`Failed to flush ip address of ${this.name}`, err);
+        // interface may not exist, ignore error here
       });
       // make sure to stop dhclient no matter if dhcp is enabled
       if (this.networkConfig.dhcp) {

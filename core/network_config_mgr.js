@@ -445,6 +445,10 @@ class NetworkConfigManager {
 
   // wait for scan done before parsing result if waitForScan is set to true
   async getWlansViaWpaSupplicant(waitForScan = false) {
+    if(!waitForScan) {
+      // the exclusive WLAN sibling need to wait for scan result before parsing result
+      waitForScan = !!platform.getExclusiveWLANSibling(platform.getAPScanInterface())
+    }
     log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
     const pluginLoader = require('../plugins/plugin_loader.js')
     const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin');
@@ -459,158 +463,162 @@ class NetworkConfigManager {
       return [];
     }
 
-    await WLANInterfacePlugin.prepareAPScanInterface(apScanInterface);
+    const apScanAcquired = await WLANInterfacePlugin.prepareAPScanInterface(apScanInterface);
+    try {
+      const wpaCliPath = await platform.getWpaCliBinPath();
+      const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
 
-    const wpaCliPath = await platform.getWpaCliBinPath();
-    const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
+      // manually create a promise to return right after result parsing is finished, without waiting for process exit
+      const deferred = {}
+      deferred.promise = new Promise((resolve, reject) => {
+        deferred.resolve = resolve
+        deferred.reject = reject
+      })
 
-    // manually create a promise to return right after result parsing is finished, without waiting for process exit
-    const deferred = {}
-    deferred.promise = new Promise((resolve, reject) => {
-      deferred.resolve = resolve
-      deferred.reject = reject
-    })
+      await platform.setDFSScanState(true);
+      const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
+      wpaCli.on('error', err => {
+        log.error('Error running wpa_cli', err.message)
+      })
+      wpaCli.on('exit', code => {
+        // if the code is 255, wpa_supplicant is probably not initialized
+        switch(code) {
+          case 124: // timeout
+          case 255: // wpa_supplicant not initialized
+            deferred.reject(new Error(`wpa_cli exited with ${code}`))
+            break;
+          default:
+            log.info('wpa_cli exited with code', code)
+        }
 
-    await platform.setDFSScanState(true);
-    const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
-    wpaCli.on('error', err => {
-      log.error('Error running wpa_cli', err.message)
-    })
-    wpaCli.on('exit', code => {
-      // if the code is 255, wpa_supplicant is probably not initialized
-      switch(code) {
-        case 124: // timeout
-        case 255: // wpa_supplicant not initialized
-          deferred.reject(new Error(`wpa_cli exited with ${code}`))
-          break;
-        default:
-          log.info('wpa_cli exited with code', code)
-      }
+        deferred.resolve()
+      })
+      const results = []
 
-      deferred.resolve()
-    })
-    const results = []
+      let state = 'waitForResult'
+      const scanResultCommand = platform.getWpaCliScanResultCommand();
 
-    let state = 'waitForResult'
-    const scanResultCommand = platform.getWpaCliScanResultCommand();
+      // not using readline here as the final prompt after result won't be followed by line feed
+      // readline will wait for that and cause a 5s delay
+      wpaCli.stdout.on('data', data => {
+        if (!data) return
+        // Keep trailing spaces: SSID is the last field in scan_result output,
+        // so trim() would corrupt SSIDs like "MyWiFi ".
+        const lines = data.toString().split('\n').map(line => line.replace(/\r$/, '').trimStart())
+        for (const line of lines) try {
+          log.debug(state, line)
 
-    // not using readline here as the final prompt after result won't be followed by line feed
-    // readline will wait for that and cause a 5s delay
-    wpaCli.stdout.on('data', data => {
-      if (!data) return
-      // Keep trailing spaces: SSID is the last field in scan_result output,
-      // so trim() would corrupt SSIDs like "MyWiFi ".
-      const lines = data.toString().split('\n').map(line => line.replace(/\r$/, '').trimStart())
-      for (const line of lines) try {
-        log.debug(state, line)
+          // as stdin and stdout are separate streams, the order between input output streams cannot be guaranteed
+          // so the state machine here is not strict and only distinguishes the result parsing state
 
-        // as stdin and stdout are separate streams, the order between input output streams cannot be guaranteed
-        // so the state machine here is not strict and only distinguishes the result parsing state
+          // wait for scan finish
+          // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+          if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
+            wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+              log.verbose('quit written')
+            })
+            // reject immediately instead of waiting for timeout
+            deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
+            continue
+          }
+          if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
+            waitForScan = false
+            log.info('scan done, getting result')
+            wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
+              log.verbose(scanResultCommand + ' written')
+            })
+            continue
+          }
 
-        // wait for scan finish
-        // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
-        if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
-          wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
-            log.verbose('quit written')
+          if (line.match(/^(> )?bssid \/ frequency/)) {
+            log.verbose('result header seen, state => parsingResult')
+            state = 'parsingResult'
+            continue
+          }
+
+          switch (state) {
+            case 'parsingResult':
+              if (line.startsWith('>')) {
+                log.verbose('prompt seen, quit')
+                state = 'done'
+                deferred.resolve()
+
+                wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+                  log.verbose('quit written')
+                })
+                break
+              }
+              if (line.startsWith('<')) {
+                log.verbose('ignoring event', line)
+                break
+              }
+
+              const split = line.split('\t');
+              if (split.length < 4) { 
+                log.verbose('ignoring line', line)
+                break
+              }
+
+              const mac = split.shift().toUpperCase()
+              const freq = parseInt(split.shift())
+              const signal = parseInt(split.shift())
+              const flags = split.shift().split(/[\[\]]/).filter(Boolean)
+
+              const wlan = { mac, freq, signal, flags }
+
+              wlan.ssid = util.parseEscapedString(split.shift())
+              const testSet = new Set(wlan.ssid)
+              if (testSet.size == 1 && testSet.values().next().value == '\x00') {
+                wlan.ssid = ""
+              }
+
+              results.push(wlan)
+
+              break
+            case 'done':
+              // do nothing
+          }
+        } catch(err) {
+          log.error(`Error parsing line \"${line}\"\n`, err)
+        }
+      })
+
+      // start scan right away
+      wpaCli.stdin.write('scan\n', () => {
+        log.verbose('scan wirtten')
+        // only write after previous one finishes
+        if (!waitForScan) {
+          log.info('not waitForScan, getting result')
+          wpaCli.stdin.write(scanResultCommand + '\n', () => {
+            log.info(scanResultCommand + ' written')
           })
-          // reject immediately instead of waiting for timeout
-          deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
-          continue
         }
-        if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
-          waitForScan = false
-          log.info('scan done, getting result')
-          wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
-            log.verbose(scanResultCommand + ' written')
-          })
-          continue
-        }
+      })
 
-        if (line.match(/^(> )?bssid \/ frequency/)) {
-          log.verbose('result header seen, state => parsingResult')
-          state = 'parsingResult'
-          continue
-        }
-
-        switch (state) {
-          case 'parsingResult':
-            if (line.startsWith('>')) {
-              log.verbose('prompt seen, quit')
-              state = 'done'
-              deferred.resolve()
-
-              wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
-                log.verbose('quit written')
-              })
-              break
-            }
-            if (line.startsWith('<')) {
-              log.verbose('ignoring event', line)
-              break
-            }
-
-            const split = line.split('\t');
-            if (split.length < 4) { 
-              log.verbose('ignoring line', line)
-              break
-            }
-
-            const mac = split.shift().toUpperCase()
-            const freq = parseInt(split.shift())
-            const signal = parseInt(split.shift())
-            const flags = split.shift().split(/[\[\]]/).filter(Boolean)
-
-            const wlan = { mac, freq, signal, flags }
-
-            wlan.ssid = util.parseEscapedString(split.shift())
-            const testSet = new Set(wlan.ssid)
-            if (testSet.size == 1 && testSet.values().next().value == '\x00') {
-              wlan.ssid = ""
-            }
-
-            results.push(wlan)
-
-            break
-          case 'done':
-            // do nothing
-        }
-      } catch(err) {
-        log.error(`Error parsing line \"${line}\"\n`, err)
+      const selfWlanMacs = []
+      const config = await this.getActiveConfig()
+      const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+      for (const intf of hostapdIntf) {
+        const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+        selfWlanMacs.push(buffer.toString().trim().toUpperCase())
       }
-    })
 
-    // start scan right away
-    wpaCli.stdin.write('scan\n', () => {
-      log.verbose('scan wirtten')
-      // only write after previous one finishes
-      if (!waitForScan) {
-        log.info('not waitForScan, getting result')
-        wpaCli.stdin.write(scanResultCommand + '\n', () => {
-          log.info(scanResultCommand + ' written')
-        })
-      }
-    })
-
-    const selfWlanMacs = []
-    const config = await this.getActiveConfig()
-    const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
-    for (const intf of hostapdIntf) {
-      const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
-      selfWlanMacs.push(buffer.toString().trim().toUpperCase())
-    }
-
-    return new Promise((resolve, reject) => {
-      deferred.promise.then(() => {
-        log.verbose('returning')
-        const final = results.filter(r => !selfWlanMacs.includes(r.mac))
-        log.info(`Found ${final.length} SSIDs`)
-        resolve(final)
-      }).catch((err) => {
-        reject(err)
-      }).finally(async () => {
-        await platform.setDFSScanState(false);
+      return await new Promise((resolve, reject) => {
+        deferred.promise.then(() => {
+          log.verbose('returning')
+          const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+          log.info(`Found ${final.length} SSIDs`)
+          resolve(final)
+        }).catch((err) => {
+          reject(err)
+        });
       });
-    });
+    } finally {
+      await platform.setDFSScanState(false);
+      if (apScanAcquired) {
+        WLANInterfacePlugin.releaseAPScanInterface();
+      }
+    }
   }
 
   async getAvailableChannelsHostapd() {

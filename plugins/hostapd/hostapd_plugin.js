@@ -102,6 +102,7 @@ class HostapdPlugin extends Plugin {
     const parameters = pluginConfig.default ? JSON.parse(JSON.stringify(pluginConfig.default)) : {};
     const params = this.networkConfig.params || {};
     parameters.interface = this.name;
+    const hasExclusiveSibling = !!platform.getExclusiveWLANSibling(this.name);
     const intfPlugin = pl.getPluginInstance("interface", this.name);
     if (!intfPlugin)
       this.fatal(`Cannot find interface plugin ${this.name}`);
@@ -137,53 +138,62 @@ class HostapdPlugin extends Plugin {
 
     Object.assign(parameters, params)
 
-    if (!parameters.channel && !platform.isWLANManagedByAPC()) {
-      let availableChannels = await HostapdPlugin.getAvailableChannels()
+    if (!platform.isWLANManagedByAPC()) {
+      if (!parameters.channel) {
+        let availableChannels = await HostapdPlugin.getAvailableChannels()
 
-      if (parameters.chanlist) {
-        // chanlist doesn't work in hostapd config, as it doesn't support acs
-        // use it just to filter preset available channels here
-        const chanlist = util.parseNumList(parameters.chanlist)
-        const filtered = availableChannels.filter(c => chanlist.includes(c))
-        if (filtered.length) {
-          availableChannels = filtered
-          this.log.info('chanlist set, available channels now', availableChannels)
-        } else {
-          this.log.error('No channels available after filtering, using default channels')
+        if (parameters.chanlist) {
+          // chanlist doesn't work in hostapd config, as it doesn't support acs
+          // use it just to filter preset available channels here
+          const chanlist = util.parseNumList(parameters.chanlist)
+          const filtered = availableChannels.filter(c => chanlist.includes(c))
+          if (filtered.length) {
+            availableChannels = filtered
+            this.log.info('chanlist set, available channels now', availableChannels)
+          } else {
+            this.log.error('No channels available after filtering, using default channels')
+          }
+          delete parameters.chanlist
         }
-        delete parameters.chanlist
-      }
 
-      let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {
-        availableWLANs = await ncm.getWlansViaWpaSupplicant()
-        if (availableWLANs && availableWLANs.length)
-          break; // stop on first successful call
-        else
-          this.log.warn('No wlan found, trying again...')
-        await util.delay(2000)
-      } catch(err) {
-        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(2000)
-      }
-
-      if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
-        // 5G network is preferred
-        parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
-        this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
-      }
-      else {
-        const scores = HostapdPlugin.calculateChannelScores(availableWLANs)
-
-        let bestChannel = undefined
-        for (const ch of availableChannels) {
-          // available channels should be listed in ascending order, so empty 5G channel is always preferred
-          if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
-            bestChannel = ch
+        let availableWLANs
+        for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {
+          availableWLANs = await ncm.getWlansViaWpaSupplicant()
+          if (availableWLANs && availableWLANs.length)
+            break; // stop on first successful call
+          else
+            this.log.warn('No wlan found, trying again...')
+          await util.delay(2000)
+        } catch (err) {
+          this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
+          await util.delay(2000)
         }
-        this.log.info('Best channel is', bestChannel)
 
-        parameters.channel = bestChannel
+        if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
+          // 5G network is preferred
+          parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
+          this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
+        }
+        else {
+          const scores = HostapdPlugin.calculateChannelScores(availableWLANs)
+
+          let bestChannel = undefined
+          for (const ch of availableChannels) {
+            // available channels should be listed in ascending order, so empty 5G channel is always preferred
+            if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
+              bestChannel = ch
+          }
+          this.log.info('Best channel is', bestChannel)
+
+          parameters.channel = bestChannel
+        }
+      }
+      else if (hasExclusiveSibling) {
+        // channel already set, skip scan but still ensure exclusive WLAN is owned by AP
+        const sibling = platform.getExclusiveWLANSibling(this.name);
+        this.log.info(`Exclusive WLAN for hostapd: ${sibling} down, then ${this.name} up`);
+        await WLANInterfacePlugin._setInterfaceLinkState(sibling, false);
+        await WLANInterfacePlugin._setInterfaceLinkState(this.name, true);
       }
     }
 
@@ -247,8 +257,9 @@ class HostapdPlugin extends Plugin {
     const iwPhy = await fsp.readFile(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (this.networkConfig.enabled !== false) {
       await platform.enableHostapd(this.name, parameters);
-      await exec(`sudo systemctl start firerouter_hostapd_cli@${this.name}`).catch((err) => {}); // start the listener after hostapd is started
-      if (!platform.isWLANManagedByAPC()) {
+      if (platform.isWLANManagedByAPC()) {
+        await exec(`sudo systemctl start firerouter_hostapd_cli@${this.name}`).catch((err) => {});
+      } else {
         if (this.networkConfig.bridge) {
           // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
           let addedToBridge = false;
@@ -266,19 +277,18 @@ class HostapdPlugin extends Plugin {
             } else {
               this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
               await platform.enableHostapd(this.name, parameters);
-              await exec(`sudo systemctl restart firerouter_hostapd_cli@${this.name}`).catch((err) => {});
               retryCount++;
             }
           }
         }
-        if (iwPhy)
+        if (iwPhy && !hasExclusiveSibling)
           await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
             this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
           });
       }
     } else {
       if (!platform.isWLANManagedByAPC()) {
-        if (iwPhy)
+        if (iwPhy && !hasExclusiveSibling)
           await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
             this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
           });
