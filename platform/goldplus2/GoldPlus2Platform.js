@@ -19,7 +19,9 @@ const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
+const r = require('../../util/firerouter.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const pl = require('../../plugins/plugin_loader.js');
 const WifiSD = require('../WifiSD.js')
 const fs = require('fs');
 const fsp = fs.promises;
@@ -30,9 +32,9 @@ const IF_WLAN1 = "wlan1";
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
-class GSEPlatform extends Platform {
+class GoldPlus2Platform extends Platform {
   getName() {
-    return "gse";
+    return "goldplus2";
   }
 
   getDefaultNetworkJsonFile() {
@@ -47,8 +49,71 @@ class GSEPlatform extends Platform {
     return IF_WLAN1;
   }
 
+  getDefaultBaseIntf(intfName) {
+    if (intfName === this.getWifiAPInterface()) {
+      return this.getWifiClientInterface();
+    }
+    return null;
+  }
+
+  getDefaultWLanType(intfName) {
+    if (intfName === this.getWifiAPInterface()) {
+      return "__ap";
+    }
+    return "managed";
+  }
+
+  getExclusiveWLANSibling(intfName) {
+    if (intfName === IF_WLAN0) {
+      return IF_WLAN1;
+    }
+    if (intfName === IF_WLAN1) {
+      return IF_WLAN0;
+    }
+    return null;
+  }
+
+  shouldBringWLANInterfaceUp(wlanIntfPlugin) {
+    if (wlanIntfPlugin.networkConfig.enabled === false) {
+      return false;
+    }
+    const hostapdActive = (intf) => {
+      const hp = pl.getPluginInstance("hostapd", intf);
+      return hp && hp.networkConfig.enabled !== false;
+    };
+    if (wlanIntfPlugin.name === this.getWifiClientInterface()) {
+      if (hostapdActive(this.getWifiAPInterface())) {
+        return false;
+      }
+    } else if (wlanIntfPlugin.name === this.getWifiAPInterface()) {
+      if (!hostapdActive(wlanIntfPlugin.name)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async _isInterfaceLinkUp(iface) {
+    // IFF_UP (0x1): administratively enabled, not operstate (carrier/L2 readiness)
+    return fsp.readFile(`/sys/class/net/${iface}/flags`, {encoding: 'utf8'})
+      .then(result => (parseInt(result.trim(), 0) & 0x1) !== 0)
+      .catch(() => false);
+  }
+
+  async enableHostapd(iface, parameters) {
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), { encoding: 'utf8' });
+    // getWlansViaWpaSupplicant may temporarily bring the AP iface link down; wait briefly before starting hostapd
+    for (let i = 0; i < 5; i++) {
+      if (await this._isInterfaceLinkUp(iface))
+        break;
+      if (i < 4)
+        await util.delay(1000);
+    }
+    await exec(`sudo systemctl restart firerouter_hostapd@${iface}`).catch((err) => { });
+  }
+  
   getMiniupnpdNftPath() {
-    return `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+    return `${this.getBinaryPath()}/miniupnpd.nft`;
   }
 
   wifiSD() {
@@ -240,6 +305,9 @@ class GSEPlatform extends Platform {
     return koPath;
   }
 
+  getSSHKeyTypes() {
+    return ['ecdsa', 'ed25519', 'rsa'];
+  }
 }
 
-module.exports = GSEPlatform;
+module.exports = GoldPlus2Platform;

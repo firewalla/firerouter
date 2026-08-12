@@ -49,6 +49,16 @@ class Platform {
     return await this.getLSBCodeName() === 'jammy';
   }
 
+  async isMiniupnpdUsingNft() {
+    const cmd = "miniupnpd --version | grep -w nftables";
+    const result = await exec(cmd, {encoding: 'utf8'}).then(() => true).catch(() => false);
+    return result;
+  }
+
+  getMiniupnpdNftPath() {
+    return null;
+  }
+
   getDefaultNetworkJsonFile() {
     return `${__dirname}/../network/default_setup.json`;
   }
@@ -61,8 +71,28 @@ class Platform {
     return null;
   }
 
+  getWifiAPInterface() {
+    return null;
+  }
+
   getAPScanInterface() {
     return this.getWifiClientInterface();
+  }
+
+  getDefaultBaseIntf(intfName) {
+    return null;
+  }
+
+  getDefaultWLanType(intfName) {
+    return "managed";
+  }
+
+  getExclusiveWLANSibling(intfName) {
+    return null;
+  }
+
+  shouldBringWLANInterfaceUp(wlanIntfPlugin) {
+    return wlanIntfPlugin.networkConfig.enabled !== false;
   }
 
   async getWpaCliBinPath() {
@@ -186,43 +216,61 @@ class Platform {
   }
 
   async installKernelModule(module_name) {
-    const installed = await this.isKernelModuleInstalled(module_name);
-    if (installed) return;
-    // below code seems not needed
-    const codename = await exec(`lsb_release -cs`).then((result) => result.stdout.trim())
-      .catch((err) => {
-        log.error("Failed to get codename of OS distribution", err.message);
-        return null;
-      });
-    if (!codename)
-      return;
-    // end of below code seems not needed
-
     const koPath = await this.getKoPath(module_name);
     const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);
-    if (koExists){
-      await exec(`sudo insmod ${koPath}`).catch((err) => {
-        log.error(`Failed to install ${module_name}.ko`, err.message);
-      });
+    // Prefer the local .ko when present; fall back to system module (e.g. after rollback).
+    const target = koExists ? koPath : module_name;
+    const load = () => koExists
+      ? this.insmodKernelModule(module_name, koPath)
+      : this.modprobeKernelModule(module_name);
+
+    if (!(await this.isKernelModuleLoaded(module_name))) {
+      await load();
+      return;
     }
+
+    const loadedSrcVersion = await this.getLoadedModuleSrcVersion(module_name);
+    const targetSrcVersion = await this.getModuleSrcVersion(target);
+    if (loadedSrcVersion === targetSrcVersion) return;
+
+    log.info(`Reloading ${module_name}: srcversion changed (${loadedSrcVersion || '<empty>'} -> ${targetSrcVersion || '<empty>'})`);
+    if (!(await this.rmmodKernelModule(module_name))) return;
+    await load();
   }
 
-  async isKernelModuleInstalled(module_name) {
-    if (!this.installedModules) {
-      this.installedModules = {};
-    }
-    if (this.installedModules[module_name]) {
-      return this.installedModules[module_name];
-    }
-    const cmdResult = await exec(`lsmod | grep ${module_name} | awk '{print $1}'`);
-    const results = cmdResult.stdout.toString().trim().split('\n');
-    for (const result of results) {
-      if (result == module_name) {
-        this.installedModules[module_name] = true;
-        return true;
-      }
-    }
-    return false;
+  async modprobeKernelModule(module_name) {
+    await exec(`sudo modprobe ${module_name}`).catch((err) => {
+      log.error(`Failed to modprobe ${module_name}`, err.message);
+    });
+  }
+
+  async rmmodKernelModule(module_name) {
+    return await exec(`sudo rmmod ${module_name}`).then(() => true).catch((err) => {
+      log.error(`Failed to unload ${module_name} before reload`, err.message);
+      return false;
+    });
+  }
+
+  async insmodKernelModule(module_name, koPath) {
+    await exec(`sudo insmod ${koPath}`).catch((err) => {
+      log.error(`Failed to install ${module_name}.ko`, err.message);
+    });
+  }
+
+  async isKernelModuleLoaded(module_name) {
+    return await fsp.access(`/sys/module/${module_name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+  }
+
+  async getLoadedModuleSrcVersion(module_name) {
+    return await fsp.readFile(`/sys/module/${module_name}/srcversion`, {encoding: 'utf8'})
+      .then((result) => result.trim())
+      .catch(() => "");
+  }
+
+  async getModuleSrcVersion(moduleOrPath) {
+    const stdout = await exec(`modinfo ${moduleOrPath}`).then((result) => result.stdout.toString()).catch(() => "");
+    const match = stdout.match(/^srcversion:\s*(\S+)/m);
+    return match ? match[1] : "";
   }
 
   async getKernelModulesPath() {
@@ -271,8 +319,13 @@ class Platform {
 
   async installMiniupnpd() {
     // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
-    if (!await this.isUbuntu22()) return
-    const srcPath = `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+    if (!await this.isMiniupnpdUsingNft()) return;
+    const srcPath = this.getMiniupnpdNftPath();
+    if (!srcPath) {
+      log.debug("miniupnpd nft path is not set on this platform, skipping miniupnpd update");
+      return;
+    }
+    log.info(`Checking if miniupnpd binary needs update, srcPath: ${srcPath}`);
     // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
     const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
       .then(() => true).catch(() => false);
@@ -297,8 +350,8 @@ class Platform {
   async createWLANInterface(wlanIntfPlugin) {
     const ifaceExists = await exec(`ip link show dev ${wlanIntfPlugin.name}`).then(() => true).catch((err) => false);
     if (!ifaceExists) {
-      if (wlanIntfPlugin.networkConfig.baseIntf) {
-        const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+      const baseIntf = wlanIntfPlugin.getBaseIntf();
+      if (baseIntf) {
         const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
         if (baseIntfPlugin) {
           wlanIntfPlugin.subscribeChangeFrom(baseIntfPlugin);
@@ -309,7 +362,7 @@ class Platform {
         } else {
           wlanIntfPlugin.fatal(`Lower interface plugin not found ${baseIntf}`);
         }
-        const type = wlanIntfPlugin.networkConfig.type || "managed";
+        const type = wlanIntfPlugin.getWlanType();
         await exec(`sudo iw dev ${baseIntf} interface add ${wlanIntfPlugin.name} type ${type}`);
       }
     } else {
@@ -318,8 +371,8 @@ class Platform {
   }
 
   async removeWLANInterface(wlanIntfPlugin) {
-    if (wlanIntfPlugin.networkConfig && wlanIntfPlugin.networkConfig.baseIntf) {
-      const baseIntf = wlanIntfPlugin.networkConfig.baseIntf;
+    const baseIntf = wlanIntfPlugin.getBaseIntf();
+    if (baseIntf) {
       const basePhy = await exec(`readlink -f /sys/class/net/${baseIntf}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       const myPhy = await exec(`readlink -f /sys/class/net/${wlanIntfPlugin.name}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
       if (basePhy && myPhy && basePhy === myPhy)
@@ -409,6 +462,10 @@ class Platform {
 
   async setWifiDynamicDebug() {
     return;
+  }
+
+  getSSHKeyTypes() {
+    return ['dsa', 'ecdsa', 'ed25519', 'rsa'];
   }
 }
 
