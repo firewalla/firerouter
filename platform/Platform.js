@@ -218,35 +218,37 @@ class Platform {
   async installKernelModule(module_name) {
     const koPath = await this.getKoPath(module_name);
     const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);
+    // Prefer the local .ko when present; fall back to system module (e.g. after rollback).
+    const target = koExists ? koPath : module_name;
+    const load = () => koExists
+      ? this.insmodKernelModule(module_name, koPath)
+      : this.modprobeKernelModule(module_name);
 
-    // No local .ko: fall back to system module via modprobe (idempotent)
-    if (!koExists) {
-      await exec(`sudo modprobe ${module_name}`).catch((err) => {
-        log.error(`Failed to modprobe ${module_name}`, err.message);
-      });
-      return;
-    }
-
-    // Local .ko exists: load / refresh via insmod
-    const loaded = await this.isKernelModuleLoaded(module_name);
-    if (!loaded) {
-      await this.insmodKernelModule(module_name, koPath);
+    if (!(await this.isKernelModuleLoaded(module_name))) {
+      await load();
       return;
     }
 
     const loadedSrcVersion = await this.getLoadedModuleSrcVersion(module_name);
-    const localSrcVersion = await this.getKoFileSrcVersion(koPath);
-    // Both empty (e.g. in-tree builds without SRCVERSION) are treated as the same module
-    if (loadedSrcVersion === localSrcVersion) return;
+    const targetSrcVersion = await this.getModuleSrcVersion(target);
+    if (loadedSrcVersion === targetSrcVersion) return;
 
-    log.info(`Reloading ${module_name}: srcversion changed (${loadedSrcVersion || '<empty>'} -> ${localSrcVersion || '<empty>'})`);
-    const unloaded = await exec(`sudo rmmod ${module_name}`).then(() => true).catch((err) => {
+    log.info(`Reloading ${module_name}: srcversion changed (${loadedSrcVersion || '<empty>'} -> ${targetSrcVersion || '<empty>'})`);
+    if (!(await this.rmmodKernelModule(module_name))) return;
+    await load();
+  }
+
+  async modprobeKernelModule(module_name) {
+    await exec(`sudo modprobe ${module_name}`).catch((err) => {
+      log.error(`Failed to modprobe ${module_name}`, err.message);
+    });
+  }
+
+  async rmmodKernelModule(module_name) {
+    return await exec(`sudo rmmod ${module_name}`).then(() => true).catch((err) => {
       log.error(`Failed to unload ${module_name} before reload`, err.message);
       return false;
     });
-    if (!unloaded) return;
-
-    await this.insmodKernelModule(module_name, koPath);
   }
 
   async insmodKernelModule(module_name, koPath) {
@@ -265,8 +267,8 @@ class Platform {
       .catch(() => "");
   }
 
-  async getKoFileSrcVersion(koPath) {
-    const stdout = await exec(`modinfo ${koPath}`).then((result) => result.stdout.toString()).catch(() => "");
+  async getModuleSrcVersion(moduleOrPath) {
+    const stdout = await exec(`modinfo ${moduleOrPath}`).then((result) => result.stdout.toString()).catch(() => "");
     const match = stdout.match(/^srcversion:\s*(\S+)/m);
     return match ? match[1] : "";
   }
