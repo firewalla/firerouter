@@ -19,6 +19,7 @@ const firestatusBaseURL = "http://127.0.0.1:9966";
 const exec = require('child-process-promise').exec;
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
+const r = require('../../util/firerouter.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const pl = require('../../plugins/plugin_loader.js');
 const WifiSD = require('../WifiSD.js')
@@ -90,6 +91,25 @@ class GoldPlus2Platform extends Platform {
       }
     }
     return true;
+  }
+
+  async _isInterfaceLinkUp(iface) {
+    // IFF_UP (0x1): administratively enabled, not operstate (carrier/L2 readiness)
+    return fsp.readFile(`/sys/class/net/${iface}/flags`, {encoding: 'utf8'})
+      .then(result => (parseInt(result.trim(), 0) & 0x1) !== 0)
+      .catch(() => false);
+  }
+
+  async enableHostapd(iface, parameters) {
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), { encoding: 'utf8' });
+    // getWlansViaWpaSupplicant may temporarily bring the AP iface link down; wait briefly before starting hostapd
+    for (let i = 0; i < 5; i++) {
+      if (await this._isInterfaceLinkUp(iface))
+        break;
+      if (i < 4)
+        await util.delay(1000);
+    }
+    await exec(`sudo systemctl restart firerouter_hostapd@${iface}`).catch((err) => { });
   }
   
   getMiniupnpdNftPath() {
