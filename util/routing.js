@@ -305,13 +305,14 @@ async function initializeInterfaceRoutingTables(intf) {
   await flushRoutingTable(`${intf}_default`);
 }
 
-async function createInterfaceRoutingRules(intf, noSelfRoute = false) {
+async function createInterfaceRoutingRules(intf, noSelfRoute = false, isWan = false) {
   // self route on specific types of WAN interface may be undesired and will cause infinite loop, e.g., docker network with VPN client containers
   const promises = [
     createPolicyRoutingRule("all", intf, `${intf}_local`, 501),
-    createPolicyRoutingRule("all", "lo", `${intf}_local`, 501),
+    // lookup wan local routing table for local-originated packet only if mark is not explicitly set
+    createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, isWan ? `0x0/${MASK_REG}` : null),
     createPolicyRoutingRule("all", intf, `${intf}_local`, 501, null, 6),
-    createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, null, 6),
+    createPolicyRoutingRule("all", "lo", `${intf}_local`, 501, isWan ? `0x0/${MASK_REG}` : null, 6),
   ];
   if (!noSelfRoute) {
     promises.push(createPolicyRoutingRule("all", intf, `${intf}_default`, 8001));
