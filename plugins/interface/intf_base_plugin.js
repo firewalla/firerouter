@@ -112,7 +112,7 @@ class InterfaceBasePlugin extends Plugin {
   async flushIP(af = null) {
     if (!af || af == 4) {
       await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
-        this.log.error(`Failed to flush ip address of ${this.name}`, err);
+        // interface may not exist, ignore error here
       });
       // make sure to stop dhclient no matter if dhcp is enabled
       if (this.networkConfig.dhcp) {
@@ -371,6 +371,10 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  getBaseIntf() {
+    return null;
+  }
+
   async createInterface() {
     return true;
   }
@@ -438,7 +442,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute, this.isWAN());
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
@@ -1261,8 +1265,10 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
-      if (!ifRegistered)
+      if (!ifRegistered && !this.getBaseIntf()) {
+        this.log.warn(`Interface ${this.name} is not present yet, defer applying config until it is hotplugged`);
         return;
+      }
     }
 
     const ifCreated = await this.createInterface();
@@ -2035,8 +2041,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
       this.getIPv6Addresses(),
-      routing.getInterfaceGWIP(this.name) || null,
-      routing.getInterfaceGWIP(this.name, 6) || null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
       this.getDns4Nameservers(),
       this.getOrigDNSNameservers(),
       this.getDns6Nameservers(),
