@@ -37,6 +37,9 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_update_rt /etc/dhcp/dhclient-exit-hooks.d/`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_ip_change /etc/dhcp/dhclient-exit-hooks.d/`);
     // copy dhcpcd hook script
+    if (!fs.existsSync('/lib/dhcpcd/dhcpcd-run-hooks')) {
+      await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_run_hooks /lib/dhcpcd/dhcpcd-run-hooks`);
+    }
     await exec(`sudo rm -r /lib/dhcpcd/dhcpcd-hooks/firerouter_*`).catch((err) => {});
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_update_rt /lib/dhcpcd/dhcpcd-hooks/`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_pd /lib/dhcpcd/dhcpcd-hooks/`);
