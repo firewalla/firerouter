@@ -135,6 +135,12 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         })
       }
 
+    // prevent port state from being reset by a later ifup.
+    if (this.networkConfig.enabled)
+      await exec(`sudo ip link set dev ${this.name} up`).catch((err) => {
+        this.log.error(`Failed to bring up bridge interface ${this.name}`, err.message);
+      });
+
     if (isVlanBridge) {
       if (!this._stateSync)
         this._stateSync = new BridgePortStateSync(this.name, this.log);
