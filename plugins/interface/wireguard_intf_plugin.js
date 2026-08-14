@@ -66,11 +66,12 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
     await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
     await fs.unlinkAsync(this._getInterfaceConfPath()).catch((err) => {});
-    if (Number.isInteger(this.networkConfig.listenPort)) {
-      await exec(util.wrapIptables(`sudo iptables -w -D ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -D ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo iptables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});      
+    const listenPort = this._getListenPort();
+    if (listenPort !== null) {
+      await exec(util.wrapIptables(`sudo iptables -w -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
     }
     await this._resetBindIntfRule().catch((err) => {});
     this._disposeAutomata();
@@ -101,6 +102,13 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return `${r.getUserConfigFolder()}/${this.wireguardType}/${this.name}.conf`;
   }
 
+  // listenPort has historically arrived as a string as well as a number. setup and cleanup both go
+  // through this, otherwise a port accepted when the interface was created would be missed when its
+  // rules are torn down
+  _getListenPort() {
+    return util.toBoundedInt(this.networkConfig.listenPort, 1, 65535);
+  }
+
   getDefaultMTU() {
     //  The overhead of WireGuard breaks down as follows:
     // - 20-byte IPv4 header or 40 byte IPv6 header
@@ -126,13 +134,14 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     // [Interface] section
     const entries = ["[Interface]"];
     entries.push(`PrivateKey = ${this.networkConfig.privateKey}`);
-    if (Number.isInteger(this.networkConfig.listenPort)) {
-      entries.push(`ListenPort = ${this.networkConfig.listenPort}`);
+    const listenPort = this._getListenPort();
+    if (listenPort !== null) {
+      entries.push(`ListenPort = ${listenPort}`);
       if (this.networkConfig.enabled && this.networkConfig.allowOnFirewall !== false) {
-        await exec(util.wrapIptables(`sudo iptables -w -A ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-        await exec(util.wrapIptables(`sudo ip6tables -w -A ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-        await exec(util.wrapIptables(`sudo iptables -w -t nat -A ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-        await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A ${this.iptablesChainName} -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo iptables -w -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo iptables -w -t nat -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
       }
     }
     // for amneziawg, add obfuscation options

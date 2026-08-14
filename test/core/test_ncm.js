@@ -43,19 +43,19 @@ describe('Test network config manager', function(){
 
   it('should validate network ncid', async()=> {
     const nwConfig = {"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944};
-    expect(await ncm.validateNcid(nwConfig, true)).to.be.undefined;
+    expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.undefined;
 
     await rclient.setAsync(this.testkey, `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`);
-    expect(await ncm.validateNcid(nwConfig, true)).to.be.undefined;
+    expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.undefined;
   });
 
   it('should fail to validate network ncid', async()=> {
     await rclient.setAsync(this.testkey, `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`);
 
     const nwConfig = {"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, ncid: "2df97f9efb0ad09b7201726801377449"};
-    expect(await ncm.validateNcid(nwConfig, true)).to.be.eql(["ncid not match"]);
+    expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.eql(["ncid not match"]);
 
-    expect(await ncm.validateNcid(nwConfig, true, true)).to.be.undefined;
+    expect(await ncm.validateNcidOrReqId(nwConfig, true, true)).to.be.undefined;
   });
 
 });

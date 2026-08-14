@@ -254,6 +254,28 @@ function isValidUUID(id) {
   return validator.isUUID(id);
 }
 
+/**
+ * Coerce a config supplied value to an integer inside [min, max], or null if it is not one.
+ *
+ * The same value can arrive as a number or as a string depending on which producer wrote the
+ * config, and it usually ends up interpolated into a shell command, so a bare Number() is not
+ * enough - it lets NaN, floats, negatives and Infinity through. Callers that need setup and
+ * teardown to agree on a value should both go through this.
+ *
+ * @param {*} value - the raw config value
+ * @param {number} [min] - lowest accepted value, inclusive
+ * @param {number} [max] - highest accepted value, inclusive
+ * @returns {number|null} the integer, or null when the value is unusable
+ */
+function toBoundedInt(value, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) {
+  // booleans and objects coerce to numbers in js, none of them are a config value we want
+  if (!_.isNumber(value) && !_.isString(value)) return null;
+  if (_.isString(value) && value.trim() === "") return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) return null;
+  return n;
+}
+
 module.exports = {
   extend: extend,
   delay: delay,
@@ -265,6 +287,7 @@ module.exports = {
   generateRandomMacAddress,
   isValidMacAddress,
   isValidUUID,
+  toBoundedInt,
   parseEscapedString,
   parseHexString,
   lastLine,

@@ -105,9 +105,11 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
     const driverOpts = this.networkConfig.driverOptions || [];
     // make driverOpts immutable
     const driverOptsCopy = JSON.parse(JSON.stringify(driverOpts));
-    // each option is interpolated into the docker command below, drop anything a shell would reparse
+    // each option is interpolated into the docker command below, drop anything a shell would
+    // reparse. quotes are excluded too: an unmatched one changes how the rest of the command is
+    // parsed, and docker's own key=value options never need them
     for (const opt of driverOptsCopy) {
-      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/"'-]+$/.test(opt))
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/-]+$/.test(opt))
         this.fatal(`Invalid docker driver option for ${this.name} ${opt}`);
     }
 

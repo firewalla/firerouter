@@ -85,6 +85,47 @@ describe('Test util', function(){
     });
   });
 
+  describe('toBoundedInt', function(){
+    it('should accept an in-range integer as a number or a string', async()=> {
+      // the same config value arrives typed differently depending on which producer wrote it
+      expect(util.toBoundedInt(51820, 1, 65535)).to.be.equal(51820);
+      expect(util.toBoundedInt("51820", 1, 65535)).to.be.equal(51820);
+      expect(util.toBoundedInt(" 51820 ", 1, 65535)).to.be.equal(51820);
+      expect(util.toBoundedInt(1, 1, 65535)).to.be.equal(1);
+      expect(util.toBoundedInt(65535, 1, 65535)).to.be.equal(65535);
+    });
+
+    it('should reject values outside the bounds', async()=> {
+      expect(util.toBoundedInt(0, 1, 65535)).to.be.null;
+      expect(util.toBoundedInt(65536, 1, 65535)).to.be.null;
+      expect(util.toBoundedInt(-1, 1, 65535)).to.be.null;
+      expect(util.toBoundedInt("70000", 1, 65535)).to.be.null;
+    });
+
+    it('should reject anything that is not a whole number', async()=> {
+      // a bare Number() would let all of these through
+      expect(util.toBoundedInt(1.5, 1, 65535)).to.be.null;
+      expect(util.toBoundedInt("Infinity", 1)).to.be.null;
+      expect(util.toBoundedInt(Infinity, 1)).to.be.null;
+      expect(util.toBoundedInt(NaN, 1)).to.be.null;
+      expect(util.toBoundedInt("x; touch /tmp/pwn; #", 1, 65535)).to.be.null;
+    });
+
+    it('should reject empty and non scalar input rather than coercing it', async()=> {
+      // "" and [] both coerce to 0, true coerces to 1, none of them are a config value
+      for (const input of ["", "   ", null, undefined, true, false, {}, [], [5]])
+        expect(util.toBoundedInt(input, 1, 65535), `input ${JSON.stringify(input)}`).to.be.null;
+    });
+
+    it('should default the bounds when they are omitted', async()=> {
+      expect(util.toBoundedInt("42")).to.be.equal(42);
+      expect(util.toBoundedInt(-42)).to.be.equal(-42);
+      // a lower bound alone is enough for the positive-integer cases
+      expect(util.toBoundedInt(-42, 1)).to.be.null;
+      expect(util.toBoundedInt("2048", 1)).to.be.equal(2048);
+    });
+  });
+
   describe('lastLine', function(){
     it('should behave like tail -n 1', async()=> {
       expect(util.lastLine("2606:4700::1111\n1.1.1.1\n")).to.be.equal("1.1.1.1");
