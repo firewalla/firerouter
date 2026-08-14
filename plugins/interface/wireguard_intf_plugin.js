@@ -71,10 +71,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
     await this._resetBindIntfRule().catch((err) => {});
     this._disposeAutomata();
-    if (this._assetsController) {
-      this._assetsController.stopServer();
-      delete this._assetsController;
-    }
   }
 
   _disposeAutomata() {
@@ -281,11 +277,6 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
           this._automata.start();
         }
       }
-    }
-
-    if (this.networkConfig.assetsController) {
-      this._assetsController = require('../../core/assets_controller.js');
-      await this._assetsController.startServer(this.networkConfig, this.name);
     }
   }
 
