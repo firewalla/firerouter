@@ -1501,34 +1501,37 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     }
 
-    const u = url.parse(defaultTestURL);
+    // resolve the effective url, not the default one. everything below describes a single target:
+    // the dns lookup pins it to this wan and curl --resolve feeds that answer back, so if the
+    // hostname came from the default while the url came from the override, curl would ignore
+    // --resolve and do an ordinary lookup instead of the wan specific one
+    const extraConf = this.networkConfig && this.networkConfig.extra;
+    let testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
+    let u = url.parse(testURL);
+    // an override is caller supplied, fall back rather than reaching curl with an unchecked url
+    if (!u.hostname || (u.protocol !== "http:" && u.protocol !== "https:")) {
+      this.log.error(`invalid http test url on ${this.name}:`, testURL);
+      testURL = defaultTestURL;
+      u = url.parse(testURL);
+    }
     const hostname = u.hostname;
     const protocol = u.protocol;
     const port = u.port || protocol === "http:" && 80 || protocol === "https:" && 443;
 
     if(!hostname || !port) {
-      this.log.error("invalid test url:", defaultTestURL);
+      this.log.error("invalid test url:", testURL);
       return null;
     }
 
     this.isHttpTesting[defaultTestURL] = true;
 
-    const dnsResult = await this.getDNSResult(u.hostname).catch((err) => false);
+    const dnsResult = await this.getDNSResult(hostname).catch((err) => false);
     if(!dnsResult) {
-      this.log.error("failed to resolve dns on domain", u.hostname, 'on', this.name);
+      this.log.error("failed to resolve dns on domain", hostname, 'on', this.name);
       delete this.isHttpTesting[defaultTestURL];
       return null;
     }
 
-    const extraConf = this.networkConfig && this.networkConfig.extra;
-    let testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
-    // the override reaches the curl command below, apply the same parse this function already
-    // ran on defaultTestURL above and fall back rather than shelling out with an unchecked url
-    const tu = url.parse(testURL);
-    if (!tu.hostname || (tu.protocol !== "http:" && tu.protocol !== "https:")) {
-      this.log.error(`invalid http test url on ${this.name}:`, testURL);
-      testURL = defaultTestURL;
-    }
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
     let contentFile = "/dev/null";
     if (expectedContent) {
