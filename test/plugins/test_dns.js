@@ -26,21 +26,15 @@ let DNSPlugin = require('../../plugins/dns/dns_plugin.js');
 describe('Test interface base dhcp6', function(){
     this.timeout(30000);
 
-    before((done) => (
-      async() => {
+    before(async () => {
         this.plugin = new DNSPlugin("eth5");
         this.plugin.configure({useNameserversFromWAN: false, dns6Servers: ["2606:4700:4700::1111", "2001:4860:4860::8888"]});
-        done();
-      })()
-    );
+    });
 
-    after((done) => (
-      async() => {
+    after(async () => {
         await exec(`rm ${this.plugin._getResolvFilePath()}`).catch(err=>null);
         await exec(`rm ${this.plugin._getConfFilePath()}`).catch(err=>null);
-        done();
-    })()
-    );
+    });
 
     it('should dns6', async() => {
       this._intfUuid = "fake-uuid";

@@ -30,14 +30,11 @@ let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js')
 describe('Test interface base dhcp6', function(){
     this.timeout(30000);
 
-    before((done) => (
-      async() => {
+    before(async () => {
         this.plugin = new InterfaceBasePlugin("eth0");
         this.plugin.configure({dhcp6:{}});
         await exec(`cat /dev/null | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
-        done();
-      })()
-    );
+    });
 
     after((done) => {
       done();
@@ -107,19 +104,13 @@ describe('Test interface base dhcp6', function(){
   describe('Test interface base dns', function(){
     this.timeout(30000);
 
-    before((done) => (
-      async() => {
+    before(async () => {
         this.plugin = new InterfaceBasePlugin("eth0");
         this.plugin.configure({dhcp6:{}, dhcp:true});
-        done();
-      })()
-    );
+    });
 
-    after((done) => (
-      async() => {
-        done();
-      })()
-    );
+    after(async () => {
+    });
 
     it('should config dns6', async() => {
       await this.plugin.configure({dns6Servers: ["2606:4700:4700::1111", "2001:4860:4860::8888"], dhcp:false});
