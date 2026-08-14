@@ -85,6 +85,37 @@ describe('Test util', function(){
     });
   });
 
+  describe('isValidDNSName', function(){
+    it('should accept hostnames as dig prints them', async()=> {
+      for (const name of ["example.com", "example.com.", "sub.example.com.", "a", "a.b",
+                          "my-host.example.com", "ns1.cloudflare.com.", "xn--80ak6aa92e.com"])
+        expect(util.isValidDNSName(name), `expected ${name} to be accepted`).to.be.true;
+    });
+
+    it('should reject a name that would read as a dig option', async()=> {
+      // execFile keeps these away from a shell, but dig still parses a leading '-' as an option
+      for (const name of ["-f", "-felection", "-x", "--version", "-b1.2.3.4"])
+        expect(util.isValidDNSName(name), `expected ${name} to be rejected`).to.be.false;
+    });
+
+    it('should require every label to start and end alphanumeric', async()=> {
+      for (const name of ["-a.com", "a-.com", "foo.-bar.com", "foo.bar-.com", ".com", "a..b"])
+        expect(util.isValidDNSName(name), `expected ${name} to be rejected`).to.be.false;
+    });
+
+    it('should reject shell metacharacters and oversized names', async()=> {
+      for (const name of ["a`id`b.com", "a;id.com", "a|id.com", "a b.com", "a$(id).com", "a/b.com"])
+        expect(util.isValidDNSName(name), `expected ${JSON.stringify(name)} to be rejected`).to.be.false;
+      expect(util.isValidDNSName("a".repeat(64) + ".com"), 'label over 63 chars').to.be.false;
+      expect(util.isValidDNSName(("a".repeat(60) + ".").repeat(5)), 'name over 253 chars').to.be.false;
+    });
+
+    it('should return false rather than throw on non strings', async()=> {
+      for (const input of [null, undefined, "", 12345, {}, []])
+        expect(util.isValidDNSName(input), `input ${JSON.stringify(input)}`).to.be.false;
+    });
+  });
+
   describe('toBoundedInt', function(){
     it('should accept an in-range integer as a number or a string', async()=> {
       // the same config value arrives typed differently depending on which producer wrote it

@@ -30,10 +30,6 @@ const event = require('../../core/event.js');
 const rclient = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 const bindIntfRulePriority = 5999;
-// names taken out of a dns reply before they are used as command arguments. dig renders
-// presentation format, which leaves backtick, '|' and '&' unescaped, so a plain-name check is
-// what keeps remote supplied labels out of an argument list
-const DNS_NAME_REGEX = /^[A-Za-z0-9._-]{1,253}$/;
 
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
@@ -929,7 +925,7 @@ class WireguardMeshAutomata {
         zone = line.split(/\s+/)[0];
     }
     // dig leaves backtick, '|' and '&' unescaped in presentation format, do not trust the name
-    if (zone && !DNS_NAME_REGEX.test(zone))
+    if (zone && !util.isValidDNSName(zone))
       zone = null;
     if (zone)
       this.domainZoneCache.set(host, zone);
@@ -941,6 +937,12 @@ class WireguardMeshAutomata {
     // plain IP address, no need to resolve
     if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
       return endpoint;
+    // host comes from the peer's configured endpoint and is a dig operand in every lookup below,
+    // so it is checked before the first one rather than relying on execFile alone
+    if (!util.isValidDNSName(host)) {
+      this.log.error(`Invalid endpoint host on ${this.intf}, will not resolve`, host);
+      return null;
+    }
     const port = endpoint.substring(endpoint.lastIndexOf(':') + 1);
     const zone = await this.getZone(host);
     let authServers = null;
@@ -950,7 +952,7 @@ class WireguardMeshAutomata {
       authServers = await execFile("dig", ["+time=3", "+tries=2", "+short", "NS", zone])
         .then(result => result.stdout.trim().split('\n')
           .map(line => line.trim())
-          .filter(line => !line.startsWith(";;") && DNS_NAME_REGEX.test(line.trim()))
+          .filter(line => !line.startsWith(";;") && util.isValidDNSName(line.trim()))
         ).catch((err) => null);
     if (v6Supported) {
       let v6Addr = this.dnsCache.peek(`v6::${host}`); // peek will not update last used timestamp in LRU

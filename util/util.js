@@ -254,6 +254,20 @@ function isValidUUID(id) {
   return validator.isUUID(id);
 }
 
+// A dns name, optionally fully qualified, as dig prints it.
+//
+// Every label has to start and end alphanumeric. That is the hostname rule, and it is also what
+// keeps a leading '-' out: these names are passed to dig as operands, and while execFile keeps them
+// away from a shell it does not stop dig itself reading a value like "-felection" as an option.
+// Rejecting a name here degrades gracefully - the caller falls back to a non-authoritative lookup.
+const DNS_LABEL = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?';
+const DNS_NAME_REGEX = new RegExp(`^(?=.{1,253}\\.?$)${DNS_LABEL}(?:\\.${DNS_LABEL})*\\.?$`);
+
+function isValidDNSName(name) {
+  if (!name || !_.isString(name)) return false;
+  return DNS_NAME_REGEX.test(name);
+}
+
 /**
  * Coerce a config supplied value to an integer inside [min, max], or null if it is not one.
  *
@@ -287,6 +301,7 @@ module.exports = {
   generateRandomMacAddress,
   isValidMacAddress,
   isValidUUID,
+  isValidDNSName,
   toBoundedInt,
   parseEscapedString,
   parseHexString,
