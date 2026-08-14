@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,6 +19,7 @@ const Promise = require('bluebird');
 const { exec } = require('child-process-promise');
 const log = require('../util/logger.js')('util');
 const uuid = require('uuid');
+const validator = require('validator');
 
 const _ = require('lodash')
 
@@ -77,7 +78,8 @@ function getHexStrArray(str) {
   const result = [];
   const buf = Buffer.from(str, 'utf8');
   for (let i = 0; i < buf.length; i++) {
-    result.push(Number(buf[i]).toString(16));
+    // pad to 2 digits, callers that join without a separator rely on a fixed width per byte
+    result.push(Number(buf[i]).toString(16).padStart(2, '0'));
   }
   return result;
 }
@@ -166,6 +168,12 @@ function parseHexString(str) {
   return Buffer.from(chArray.join(''), 'latin1').toString()
 }
 
+// js equivalent of piping command output through `tail -n 1`
+function lastLine(stdout) {
+  const lines = (stdout || "").trim().split('\n');
+  return lines[lines.length - 1].trim();
+}
+
 function freqToChannel(freq) {
   if (freq >= 2412 && freq <= 2472) return Math.round((freq - 2407) / 5)
   else if (freq == 2484) return 14
@@ -239,6 +247,13 @@ function isValidMacAddress(mac) {
   return /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac);
 }
 
+// a caller supplied uuid is used verbatim in shell commands and config file paths, so callers
+// need to reject a malformed one. validator throws on non-strings, hence the guard
+function isValidUUID(id) {
+  if (!id || !_.isString(id)) return false;
+  return validator.isUUID(id);
+}
+
 module.exports = {
   extend: extend,
   delay: delay,
@@ -249,8 +264,10 @@ module.exports = {
   generateUUID,
   generateRandomMacAddress,
   isValidMacAddress,
+  isValidUUID,
   parseEscapedString,
   parseHexString,
+  lastLine,
   freqToChannel,
   channelToFreq,
   parseNumList,

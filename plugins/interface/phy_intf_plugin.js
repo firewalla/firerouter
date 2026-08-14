@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -57,8 +57,9 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     if (this.networkConfig.enabled) {
       const maxTxRing = await exec(`sudo ethtool -g ${this.name} | grep "^TX:" | head -n 1 | awk '{print $2}'`).then((result) => result.stdout.trim()).catch((err) => null);
       const maxRxRing = await exec(`sudo ethtool -g ${this.name} | grep "^RX:" | head -n 1 | awk '{print $2}'`).then((result) => result.stdout.trim()).catch((err) => null);
-      const txRingBuffer = this.networkConfig.txBuffer || maxTxRing || 4096;
-      const rxRingBuffer = this.networkConfig.rxBuffer || maxRxRing || 4096;
+      // coerce to a number, these are config supplied and are interpolated into the command below
+      const txRingBuffer = Number(this.networkConfig.txBuffer) || Number(maxTxRing) || 4096;
+      const rxRingBuffer = Number(this.networkConfig.rxBuffer) || Number(maxRxRing) || 4096;
       this.log.info(`Set TX ring to ${txRingBuffer}, RX ring to ${rxRingBuffer} on ${this.name}`);
       await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
     }

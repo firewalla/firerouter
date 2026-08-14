@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc
+/*    Copyright 2021-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -62,7 +62,11 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       return true;
     }
 
-    const driver = this.networkConfig.driver || "bridge";
+    // driver is interpolated into the docker command below, docker's own driver names are plain words
+    const configDriver = this.networkConfig.driver;
+    if (configDriver && !/^[A-Za-z0-9._-]+$/.test(configDriver))
+      this.fatal(`Invalid docker network driver for ${this.name} ${configDriver}`);
+    const driver = configDriver || "bridge";
     const intfName = this.name;
     const subnets = [];
     const opts = this.networkConfig.options || [];
@@ -101,6 +105,11 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
     const driverOpts = this.networkConfig.driverOptions || [];
     // make driverOpts immutable
     const driverOptsCopy = JSON.parse(JSON.stringify(driverOpts));
+    // each option is interpolated into the docker command below, drop anything a shell would reparse
+    for (const opt of driverOptsCopy) {
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/"'-]+$/.test(opt))
+        this.fatal(`Invalid docker driver option for ${this.name} ${opt}`);
+    }
 
     if (driver === "bridge") {
       driverOptsCopy.push(`"com.docker.network.bridge.name"="${intfName}"`);

@@ -23,7 +23,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const r = require('../../util/firerouter');
 
-const exec = require('child-process-promise').exec;
+const {exec, execFile} = require('child-process-promise');
 const { spawn } = require('child_process');
 
 const fs = require('fs');
@@ -1250,7 +1250,13 @@ class InterfaceBasePlugin extends Plugin {
     if (this.networkConfig.sysOpts) {
       for (const key of Object.keys(this.networkConfig.sysOpts)) {
         const value = this.networkConfig.sysOpts[key];
-        await exec(`sudo bash -c 'echo ${value} > /sys/class/net/${this.name}/${key}'`).catch((err) => {
+        // key names a file under /sys/class/net/<intf>/, reject anything that could escape it
+        if (!/^[A-Za-z0-9_.-]+$/.test(key)) {
+          this.log.error(`Invalid sys opt name ${key} of ${this.name}, ignore`);
+          continue;
+        }
+        // the script text is fixed, value and path are passed as positional args so a shell never parses them
+        await execFile("sudo", ["bash", "-c", 'echo "$1" > "$2"', "bash", String(value), `/sys/class/net/${this.name}/${key}`]).catch((err) => {
           this.log.error(`Failed to set sys opt ${key} of ${this.name} to ${value}`, err.message);
         });
       }
@@ -1515,14 +1521,24 @@ class InterfaceBasePlugin extends Plugin {
     }
 
     const extraConf = this.networkConfig && this.networkConfig.extra;
-    const testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
+    let testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
+    // the override reaches the curl command below, apply the same parse this function already
+    // ran on defaultTestURL above and fall back rather than shelling out with an unchecked url
+    const tu = url.parse(testURL);
+    if (!tu.hostname || (tu.protocol !== "http:" && tu.protocol !== "https:")) {
+      this.log.error(`invalid http test url on ${this.name}:`, testURL);
+      testURL = defaultTestURL;
+    }
     const expectedCode = (extraConf && extraConf.expectedCode) || defaultExpectedCode;
     let contentFile = "/dev/null";
     if (expectedContent) {
       contentFile = `/dev/shm/${uuid.v4()}`;
     }
-    const cmd = `timeout 3 curl -${testURL.startsWith("https") ? 'k' : ''}sq -m6 --resolve ${hostname}:${port}:${dnsResult} --interface ${this.name} -o ${contentFile} -w "%{http_code},%{redirect_url}" ${testURL}`;
-    const output = await exec(cmd).then(output => output.stdout.trim()).catch((err) => {
+    // testURL is caller supplied, pass argv so its path and query cannot reach a shell
+    const output = await execFile("curl", ["-ksq", "-m3",
+      "--resolve", `${hostname}:${port}:${dnsResult}`, "--interface", this.name,
+      "-o", contentFile, "-w", "%{http_code},%{redirect_url}", testURL]
+    ).then(output => output.stdout.trim()).catch((err) => {
       this.log.error(`Failed to check http status on ${this.name} from ${testURL}`, err.message);
       return null;
     });
@@ -1589,8 +1605,13 @@ class InterfaceBasePlugin extends Plugin {
       if (!_.isEmpty(ips))
         pingTestIP = ips;
     }
-    let pingTestCount = (extraConf && extraConf.pingTestCount) || defaultPingTestCount;
-    let pingTestTimeout = (extraConf && extraConf.pingTestTimeout) || 3;
+    // both are interpolated into the ping command below, take the override only if it is a sane number
+    let pingTestCount = (extraConf && Number.isInteger(Number(extraConf.pingTestCount))
+      && Number(extraConf.pingTestCount) > 0 && Number(extraConf.pingTestCount) <= 100
+      && Number(extraConf.pingTestCount)) || defaultPingTestCount;
+    let pingTestTimeout = (extraConf && Number.isInteger(Number(extraConf.pingTestTimeout))
+      && Number(extraConf.pingTestTimeout) > 0 && Number(extraConf.pingTestTimeout) <= 60
+      && Number(extraConf.pingTestTimeout)) || 3;
     const pingTestEnabled = extraConf && extraConf.hasOwnProperty("pingTestEnabled") ? extraConf.pingTestEnabled : true;
     const dnsTestEnabled = extraConf && extraConf.hasOwnProperty("dnsTestEnabled") ? extraConf.dnsTestEnabled : true;
     const wanName = this.networkConfig && this.networkConfig.meta && this.networkConfig.meta.name;

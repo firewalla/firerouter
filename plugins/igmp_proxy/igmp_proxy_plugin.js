@@ -1,4 +1,4 @@
-/*    Copyright 2020 Firewalla Inc
+/*    Copyright 2020-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,8 +19,9 @@ const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
-const ip = require('ip');
+const {Address4, Address6} = require('ip-address');
 const util = require('../../util/util.js');
+const _ = require('lodash');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
@@ -77,6 +78,12 @@ class IGMPProxyPlugin extends Plugin {
       this.log.error(`Failed to add IGMP accept rule to FR_IGMP in iptables`, err.message);
     });
     for (const altnet of altnets) {
+      // wrapIptables hands the rule to a nested bash -c, so an altnet that is not an address
+      // would be reparsed as shell. mroute_plugin already checks its cidrs the same way
+      if (!_.isString(altnet) || !new Address4(altnet).isValid() && !new Address6(altnet).isValid()) {
+        this.log.error(`Invalid altnet of ${this.name}, ignore`, altnet);
+        continue;
+      }
       await exec(util.wrapIptables(`sudo iptables -w -A FR_IGMP -s ${altnet} -d 224.0.0.0/4 -j ACCEPT`)).catch((err) => {
         this.log.error(`Failed to add altnet ${altnet} to FR_IGMP in iptables`, err.message);
       });

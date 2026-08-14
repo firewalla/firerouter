@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc
+/*    Copyright 2021-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -32,17 +32,28 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
   async prepareEnvironment() {
     await super.prepareEnvironment();
 
+    // these are config supplied and are interpolated into the commands below, require a number
     if ("rp_filter" in this.networkConfig) {
-      await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=${this.networkConfig.rp_filter}`);
+      const rpFilter = Number(this.networkConfig.rp_filter);
+      if (Number.isInteger(rpFilter))
+        await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=${rpFilter}`);
+      else
+        this.log.error(`Invalid rp_filter of ${this.name}, ignore`, this.networkConfig.rp_filter);
     }
 
     if ("all_rp_filter" in this.networkConfig) {
-      await exec(`sudo sysctl -w net.ipv4.conf.all.rp_filter=${this.networkConfig.all_rp_filter}`);
+      const allRpFilter = Number(this.networkConfig.all_rp_filter);
+      if (Number.isInteger(allRpFilter))
+        await exec(`sudo sysctl -w net.ipv4.conf.all.rp_filter=${allRpFilter}`);
+      else
+        this.log.error(`Invalid all_rp_filter of ${this.name}, ignore`, this.networkConfig.all_rp_filter);
     }
   }
 
   async createInterface() {
-    const user = this.networkConfig.user || "pi";
+    const configUser = this.networkConfig.user;
+    // config supplied and interpolated below, fall back to the default unless it looks like a username
+    const user = (configUser && /^[A-Za-z0-9._-]+$/.test(configUser)) ? configUser : "pi";
     await exec(`ip a show ${this.name} || sudo ip tuntap add mode tun user ${user} name ${this.name}`).catch((err) => {
       this.log.error(`Failed to create interface ${this.name}, err:`, err);
     }); // catch the error as it's likely not to be critical
