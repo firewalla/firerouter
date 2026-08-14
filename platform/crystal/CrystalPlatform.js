@@ -25,6 +25,10 @@ class CrystalPlatform extends Platform {
   isOnboardConfigSupported() {
     return true;
   }
+
+  getMiniupnpdNftPath() {
+    return `${this.getFilesPath()}/miniupnpd.nft`;
+  }
 }
 
 module.exports = CrystalPlatform;
