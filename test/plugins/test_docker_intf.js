@@ -38,6 +38,25 @@ describe('Test docker interface plugin', function(){
       expect(stub.matching("touch /tmp/pwn").length).to.be.equal(0);
     });
 
+    it('should refuse a network option carrying shell metacharacters', async()=> {
+      // networkConfig.options is a separate field from driverOptions and feeds the same command
+      const plugin = stub.build(DockerInterfacePlugin, "docker0",
+        {driver: "bridge", options: ["; touch /tmp/pwn; #"], enabled: true});
+      let threw = false;
+      await plugin.createInterface().catch(() => { threw = true; });
+      expect(threw, 'createInterface should reject an invalid network option').to.be.true;
+      expect(stub.matching("touch /tmp/pwn").length).to.be.equal(0);
+    });
+
+    it('should accept a normal docker cli flag as a network option', async()=> {
+      const plugin = stub.build(DockerInterfacePlugin, "docker0",
+        {driver: "bridge", options: ["--attachable", "--subnet=10.0.0.0/24"], enabled: true});
+      await plugin.createInterface().catch(() => {});
+      const createCmd = stub.calls.find(c => c.includes("docker network create"));
+      expect(createCmd).to.contain("--attachable");
+      expect(createCmd).to.contain("--subnet=10.0.0.0/24");
+    });
+
     it('should refuse a driver option carrying shell metacharacters', async()=> {
       const plugin = stub.build(DockerInterfacePlugin, "docker0",
         {driver: "bridge", driverOptions: ["com.docker.network.bridge.name=x; touch /tmp/pwn; #"], enabled: true});

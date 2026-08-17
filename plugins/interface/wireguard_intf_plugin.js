@@ -673,9 +673,13 @@ class WireguardMeshAutomata {
       if (!this.peerInfo[key])
         continue;
       // all of these come from a peer over the wire and end up on a wg command line,
-      // keep anything that is not a real address or port out of peerInfo
-      const v4 = new Address4(String(peers[key].v4 || "")).isValid() ? peers[key].v4 : null;
-      const v6 = new Address6(String(peers[key].v6 || "")).isValid() ? peers[key].v6 : null;
+      // keep anything that is not a real address or port out of peerInfo. store correctForm()
+      // rather than the raw value: isValid() also accepts a prefix length, and keeping "1.2.3.4/24"
+      // would later be formatted into an endpoint as "1.2.3.4/24:51820", which wg rejects
+      const addr4 = new Address4(String(peers[key].v4 || ""));
+      const addr6 = new Address6(String(peers[key].v6 || ""));
+      const v4 = addr4.isValid() ? addr4.correctForm() : null;
+      const v6 = addr6.isValid() ? addr6.correctForm() : null;
       const ts4 = Number(peers[key].ts4) || 0;
       const ts6 = Number(peers[key].ts6) || 0;
       const oldTs4 = this.peerInfo[key].ts4 || 0;

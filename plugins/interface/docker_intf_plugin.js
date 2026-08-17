@@ -72,6 +72,13 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
     const opts = this.networkConfig.options || [];
     // make opts immutable
     const optsCopy = JSON.parse(JSON.stringify(opts));
+    // these are docker cli flags and are joined into the command below, so a leading '-' is
+    // expected but nothing a shell would reparse is. checked here, before the entries the code
+    // appends itself
+    for (const opt of optsCopy) {
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/-]+$/.test(opt))
+        this.fatal(`Invalid docker network option for ${this.name} ${opt}`);
+    }
     optsCopy.push(`--driver=${driver}`);
     let ip4s = this.networkConfig.ipv4s || [];
     if (this.networkConfig.ipv4)
