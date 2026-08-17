@@ -442,7 +442,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute, this.isWAN());
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
@@ -2041,8 +2041,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
       this.getIPv6Addresses(),
-      routing.getInterfaceGWIP(this.name) || null,
-      routing.getInterfaceGWIP(this.name, 6) || null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
       this.getDns4Nameservers(),
       this.getOrigDNSNameservers(),
       this.getDns6Nameservers(),
