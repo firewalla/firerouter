@@ -129,6 +129,18 @@ describe('Test onboard network profile', function() {
       expect(_.get(config, ["sshd", "br0", "enabled"])).to.be.true;
     });
 
+    it('should drop icmp echo on the wan and allow it on the lan bridge', () => {
+      const config = op.expandProfile(adaptiveNetwork(), ports(4));
+      expect(_.get(config, ["icmp", "eth0", "echoRequest"])).to.be.false;
+      expect(_.get(config, ["icmp", "br0", "echoRequest"])).to.be.true;
+      const pppoeConfig = op.expandProfile(adaptiveNetwork({
+        type: "pppoe", username: "user@isp", password: "secret"
+      }), ports(4));
+      expect(_.get(pppoeConfig, ["icmp", "ppp0", "echoRequest"])).to.be.false;
+      expect(_.get(pppoeConfig, ["icmp", "eth0"])).to.be.undefined;
+      expect(_.get(pppoeConfig, ["icmp", "br0", "echoRequest"])).to.be.true;
+    });
+
     it('should produce a config that passes validateConfig', async () => {
       for (const wan of [{type: "dhcp"},
                          {type: "pppoe", username: "u", password: "p"},

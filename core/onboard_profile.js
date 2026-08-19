@@ -210,6 +210,10 @@ function expandProfile(network, phyNames) {
     sshd: {
       [WAN_PHY]: {enabled: true},
       [LAN_BRIDGE]: {enabled: true}
+    },
+    icmp: {
+      [wanIntf]: {echoRequest: false},
+      [LAN_BRIDGE]: {echoRequest: true}
     }
   };
   if (pppoe)
