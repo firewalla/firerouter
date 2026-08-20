@@ -1,4 +1,4 @@
-/*    Copyright 2019 - 2020 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -18,6 +18,7 @@
 const log = require('./logger.js')(__filename);
 
 const exec = require('child-process-promise').exec;
+const execFile = require('child-process-promise').execFile;
 const _ = require('lodash');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
@@ -167,21 +168,22 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
 
 async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false, type = "unicast") {
   dest = dest || "default";
-  let cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${type} ${dest}`;
+  // pass argv explicitly, dest/gateway/intf/tableName come from network config and must not reach a shell
+  const args = ["ip", `-${af}`, "route", replace ? 'replace' : 'add', type, String(dest)];
   tableName = tableName || "main";
   if (intf) {
     if (gateway) {
-      cmd = `${cmd} via ${gateway} dev ${intf}`;
+      args.push("via", String(gateway), "dev", String(intf));
     } else {
-      cmd = `${cmd} dev ${intf}`;
+      args.push("dev", String(intf));
     }
   }
-  cmd = `${cmd} table ${tableName}`;
+  args.push("table", String(tableName));
   if (preference)
-    cmd = `${cmd} preference ${preference}`;
+    args.push("preference", String(preference));
 
-  log.debug('[routing] add route to table:', cmd);
-  let result = await exec(cmd);
+  log.debug('[routing] add route to table:', args.join(' '));
+  let result = await execFile("sudo", args);
   if (result.stderr !== "") {
     log.error("Failed to add route to table.", result.stderr);
     throw result.stderr;
@@ -227,23 +229,27 @@ async function removeDeviceRouteRule(intf, tableName, af = 4) {
 }
 
 async function addMultiPathRouteToTable(dest, tableName, af = 4, metric, ...multipathDesc) {
-  let cmd = null;
   dest = dest || "default";
-  cmd =  `sudo ip -${af} route add ${dest}`;
+  // pass argv explicitly, weight comes straight from the nextHops config and must not reach a shell
+  const args = ["ip", `-${af}`, "route", "add", String(dest)];
   tableName = tableName || "main";
-  cmd = `${cmd} table ${tableName} metric ${metric}`;
+  args.push("table", String(tableName), "metric", String(metric));
   for (let desc of multipathDesc) {
     const nextHop = desc.nextHop;
     const dev = desc.dev;
-    const weight = desc.weight;
-    if (!nextHop || !weight)
+    const weight = Number(desc.weight);
+    if (!nextHop || !Number.isInteger(weight) || weight < 1 || weight > 255) {
+      if (desc.weight !== undefined && !Number.isInteger(weight))
+        log.error("Invalid nextHop weight, skip", desc.weight);
       continue;
-    cmd = `${cmd} nexthop via ${nextHop}`;
+    }
+    args.push("nexthop", "via", String(nextHop));
     if (dev)
-      cmd = `${cmd} dev ${dev}`;
-    cmd = `${cmd} weight ${weight}`;
+      args.push("dev", String(dev));
+    args.push("weight", String(weight));
   }
-  let result = await exec(cmd);
+  log.debug('[routing] add multipath route to table:', args.join(' '));
+  let result = await execFile("sudo", args);
   if (result.stderr !== "") {
     log.error("Failed to add multipath route to table.", result.stderr);
     throw result.stderr

@@ -1,4 +1,4 @@
-/*    Copyright 2019-2021 Firewalla Inc.
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,7 +19,7 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const { exec } = require('child-process-promise');
+const { exec, execFile } = require('child-process-promise');
 const { spawn } = require('child_process')
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
@@ -33,6 +33,7 @@ const lock = new AsyncLock();
 
 const fsp = require('fs').promises;
 const util = require('../util/util.js');
+const pluginConfig = require('../util/config.js').getConfig();
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
@@ -43,6 +44,13 @@ const WPA_ALLOWED_KEYS = new Set([
   'bssid', 'priority', 'scan_ssid', 'proto', 'pairwise', 'group',
   'anonymous_identity', 'domain_suffix_match', 'altsubject_match',
 ]);
+
+// linux caps interface names at IFNAMSIZ-1 and forbids '/' and whitespace, this is that set
+// minus every shell metacharacter
+const INTF_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,15}$/;
+// keys of the non-interface plugin sections are free form labels rather than kernel interface
+// names, so keep the same charset but do not impose IFNAMSIZ on them
+const PLUGIN_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,64}$/;
 
 const Promise = require('bluebird');
 
@@ -174,7 +182,8 @@ class NetworkConfigManager {
               return;
             }
             const value = await util.generateWpaSupplicantConfig(key, params);
-            const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} set_network ${selectedNetwork.id} ${key} ${value}`).then(() => null).catch((err) => err.message);
+            // the key is allowlisted above but the value is caller supplied, keep it out of a shell
+            const error = await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "set_network", String(selectedNetwork.id), key, String(value)]).then(() => null).catch((err) => err.message);
             if (error) {
               done(null, [error]);
               return;
@@ -663,15 +672,51 @@ class NetworkConfigManager {
       return ["config is not defined"];
     if (!config.interface)
       return ["interface is not defined"];
+    // plugin_loader creates an instance per key of every registered config_path, and those keys
+    // are interpolated into shell commands and file paths in most plugins. config.interface is
+    // checked separately below against the stricter kernel interface name rules.
+    for (const pluginConf of pluginConfig.plugins || []) {
+      const configPath = pluginConf.config_path;
+      if (!configPath || configPath.startsWith("interface."))
+        continue;
+      const section = _.get(config, configPath.split("."));
+      if (!_.isObject(section))
+        continue;
+      for (const name of Object.keys(section)) {
+        if (!PLUGIN_NAME_REGEX.test(name))
+          return [`${configPath} name is not valid ${name}`];
+        // nat names its egress interface in a value and interpolates it into an iptables rule
+        // without ever resolving it through the plugin registry
+        if (configPath === "nat") {
+          const oif = section[name] && section[name].out;
+          if (oif !== undefined && !INTF_NAME_REGEX.test(oif))
+            return [`out of nat ${name} is not valid ${oif}`];
+        }
+      }
+    }
     const ifaceIp4PrefixMap = {};
     const wanIntfs = [];
     for (const ifaceType in config.interface) {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
+        // interface names are interpolated into shell commands all over the plugins, reject
+        // anything that could not be a real kernel interface name in the first place
+        if (!INTF_NAME_REGEX.test(name))
+          return [`interface name is not valid ${name}`];
         const iface = ifaces[name];
+        // vlan/bond/pppoe name their lower interface here and it is interpolated into ip commands
+        // before the plugin looks it up, so hold references to the same rules as the keys
+        const lowerIntfs = _.isArray(iface.intf) ? iface.intf : (_.isString(iface.intf) ? [iface.intf] : []);
+        for (const lowerIntf of lowerIntfs) {
+          if (!INTF_NAME_REGEX.test(lowerIntf))
+            return [`intf of ${name} is not valid ${lowerIntf}`];
+        }
         const meta = iface.meta || {};
         if (!meta.uuid)
           meta.uuid = uuid.v4();
+        // reject a malformed caller supplied uuid rather than regenerating it silently
+        else if (!util.isValidUUID(meta.uuid))
+          return [`meta.uuid of ${name} is not valid ${meta.uuid}`];
         iface.meta = meta;
         const wanType = meta.type;
         if (wanType === "wan")

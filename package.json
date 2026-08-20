@@ -4,7 +4,7 @@
   "description": "",
   "main": "run.js",
   "scripts": {
-    "test": "NODE_ENV=test mocha"
+    "test": "NODE_ENV=test npx mocha --exit --recursive"
   },
   "repository": {
     "type": "git",
@@ -17,17 +17,20 @@
   },
   "homepage": "https://github.com/firewalla/firerouter#readme",
   "devDependencies": {
-    "chai": "^3.5.0",
-    "mocha": "^2.2.5"
+    "chai": "^4.3.10",
+    "mocha": "^9.2.2"
   },
   "dependencies": {
     "async-lock": "^1.2.2",
     "bluebird": "^3.7.1",
     "body-parser": "^1.19.0",
     "child-process-promise": "^2.2.1",
+    "debug": "^2.6.9",
     "express": "^4.17.1",
     "ip": "^1.1.5",
+    "ip-address": "^6.2.0",
     "lodash": "^4.17.15",
+    "lru-cache": "^4.1.5",
     "moment": "^2.24.0",
     "morgan": "^1.9.1",
     "redis": "^2.8.0",

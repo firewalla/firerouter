@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -20,6 +20,7 @@ const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 const exec = require('child-process-promise').exec;
+const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 Promise.promisifyAll(fs);
@@ -57,8 +58,10 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     if (this.networkConfig.enabled) {
       const maxTxRing = await exec(`sudo ethtool -g ${this.name} | grep "^TX:" | head -n 1 | awk '{print $2}'`).then((result) => result.stdout.trim()).catch((err) => null);
       const maxRxRing = await exec(`sudo ethtool -g ${this.name} | grep "^RX:" | head -n 1 | awk '{print $2}'`).then((result) => result.stdout.trim()).catch((err) => null);
-      const txRingBuffer = this.networkConfig.txBuffer || maxTxRing || 4096;
-      const rxRingBuffer = this.networkConfig.rxBuffer || maxRxRing || 4096;
+      // these are interpolated into the command below, and a ring size ethtool accepts is a
+      // positive integer - a plain Number() would also let a negative or Infinity through
+      const txRingBuffer = util.toBoundedInt(this.networkConfig.txBuffer, 1) || util.toBoundedInt(maxTxRing, 1) || 4096;
+      const rxRingBuffer = util.toBoundedInt(this.networkConfig.rxBuffer, 1) || util.toBoundedInt(maxRxRing, 1) || 4096;
       this.log.info(`Set TX ring to ${txRingBuffer}, RX ring to ${rxRingBuffer} on ${this.name}`);
       await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
     }
