@@ -1,4 +1,4 @@
-/*    Copyright 2020 Firewalla Inc
+/*    Copyright 2020-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -60,8 +60,11 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     }
 
     // supported mode list: balance-rr, active-backup, balance-xor, broadcast, 802.3ad, balance-tlb, balance-alb
-    // default to balance-rr
-    const mode = this.networkConfig.mode || "balance-rr";
+    // default to balance-rr. mode is interpolated into the command below, so enforce that list
+    const supportedModes = ["balance-rr", "active-backup", "balance-xor", "broadcast", "802.3ad", "balance-tlb", "balance-alb"];
+    const mode = supportedModes.includes(this.networkConfig.mode) ? this.networkConfig.mode : "balance-rr";
+    if (this.networkConfig.mode && mode !== this.networkConfig.mode)
+      this.log.error(`Unsupported bond mode for ${this.name}, using ${mode}`, this.networkConfig.mode);
     await exec(`sudo ip link add ${this.name} type bond mode ${mode}`).catch((err) => {
       this.log.debug(`Failed to create bond interface ${this.name} with mode ${mode}`, err.message);
     });

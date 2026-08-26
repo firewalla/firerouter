@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -37,7 +37,10 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
 
   async createInterface() {
     const intf = this.networkConfig.intf;
-    const vid = this.networkConfig.vid;
+    // vid is interpolated into the command below, 802.1Q only defines 1-4094
+    const vid = Number(this.networkConfig.vid);
+    if (!Number.isInteger(vid) || vid < 1 || vid > 4094)
+      this.fatal(`Invalid vlan id for ${this.name} ${this.networkConfig.vid}`);
     await exec(`sudo ip link add link ${intf} name ${this.name} type vlan id ${vid} protocol 802.1Q`).catch((err) => {
       this.log.debug(`Failed to create vlan interface ${this.name}`, err.message);
     });
