@@ -269,7 +269,7 @@ class OrangePlatform extends Platform {
     return copiedFiles;
   }
 
-  async _updateWifiKernelModule() {
+  async _updateWifiKernelModule(includeCfg80211 = false) {
     const firerouter = r.getFireRouterHome();
     const kernelVersion = '6.6.104';
     const fileList = [
@@ -289,6 +289,13 @@ class OrangePlatform extends Platform {
         restore: ''
       }
     ];
+    if (includeCfg80211) {
+      fileList.push({
+        src: `${firerouter}/platform/orange/files/kernel_modules/${kernelVersion}/cfg80211.ko`,
+        dst: `/lib/modules/${kernelVersion}/kernel/net/wireless/cfg80211.ko`,
+        restore: `/media/root-ro/lib/modules/${kernelVersion}/kernel/net/wireless/cfg80211.ko`
+      });
+    }
     try {
       const copied = await this._copyFilesWithIntegrity(fileList);
       if (!copied) return [];
@@ -300,8 +307,7 @@ class OrangePlatform extends Platform {
     }
   }
 
-  async _reloadWifiKernelModule() {
-    await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
+  async _setNapiPhyCpuAffinity() {
     try {
       const { stdout } = await exec(`ps -axo pid,comm | grep 'napi/phy'`);
       const procs = stdout.trim().split('\n')
@@ -322,8 +328,46 @@ class OrangePlatform extends Platform {
     }
   }
 
+  async _reloadWifiKernelModule() {
+    await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
+    await this._setNapiPhyCpuAffinity();
+  }
+
   async _reloadMt76KernelModule() {
     await exec(`sudo rmmod mt7996e; sudo rmmod mt76_connac_lib; sudo rmmod mt76; sudo modprobe mt76`);
+  }
+
+  async _reloadCfg80211KernelModule() {
+    for (const mod of ['mt7996e', 'mt76_connac_lib', 'mt76', 'mac80211', 'cfg80211']) {
+      await this.rmmodKernelModule(mod);
+    }
+    // modprobe mt7996e resolves and reloads cfg80211, mac80211, mt76_connac_lib, mt76 automatically
+    await this.modprobeKernelModule('mt7996e');
+    await this._setNapiPhyCpuAffinity();
+  }
+
+  // Only applicable to non-world version boxes with a non-US country selected: swaps in the
+  // world-flavor cfg80211/mt76/mt7996e/DTBO to unlock the regulatory domain, then reloads the
+  // WLAN kernel module chain. Returns true if the kernel modules were actually reloaded.
+  async prepareWLANRegDomainChange(country) {
+    if (!country || country === 'US') {
+      return false;
+    }
+    if (await this._isWorldVersion()) {
+      return false;
+    }
+    try {
+      const updatedKos = await this._updateWifiKernelModule(true);
+      if (!updatedKos.length) {
+        return false;
+      }
+      log.info(`WLAN kernel modules updated for country ${country}, will reload cfg80211 kernel modules`);
+      await this._reloadCfg80211KernelModule();
+      return true;
+    } catch (err) {
+      log.error(`Failed to prepare WLAN regulatory domain change for country ${country}:`, err);
+      return false;
+    }
   }
 
   async overrideWLANKernelModule() {

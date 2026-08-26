@@ -21,6 +21,7 @@ const { spawn } = require('child_process');
 const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -165,6 +166,49 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isEthernetBasedInterface() {
     return true;
+  }
+
+  async state() {
+    const s = await super.state();
+    s.stpPorts = await this.getStpPortStatus();
+    return s;
+  }
+
+  // Live STP role/state per member port, e.g. { eth0: {role: "designated", state: "forwarding"} }.
+  // null for single-port bridges, VLAN sub-bridges, and bridges with stp explicitly disabled —
+  // none of those run mstpd, so there is no STP status to report.
+  async getStpPortStatus() {
+    const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
+    if (this.networkConfig.intf.length <= 1 || isVlanBridge || this.networkConfig.stp === false)
+      return null;
+    const mstpctl = `${platform.getBinaryPath()}/mstpctl`;
+    const result = await exec(`sudo ${mstpctl} showportdetail ${this.name}`).catch((err) => {
+      this.log.warn(`Failed to get mstp port status on ${this.name}`, err.message);
+      return null;
+    });
+    return result ? BridgeInterfacePlugin.parseStpPortDetail(result.stdout) : null;
+  }
+
+  // Parses `mstpctl showportdetail <bridge>` output into { <port>: {role, state} }.
+  // Each port's block starts with a "<bridge>:<port> CIST info" header line; role/state are
+  // always the last token on their respective line ("... role  Designated", "... state  forwarding").
+  static parseStpPortDetail(output) {
+    const result = {};
+    let currentPort = null;
+    for (const line of (output || '').split('\n')) {
+      const header = line.match(/^\S+:(\S+)\s+CIST info\s*$/);
+      if (header) {
+        currentPort = header[1];
+        result[currentPort] = {};
+        continue;
+      }
+      if (!currentPort) continue;
+      const roleMatch = line.match(/\brole\s+(\S+)\s*$/);
+      if (roleMatch) result[currentPort].role = roleMatch[1].toLowerCase();
+      const stateMatch = line.match(/\bstate\s+(\S+)\s*$/);
+      if (stateMatch) result[currentPort].state = stateMatch[1].toLowerCase();
+    }
+    return result;
   }
 
   static async preparePlugin() {

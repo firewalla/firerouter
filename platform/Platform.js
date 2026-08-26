@@ -215,6 +215,12 @@ class Platform {
   async installWLANTools() {
   }
 
+  // Returns true if a WLAN kernel module reload was actually performed, so that
+  // callers know a full reapply of WLAN interfaces is needed.
+  async prepareWLANRegDomainChange(country) {
+    return false;
+  }
+
   async installKernelModule(module_name) {
     const koPath = await this.getKoPath(module_name);
     const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);

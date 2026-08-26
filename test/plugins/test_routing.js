@@ -49,15 +49,13 @@ const routingConfig_fo = {
 describe('Test Routing WAN', function(){
   this.timeout(30000);
 
-  before((done) => (
-    async() => {
+  before(async () => {
         this.plugin = new RoutingPlugin('routing');
         this.plugin.init({smooth_failover: true});
         this.needClean = false;
         let result = await exec("sudo ip link show eth0.288").then( r => r.stdout).catch((err) => {log.debug(err.stderr)});
         if (result && result !== "") {
             log.warn("dev eth0.288 conflict, skip prepare");
-            done();
             return;
         }
         result = await exec("sudo ip link add link eth0 name eth0.288 type vlan id 288").then(r => r.stderr).catch((err) => {log.error(err.stderr)});
@@ -80,12 +78,9 @@ describe('Test Routing WAN', function(){
         await exec("echo 'nameserver 10.8.8.8'  >> /home/pi/.router/run/eth0.288.resolv.conf").catch((err) => {log.error("add eth0.288 resolvconf err,", err.stderr)});
         await exec("echo 'nameserver 8.8.8.8'  >> /home/pi/.router/run/eth0.288.resolv.conf").catch((err) => {log.error("add eth0.288 resolvconf err,", err.stderr)});
 
-        done();
-    })()
-  );
+  });
 
-  after((done) => (
-    async() => {
+  after(async () => {
         if (this.needClean) {
             await exec("sudo ip route flush table eth0.288_default dev eth0.288").catch((err) => {});
             await exec("sudo ip link set dev eth0.288 down").catch((err) => {});
@@ -93,9 +88,7 @@ describe('Test Routing WAN', function(){
             await exec("sudo ip link del eth0.288").catch((err) => {});
             await exec("rm /home/pi/.router/run/eth0.288.resolv.conf").catch((err) => {log.error("rm eth0.288 resolvconf err,", err.stderr)});
         }
-        done();
-    })()
-  );
+  });
 
   it('should get unready WAN interfaces', () => {
     const deadWANs = this.plugin.getUnreadyWANPlugins();
