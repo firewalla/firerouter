@@ -205,10 +205,8 @@ function expandProfile(network, phyNames) {
         lease: DHCP_LEASE
       }
     },
-    // ssh on the wan as well, matching the stock Crystal onboard config: an adaptive box is
-    // remotely supported and the wan side is the only way in before the LAN is wired up
     sshd: {
-      [WAN_PHY]: {enabled: true},
+      [WAN_PHY]: {enabled: false},
       [LAN_BRIDGE]: {enabled: true}
     },
     icmp: {
