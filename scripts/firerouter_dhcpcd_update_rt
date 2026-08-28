@@ -104,14 +104,42 @@ case $reason in
         done
       fi
 
-      for default_rt_table in $default_rt_tables; do
-        execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
-      done
-      old_gw=`cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo ""`
-      if [ "$nd_from" != "$old_gw" ]; then
-        echo $nd_from > /dev/shm/dhcpcd.gw6.$interface
-        log "ip_changed: gw6 changed from $old_gw to $nd_from on $interface"
-        ip_changed="1"
+      # Router Lifetime is carried separately from Prefix Information
+      # valid lifetime. A Router Lifetime of 0 means the advertising
+      # router must not be installed as an IPv6 default router.
+      ra_file="/dev/shm/dhcpcd.ra.$interface"
+      router_lifetime=$(grep -oP '^ra_router_lifetime=\K.*' "$ra_file" 2>/dev/null || true)
+
+      old_gw=$(cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo "")
+
+      if [ "$router_lifetime" = "0" ]; then
+        log "ROUTERADVERT: router lifetime is 0 on $interface, removing managed IPv6 default route"
+
+        if [ -n "$old_gw" ]; then
+          for default_rt_table in $default_rt_tables; do
+            execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"
+          done
+
+          log "ip_changed: default IPv6 route removed on $interface (previous gateway $old_gw)"
+          ip_changed="1"
+        fi
+
+        # The cached gateway represents the managed default route. Once the
+        # Router Advertisement explicitly withdraws default-router status,
+        # remove that cached state as well.
+        rm -f /dev/shm/dhcpcd.gw6.$interface
+      else
+        # Preserve existing behavior when Router Lifetime is nonzero or
+        # unavailable in the dhcpcd environment.
+        for default_rt_table in $default_rt_tables; do
+          execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
+        done
+
+        if [ "$nd_from" != "$old_gw" ]; then
+          echo "$nd_from" > /dev/shm/dhcpcd.gw6.$interface
+          log "ip_changed: gw6 changed from $old_gw to $nd_from on $interface"
+          ip_changed="1"
+        fi
       fi
     fi
 
