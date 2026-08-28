@@ -115,19 +115,27 @@ case $reason in
       if [ "$router_lifetime" = "0" ]; then
         log "ROUTERADVERT: router lifetime is 0 on $interface, removing managed IPv6 default route"
 
+        delete_success=1
+
         if [ -n "$old_gw" ]; then
           for default_rt_table in $default_rt_tables; do
-            execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"
+            if ! execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"; then
+              log "ROUTERADVERT: failed to remove IPv6 default route via $old_gw from table $default_rt_table"
+              delete_success=0
+            fi
           done
 
-          log "ip_changed: default IPv6 route removed on $interface (previous gateway $old_gw)"
-          ip_changed="1"
-        fi
+          if [ "$delete_success" -eq 1 ]; then
+            log "ip_changed: default IPv6 route removed on $interface (previous gateway $old_gw)"
+            ip_changed="1"
 
-        # The cached gateway represents the managed default route. Once the
-        # Router Advertisement explicitly withdraws default-router status,
-        # remove that cached state as well.
-        rm -f /dev/shm/dhcpcd.gw6.$interface
+            # The cached gateway represents the managed default route.
+            # Remove it only after all managed route deletions succeeded.
+            rm -f /dev/shm/dhcpcd.gw6.$interface
+          else
+            log "ROUTERADVERT: retaining cached IPv6 gateway $old_gw so route removal can be retried"
+          fi
+        fi
       else
         # Preserve existing behavior when Router Lifetime is nonzero or
         # unavailable in the dhcpcd environment.
@@ -156,6 +164,7 @@ case $reason in
       ip_changed="1"
     fi
     ;;
+
   BOUND6|REBOOT6)
     addr_id=1
     while [ $addr_id -lt 10 ]; do
@@ -179,6 +188,7 @@ case $reason in
       addr_id=$((addr_id + 1))
     done
     ;;
+
   RENEW6|REBIND6)
     # compare old address with new address
     addr_id=1
@@ -199,6 +209,7 @@ case $reason in
       addr_id=$((addr_id + 1))
     done
     ;;
+
 esac
 
 if [ -n "$ip_changed" ]; then
