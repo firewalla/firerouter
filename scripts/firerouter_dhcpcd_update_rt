@@ -115,25 +115,46 @@ case $reason in
       if [ "$router_lifetime" = "0" ]; then
         log "ROUTERADVERT: router lifetime is 0 on $interface, removing managed IPv6 default route"
 
-        delete_success=1
+        cleanup_complete=1
+        any_removed=0
 
         if [ -n "$old_gw" ]; then
           for default_rt_table in $default_rt_tables; do
-            if ! execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"; then
-              log "ROUTERADVERT: failed to remove IPv6 default route via $old_gw from table $default_rt_table"
-              delete_success=0
+            # An absent route is already in the desired state.
+            if ip -6 route show table "$default_rt_table" default via "$old_gw" dev "$interface" 2>/dev/null | grep -q .; then
+              if execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"; then
+                log "ROUTERADVERT: removed IPv6 default route via $old_gw from table $default_rt_table"
+                any_removed=1
+              else
+                # The route may have disappeared between the existence check
+                # and the delete attempt. Re-check before treating this as a
+                # cleanup failure.
+                if ip -6 route show table "$default_rt_table" default via "$old_gw" dev "$interface" 2>/dev/null | grep -q .; then
+                  log "ROUTERADVERT: failed to remove IPv6 default route via $old_gw from table $default_rt_table"
+                  cleanup_complete=0
+                else
+                  log "ROUTERADVERT: IPv6 default route via $old_gw from table $default_rt_table was already absent after delete attempt"
+                fi
+              fi
+            else
+              log "ROUTERADVERT: IPv6 default route via $old_gw is already absent from table $default_rt_table"
             fi
           done
 
-          if [ "$delete_success" -eq 1 ]; then
-            log "ip_changed: default IPv6 route removed on $interface (previous gateway $old_gw)"
+          if [ "$any_removed" -eq 1 ]; then
+            log "ip_changed: IPv6 default route state changed on $interface (previous gateway $old_gw)"
             ip_changed="1"
+          fi
 
+          if [ "$cleanup_complete" -eq 1 ]; then
             # The cached gateway represents the managed default route.
-            # Remove it only after all managed route deletions succeeded.
+            # Remove it only after all configured routing tables are confirmed clean.
             rm -f /dev/shm/dhcpcd.gw6.$interface
+            log "ROUTERADVERT: all managed IPv6 default routes are absent on $interface; cleared cached gateway"
           else
-            log "ROUTERADVERT: retaining cached IPv6 gateway $old_gw so route removal can be retried"
+            # At least one configured table still has the managed route.
+            # Retain the cached gateway so a subsequent RA can retry cleanup.
+            log "ROUTERADVERT: retaining cached IPv6 gateway $old_gw because cleanup is incomplete"
           fi
         fi
       else
