@@ -31,7 +31,6 @@ const _ = require('lodash');
 const AsyncLock = require('async-lock');
 const exec = require('child-process-promise').exec;
 const fwpclient = require('../util/redis_manager.js').getPublishClient();
-const platform = require('../platform/PlatformLoader.js').getPlatform();
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 let applyInProgress = false;
@@ -172,14 +171,6 @@ async function reapply(config, dryRun = false) {
     t1 = Date.now() / 1000;
     applyInProgress = true;
     const errors = [];
-
-    const country = _.get(config, ['apc', 'globalSysConfig', 'country']);
-    const wlanReloaded = await platform.prepareWLANRegDomainChange(country).catch((err) => {
-      log.error(`Failed to prepare WLAN reg domain change for country ${country}`, err);
-      errors.push(err.message || err);
-      return false;
-    });
-
     let newPluginCategoryMap = {};
     const reversedPluginConfs = pluginConfs.reverse();
     // if config is not set, simply reapply effective config
@@ -239,9 +230,6 @@ async function reapply(config, dryRun = false) {
               log.info(`Initial setup of ${pluginConf.category}-->${name}`, pluginConf.hide_config_in_log ? "hidden" : value[name]);
               instance.propagateConfigChanged(Plugin.CHANGE_FULL);
               instance.unsubscribeAllChanges();
-            }
-            if (wlanReloaded && pluginConf.config_path === "interface.wlan") {
-              instance.propagateConfigChanged(Plugin.CHANGE_FULL);
             }
             newInstances[name] = instance;
           }
