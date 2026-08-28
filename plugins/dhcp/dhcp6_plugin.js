@@ -47,8 +47,8 @@ class DHCP6Plugin extends DHCPPlugin {
       extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
     }
 
-    if (!Number.isInteger(raLifetime) || raLifetime < 0 || raLifetime > 65535) {
-      this.fatal(`raLifetime for dhcp6 of ${this.name} should be an integer between 0 and 65535`);
+    if (!Number.isInteger(raLifetime) || raLifetime < 0 || raLifetime > 65535 || (raLifetime !== 0 && raLifetime < raInterval)) {
+      this.fatal(`raLifetime for dhcp6 of ${this.name} should be 0 or an integer between raInterval and 65535`);
     }
 
     const content = [];
