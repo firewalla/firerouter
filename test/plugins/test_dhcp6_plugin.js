@@ -51,6 +51,15 @@ describe('Test DHCP6 configuration', function(){
     expect(contents).to.contain('ra-param=eth5,200,3600');
   });
 
+  it('should use the interval as the default Router Advertisement lifetime when it exceeds 3600 seconds', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5', [], 'stateless', undefined, undefined, [], undefined, 86400, 4000
+    );
+
+    const contents = await fs.readFileAsync(this.plugin._getConfFilePath(), {encoding: 'utf8'});
+    expect(contents).to.contain('ra-param=eth5,4000,4000');
+  });
+
   it('should allow Router Advertisement lifetime to be disabled with 0 seconds', async () => {
     await this.plugin.writeDHCPConfFile(
       'eth5',
