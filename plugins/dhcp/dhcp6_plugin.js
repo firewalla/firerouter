@@ -38,13 +38,17 @@ class DHCP6Plugin extends DHCPPlugin {
     this._restartService();
   }
 
-  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200, raLifetime = 3600) {
+  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200, raLifetime) {
     tags = tags || [];
     nameservers = nameservers || [];
     let extraTags = "";
     type = type || "stateless";
     if (tags.length > 0) {
       extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
+    }
+
+    if (raLifetime === undefined) {
+      raLifetime = Math.max(3600, raInterval);
     }
 
     if (!Number.isInteger(raLifetime) || raLifetime < 0 || raLifetime > 65535 || (raLifetime !== 0 && raLifetime < raInterval)) {
