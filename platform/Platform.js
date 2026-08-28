@@ -212,6 +212,19 @@ class Platform {
     }
   }
 
+  async modprobeKernelModule(module_name) {
+    await exec(`sudo modprobe ${module_name}`).catch((err) => {
+      log.error(`Failed to modprobe ${module_name}`, err.message);
+    });
+  }
+
+  async rmmodKernelModule(module_name) {
+    return await exec(`sudo rmmod ${module_name}`).then(() => true).catch((err) => {
+      log.error(`Failed to unload ${module_name} before reload`, err.message);
+      return false;
+    });
+  }
+
   async isKernelModuleInstalled(module_name) {
     if (!this.installedModules) {
       this.installedModules = {};
