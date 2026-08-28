@@ -36,27 +36,27 @@ describe('DHCPv6 Router Advertisement route updates', () => {
   let stateDir;
   let sudoLog;
   let eventLog;
+  let ipLog;
 
   function createRunner({
     gateway,
     lifetime,
-    routeExists = false,
+    routeGateway = null,
   }) {
     const runner = path.join(
       sandboxDir,
       `run-hook-${gateway.replace(/:/g, '-')}`
     );
 
-    const raFile = path.join(stateDir, 'dhcpcd.ra.wan0');
+    const raFile = path.join(
+      stateDir,
+      'dhcpcd.ra.wan0'
+    );
 
     fs.writeFileSync(
       raFile,
       `ra_router_lifetime=${lifetime}\n`
     );
-
-    const routeOutput = routeExists
-      ? 'default via fe80::a dev wan0\n'
-      : '';
 
     fs.writeFileSync(
       runner,
@@ -68,29 +68,46 @@ default_rt_tables=main
 rt_tables=main
 RECORD_LEASE_GW6=${gateway}
 RECORD_LEASE_ND_ID=1
+mtu=1500
+metric=1024
 
-IP_LOG=${path.join(sandboxDir, 'ip.log')}
+IP_LOG=${ipLog}
 SUDO_LOG=${sudoLog}
 EVENT_LOG=${eventLog}
-RA_FILE=${raFile}
 
 ip() {
   printf '%s\\\\n' "$*" >> "$IP_LOG"
 
+  # IPv4 address lookup used by the normal hook environment.
   if [ "$1" = "-4" ]; then
-    echo "inet 192.0.2.10/24"
-    return 0
+    if [ "$2" = "addr" ] && [ "$3" = "show" ] && [ "$4" = "dev" ]; then
+      echo "inet 192.0.2.10/24"
+      return 0
+    fi
   fi
 
+  # Route lookup used by the zero-lifetime cleanup path.
   if [ "$1" = "-6" ] && [ "$2" = "route" ] && [ "$3" = "show" ]; then
-    printf '%s' '${routeOutput}'
+    requested_gateway=""
+
+    if [ "$4" = "table" ] && [ "$5" = "main" ] &&
+       [ "$6" = "default" ] && [ "$7" = "via" ]; then
+      requested_gateway="$8"
+    fi
+
+    if [ "$requested_gateway" = "${routeGateway}" ]; then
+      echo "default via ${routeGateway} dev wan0"
+    fi
+
     return 0
   fi
 
+  # The actual delete command is routed through sudo -> ip.
   if [ "$1" = "-6" ] && [ "$2" = "r" ] && [ "$3" = "del" ]; then
     return 0
   fi
 
+  # Other commands are not expected in these regression tests.
   return 0
 }
 
@@ -131,9 +148,25 @@ source ${path.join(sandboxDir, 'update_rt')}
       path.join(os.tmpdir(), 'firerouter-dhcpcd-')
     );
 
-    stateDir = path.join(sandboxDir, 'state');
-    sudoLog = path.join(sandboxDir, 'sudo.log');
-    eventLog = path.join(sandboxDir, 'event.log');
+    stateDir = path.join(
+      sandboxDir,
+      'state'
+    );
+
+    sudoLog = path.join(
+      sandboxDir,
+      'sudo.log'
+    );
+
+    eventLog = path.join(
+      sandboxDir,
+      'event.log'
+    );
+
+    ipLog = path.join(
+      sandboxDir,
+      'ip.log'
+    );
 
     fs.mkdirSync(stateDir);
 
@@ -150,11 +183,6 @@ source ${path.join(sandboxDir, 'update_rt')}
     );
 
     fs.writeFileSync(
-      path.join(sandboxDir, 'ip.log'),
-      ''
-    );
-
-    fs.writeFileSync(
       sudoLog,
       ''
     );
@@ -163,13 +191,21 @@ source ${path.join(sandboxDir, 'update_rt')}
       eventLog,
       ''
     );
+
+    fs.writeFileSync(
+      ipLog,
+      ''
+    );
   });
 
   afterEach(() => {
-    fs.rmSync(sandboxDir, {
-      recursive: true,
-      force: true
-    });
+    fs.rmSync(
+      sandboxDir,
+      {
+        recursive: true,
+        force: true
+      }
+    );
   });
 
   it(
@@ -178,12 +214,16 @@ source ${path.join(sandboxDir, 'update_rt')}
       const runner = createRunner({
         gateway: 'fe80::b',
         lifetime: '0',
-        routeExists: true,
+        routeGateway: 'fe80::a',
       });
 
-      execFileSync('bash', [runner], {
-        stdio: 'pipe'
-      });
+      execFileSync(
+        'bash',
+        [runner],
+        {
+          stdio: 'pipe'
+        }
+      );
 
       const cache = path.join(
         stateDir,
@@ -201,27 +241,54 @@ source ${path.join(sandboxDir, 'update_rt')}
       );
 
       const ipOutput = fs.readFileSync(
-        path.join(sandboxDir, 'ip.log'),
+        ipLog,
         'utf8'
       );
 
-      // Confirm that the zero-lifetime path was actually exercised.
+      /*
+       * This proves the ROUTERADVERT zero-lifetime branch actually executed.
+       * The test therefore cannot pass merely because the ROUTERADVERT case
+       * is missing from update_rt.
+       */
       expect(eventOutput).to.include(
         'ROUTERADVERT: router lifetime is 0 for non-managed router fe80::b'
       );
 
-      // Router A remains the managed router.
-      expect(fs.readFileSync(cache, 'utf8')).to.equal(
+      /*
+       * Router A remains the managed gateway.
+       */
+      expect(
+        fs.readFileSync(cache, 'utf8')
+      ).to.equal(
         'fe80::a\n'
       );
 
-      // No IPv6 route deletion should occur.
-      expect(sudoOutput).to.equal('');
-      expect(sudoOutput).to.not.include('ip -6');
+      /*
+       * B's zero lifetime must not cause A's default route to be deleted.
+       */
+      expect(sudoOutput).to.not.include(
+        'ip -6 r del default via fe80::a dev wan0 table main'
+      );
 
-      // The route lookup used for the zero-lifetime cleanup path must also
-      // not occur because B is not the currently managed router.
-      expect(ipOutput).to.not.include('default');
+      expect(sudoOutput).to.not.include(
+        'ip -6 r del default via fe80::b dev wan0 table main'
+      );
+
+      /*
+       * No route lookup should be necessary because the selected router
+       * is not the currently managed router.
+       */
+      expect(ipOutput).to.not.include(
+        '-6 route show'
+      );
+
+      /*
+       * No IPv6 change event should be published because routing state did
+       * not change.
+       */
+      expect(eventOutput).to.not.include(
+        'dhcpcd6.ip_change'
+      );
     }
   );
 
@@ -231,12 +298,16 @@ source ${path.join(sandboxDir, 'update_rt')}
       const runner = createRunner({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeExists: true,
+        routeGateway: 'fe80::a',
       });
 
-      execFileSync('bash', [runner], {
-        stdio: 'pipe'
-      });
+      execFileSync(
+        'bash',
+        [runner],
+        {
+          stdio: 'pipe'
+        }
+      );
 
       const cache = path.join(
         stateDir,
@@ -253,20 +324,102 @@ source ${path.join(sandboxDir, 'update_rt')}
         'utf8'
       );
 
-      // The cached gateway must be cleared after successful withdrawal.
-      expect(fs.existsSync(cache)).to.equal(false);
+      const ipOutput = fs.readFileSync(
+        ipLog,
+        'utf8'
+      );
 
-      // The managed default route must actually be deleted.
+      /*
+       * A successful withdrawal clears the cached managed gateway.
+       */
+      expect(
+        fs.existsSync(cache)
+      ).to.equal(false);
+
+      /*
+       * The route lookup must have been performed against the cached router.
+       */
+      expect(ipOutput).to.include(
+        '-6 route show table main default via fe80::a dev wan0'
+      );
+
+      /*
+       * The managed default route must actually be deleted.
+       */
       expect(sudoOutput).to.include(
         'ip -6 r del default via fe80::a dev wan0 table main'
       );
 
-      // The route-state change must be reported.
+      /*
+       * The IPv6 routing state change must be reported.
+       */
       expect(eventOutput).to.include(
         'ip_changed: IPv6 default route state changed on wan0'
       );
 
-      // The existing IPv6 change notification mechanism must fire.
+      /*
+       * The existing IPv6 change notification must be published.
+       */
+      expect(eventOutput).to.include(
+        'dhcpcd6.ip_change'
+      );
+    }
+  );
+
+  it(
+    'installs a default route when the router lifetime is nonzero',
+    () => {
+      const runner = createRunner({
+        gateway: 'fe80::b',
+        lifetime: '1800',
+      });
+
+      execFileSync(
+        'bash',
+        [runner],
+        {
+          stdio: 'pipe'
+        }
+      );
+
+      const cache = path.join(
+        stateDir,
+        'dhcpcd.gw6.wan0'
+      );
+
+      const sudoOutput = fs.readFileSync(
+        sudoLog,
+        'utf8'
+      );
+
+      const eventOutput = fs.readFileSync(
+        eventLog,
+        'utf8'
+      );
+
+      /*
+       * Nonzero lifetime preserves the existing route-installation behavior.
+       */
+      expect(sudoOutput).to.include(
+        'ip -6 r replace default via fe80::b dev wan0 mtu 1500 table main'
+      );
+
+      /*
+       * The new router becomes the cached managed gateway.
+       */
+      expect(
+        fs.readFileSync(cache, 'utf8')
+      ).to.equal(
+        'fe80::b\n'
+      );
+
+      /*
+       * Changing the managed gateway is still reported as an IPv6 change.
+       */
+      expect(eventOutput).to.include(
+        'ip_changed: gw6 changed from fe80::a to fe80::b on wan0'
+      );
+
       expect(eventOutput).to.include(
         'dhcpcd6.ip_change'
       );
