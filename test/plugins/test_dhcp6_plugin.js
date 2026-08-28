@@ -87,6 +87,29 @@ describe('Test DHCP6 configuration', function(){
     expect(contents).to.contain('ra-param=eth5,200,900');
   });
 
+  it('should reject a nonzero Router Advertisement lifetime below the interval', async () => {
+    let error = null;
+    try {
+      await this.plugin.writeDHCPConfFile(
+        'eth5', [], 'stateless', undefined, undefined, [], undefined, 86400, 200, 199
+      );
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).to.not.equal(null);
+    expect(String(error)).to.contain('raLifetime');
+  });
+
+  it('should allow a Router Advertisement lifetime equal to the interval', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5', [], 'stateless', undefined, undefined, [], undefined, 86400, 200, 200
+    );
+
+    const contents = await fs.readFileAsync(this.plugin._getConfFilePath(), {encoding: 'utf8'});
+    expect(contents).to.contain('ra-param=eth5,200,200');
+  });
+
   it('should reject invalid Router Advertisement lifetimes', async () => {
     const invalidLifetimes = [-1, 65536, 1.5, '3600'];
 
