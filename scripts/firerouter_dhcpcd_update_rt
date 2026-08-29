@@ -1,4 +1,3 @@
-```bash
 #!/bin/bash
 
 # NOTE: log() / execute_and_log() are defined in firerouter_dhcpcd_common, and
@@ -311,4 +310,3 @@ esac
 if [ -n "$ip_changed" ]; then
   redis-cli -n 1 publish "dhcpcd6.ip_change" "$interface"
 fi
-```
