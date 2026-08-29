@@ -1,3 +1,4 @@
+```javascript
 /*    Copyright 2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
@@ -36,7 +37,10 @@ function copyHookToSandbox(source, destination, stateDir) {
     .split('/dev/shm')
     .join(stateDir);
 
-  fs.writeFileSync(destination, content);
+  fs.writeFileSync(
+    destination,
+    content
+  );
 }
 
 
@@ -46,9 +50,11 @@ describe('DHCPv6 Router Advertisement route updates', () => {
   let sudoLog;
   let eventLog;
   let ipLog;
+  let queryLog;
   let routeState;
   let queryFailures;
   let deleteFailures;
+  let deleteThenDisappear;
 
 
   function writeLines(file, lines) {
@@ -66,7 +72,10 @@ describe('DHCPv6 Router Advertisement route updates', () => {
       return [];
     }
 
-    const content = fs.readFileSync(file, 'utf8').trim();
+    const content = fs.readFileSync(
+      file,
+      'utf8'
+    ).trim();
 
     return content
       ? content.split('\n')
@@ -107,6 +116,16 @@ describe('DHCPv6 Router Advertisement route updates', () => {
   }
 
 
+  function setDeleteThenDisappear(routes) {
+    writeLines(
+      deleteThenDisappear,
+      routes.map(({ table, gateway }) => {
+        return routeKey(table, gateway);
+      })
+    );
+  }
+
+
   function createRunner({
     gateway,
     lifetime,
@@ -114,7 +133,9 @@ describe('DHCPv6 Router Advertisement route updates', () => {
   }) {
     const runner = path.join(
       sandboxDir,
-      `run-hook-${gateway.replace(/:/g, '-')}-${Date.now()}`
+      `run-hook-${gateway.replace(/:/g, '-')}-${Date.now()}-${Math.random()
+        .toString(16)
+        .slice(2)}`
     );
 
     const raFile = path.join(
@@ -148,11 +169,13 @@ mtu=1500
 metric=1024
 
 IP_LOG=${ipLog}
+QUERY_LOG=${queryLog}
 SUDO_LOG=${sudoLog}
 EVENT_LOG=${eventLog}
 ROUTE_STATE=${routeState}
 QUERY_FAILURES=${queryFailures}
 DELETE_FAILURES=${deleteFailures}
+DELETE_THEN_DISAPPEAR=${deleteThenDisappear}
 
 ip() {
   printf '%s\\\\n' "$*" >> "$IP_LOG"
@@ -178,6 +201,8 @@ ip() {
       requested_table="$5"
       requested_gateway="$8"
     fi
+
+    printf '%s\\\\n' "$requested_table" >> "$QUERY_LOG"
 
     if grep -F -x "$requested_table" "$QUERY_FAILURES" >/dev/null 2>&1; then
       return 1
@@ -209,6 +234,13 @@ ip() {
     route_key="${requested_table}|${requested_gateway}"
 
     if grep -F -x "$route_key" "$DELETE_FAILURES" >/dev/null 2>&1; then
+      if grep -F -x "$route_key" "$DELETE_THEN_DISAPPEAR" >/dev/null 2>&1; then
+        tmp_state="\${ROUTE_STATE}.tmp"
+
+        grep -F -x -v "$route_key" "$ROUTE_STATE" > "$tmp_state" || true
+        mv "$tmp_state" "$ROUTE_STATE"
+      fi
+
       return 1
     fi
 
@@ -313,6 +345,13 @@ source ${path.join(sandboxDir, 'update_rt')}
   }
 
 
+  function getQueryOutput() {
+    return readLines(
+      queryLog
+    );
+  }
+
+
   beforeEach(() => {
     sandboxDir = fs.mkdtempSync(
       path.join(
@@ -341,6 +380,11 @@ source ${path.join(sandboxDir, 'update_rt')}
       'ip.log'
     );
 
+    queryLog = path.join(
+      sandboxDir,
+      'query.log'
+    );
+
     routeState = path.join(
       sandboxDir,
       'routes.state'
@@ -356,7 +400,14 @@ source ${path.join(sandboxDir, 'update_rt')}
       'delete.failures'
     );
 
-    fs.mkdirSync(stateDir);
+    deleteThenDisappear = path.join(
+      sandboxDir,
+      'delete.then.disappear'
+    );
+
+    fs.mkdirSync(
+      stateDir
+    );
 
     copyHookToSandbox(
       updateRouteScript,
@@ -390,6 +441,11 @@ source ${path.join(sandboxDir, 'update_rt')}
       []
     );
 
+    writeLines(
+      deleteThenDisappear,
+      []
+    );
+
     fs.writeFileSync(
       sudoLog,
       ''
@@ -402,6 +458,11 @@ source ${path.join(sandboxDir, 'update_rt')}
 
     fs.writeFileSync(
       ipLog,
+      ''
+    );
+
+    fs.writeFileSync(
+      queryLog,
       ''
     );
   });
@@ -482,6 +543,7 @@ source ${path.join(sandboxDir, 'update_rt')}
       const sudoOutput = getSudoOutput();
       const eventOutput = getEventOutput();
       const ipOutput = getIpOutput();
+      const queryOutput = getQueryOutput();
 
       expect(getCache()).to.equal(
         null
@@ -490,6 +552,10 @@ source ${path.join(sandboxDir, 'update_rt')}
       expect(ipOutput).to.include(
         '-6 route show table main default via fe80::a dev wan0'
       );
+
+      expect(queryOutput).to.deep.equal([
+        'main'
+      ]);
 
       expect(sudoOutput).to.include(
         'ip -6 r del default via fe80::a dev wan0 table main'
@@ -609,6 +675,7 @@ source ${path.join(sandboxDir, 'update_rt')}
       });
 
       const sudoOutput = getSudoOutput();
+      const queryOutput = getQueryOutput();
 
       expect(sudoOutput).to.include(
         'ip -6 r del default via fe80::a dev wan0 table main'
@@ -617,6 +684,11 @@ source ${path.join(sandboxDir, 'update_rt')}
       expect(sudoOutput).to.not.include(
         'ip -6 r del default via fe80::a dev wan0 table 100'
       );
+
+      expect(queryOutput).to.deep.equal([
+        'main',
+        '100'
+      ]);
 
       expect(readLines(routeState)).to.deep.equal(
         []
@@ -672,6 +744,15 @@ source ${path.join(sandboxDir, 'update_rt')}
         'ip -6 r del default via fe80::a dev wan0 table main'
       );
 
+      expect(getQueryOutput()).to.deep.equal([
+        'main',
+        '100'
+      ]);
+
+      expect(getEventOutput()).to.include(
+        'failed to query IPv6 default route via fe80::a from table 100'
+      );
+
       expect(getEventOutput()).to.include(
         'retaining cached IPv6 gateway fe80::a because cleanup is incomplete'
       );
@@ -703,7 +784,7 @@ source ${path.join(sandboxDir, 'update_rt')}
 
 
   it(
-    'retains the cached gateway when route deletion fails and retries successfully later',
+    'retains the cached gateway when route deletion fails and verifies that the route still exists before retrying later',
     () => {
       setRoutes([
         {
@@ -732,11 +813,58 @@ source ${path.join(sandboxDir, 'update_rt')}
         'main|fe80::a'
       ]);
 
+      expect(getSudoOutput()).to.include(
+        'ip -6 r del default via fe80::a dev wan0 table main'
+      );
+
+      /*
+       * The production code must perform:
+       *
+       *   1. initial route query
+       *   2. failed route deletion
+       *   3. post-delete verification query
+       *
+       * Seeing two queries proves the failure path was actually exercised.
+       */
+      expect(getQueryOutput()).to.deep.equal([
+        'main',
+        'main'
+      ]);
+
+      expect(getEventOutput()).to.include(
+        'failed to remove IPv6 default route via fe80::a from table main'
+      );
+
       expect(getEventOutput()).to.include(
         'retaining cached IPv6 gateway fe80::a because cleanup is incomplete'
       );
+    }
+  );
 
-      setDeleteFailures([]);
+
+  it(
+    'treats a failed deletion followed by a route disappearing as successful cleanup',
+    () => {
+      setRoutes([
+        {
+          table: 'main',
+          gateway: 'fe80::a'
+        }
+      ]);
+
+      setDeleteFailures([
+        {
+          table: 'main',
+          gateway: 'fe80::a'
+        }
+      ]);
+
+      setDeleteThenDisappear([
+        {
+          table: 'main',
+          gateway: 'fe80::a'
+        }
+      ]);
 
       runHook({
         gateway: 'fe80::a',
@@ -751,8 +879,29 @@ source ${path.join(sandboxDir, 'update_rt')}
         null
       );
 
+      /*
+       * The delete returned failure, so the helper must verify the route
+       * state instead of assuming that the deletion succeeded or failed.
+       */
+      expect(getQueryOutput()).to.deep.equal([
+        'main',
+        'main'
+      ]);
+
+      expect(getSudoOutput()).to.include(
+        'ip -6 r del default via fe80::a dev wan0 table main'
+      );
+
+      expect(getEventOutput()).to.include(
+        'IPv6 default route via fe80::a from table main was already absent after delete attempt'
+      );
+
       expect(getEventOutput()).to.include(
         'ip_changed: IPv6 default route state changed on wan0'
+      );
+
+      expect(getEventOutput()).to.include(
+        'dhcpcd6.ip_change'
       );
     }
   );
@@ -804,6 +953,18 @@ source ${path.join(sandboxDir, 'update_rt')}
         'ip -6 r del default via fe80::a dev wan0 table 100'
       );
 
+      /*
+       * main is queried once and table 100 is queried twice:
+       *
+       *   main -> exists -> delete succeeds
+       *   100  -> exists -> delete fails -> verify still exists
+       */
+      expect(getQueryOutput()).to.deep.equal([
+        'main',
+        '100',
+        '100'
+      ]);
+
       setDeleteFailures([]);
 
       runHook({
@@ -822,6 +983,13 @@ source ${path.join(sandboxDir, 'update_rt')}
       expect(getCache()).to.equal(
         null
       );
+
+      expect(getQueryOutput()).to.deep.equal([
+        'main',
+        '100',
+        '100',
+        '100'
+      ]);
     }
   );
 
@@ -843,6 +1011,10 @@ source ${path.join(sandboxDir, 'update_rt')}
 
       expect(getIpOutput()).to.not.include(
         '-6 route show table main default via'
+      );
+
+      expect(getQueryOutput()).to.deep.equal(
+        []
       );
     }
   );
@@ -888,6 +1060,11 @@ source ${path.join(sandboxDir, 'update_rt')}
           ''
         );
 
+        fs.writeFileSync(
+          queryLog,
+          ''
+        );
+
         runHook({
           gateway: 'fe80::b',
           lifetime
@@ -899,6 +1076,10 @@ source ${path.join(sandboxDir, 'update_rt')}
 
         expect(getCache()).to.equal(
           'fe80::b\n'
+        );
+
+        expect(getQueryOutput()).to.deep.equal(
+          []
         );
       }
     }
@@ -931,6 +1112,11 @@ source ${path.join(sandboxDir, 'update_rt')}
       expect(getSudoOutput()).to.include(
         'ip -6 r del default via fe80::a dev wan0 table main'
       );
+
+      expect(getQueryOutput()).to.deep.equal([
+        'main'
+      ]);
     }
   );
 });
+```
