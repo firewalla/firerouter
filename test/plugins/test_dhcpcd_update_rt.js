@@ -21,8 +21,14 @@ const chai = require('chai');
 const expect = chai.expect;
 
 const repoRoot = path.resolve(__dirname, '../..');
-const commonScript = path.join(repoRoot, 'scripts/firerouter_dhcpcd_common');
-const updateRouteScript = path.join(repoRoot, 'scripts/firerouter_dhcpcd_update_rt');
+const commonScript = path.join(
+  repoRoot,
+  'scripts/firerouter_dhcpcd_common'
+);
+const updateRouteScript = path.join(
+  repoRoot,
+  'scripts/firerouter_dhcpcd_update_rt'
+);
 
 
 function copyHookToSandbox(source, destination, stateDir) {
@@ -44,12 +50,16 @@ describe('DHCPv6 Router Advertisement route updates', () => {
   let queryFailures;
   let deleteFailures;
 
+
   function writeLines(file, lines) {
     fs.writeFileSync(
       file,
-      lines.length > 0 ? `${lines.join('\n')}\n` : ''
+      lines.length > 0
+        ? `${lines.join('\n')}\n`
+        : ''
     );
   }
+
 
   function readLines(file) {
     if (!fs.existsSync(file)) {
@@ -58,30 +68,44 @@ describe('DHCPv6 Router Advertisement route updates', () => {
 
     const content = fs.readFileSync(file, 'utf8').trim();
 
-    return content ? content.split('\n') : [];
+    return content
+      ? content.split('\n')
+      : [];
   }
+
 
   function routeKey(table, gateway) {
     return `${table}|${gateway}`;
   }
 
+
   function setRoutes(routes) {
     writeLines(
       routeState,
-      routes.map(({ table, gateway }) => routeKey(table, gateway))
+      routes.map(({ table, gateway }) => {
+        return routeKey(table, gateway);
+      })
     );
   }
 
+
   function setQueryFailures(tables) {
-    writeLines(queryFailures, tables);
+    writeLines(
+      queryFailures,
+      tables
+    );
   }
+
 
   function setDeleteFailures(routes) {
     writeLines(
       deleteFailures,
-      routes.map(({ table, gateway }) => routeKey(table, gateway))
+      routes.map(({ table, gateway }) => {
+        return routeKey(table, gateway);
+      })
     );
   }
+
 
   function createRunner({
     gateway,
@@ -209,7 +233,7 @@ grep() {
 
 sudo() {
   printf '%s\\\\n' "$*" >> "$SUDO_LOG"
-  "\$@"
+  "\\$@"
 }
 
 redis-cli() {
@@ -226,10 +250,14 @@ source ${path.join(sandboxDir, 'update_rt')}
 `
     );
 
-    fs.chmodSync(runner, 0o755);
+    fs.chmodSync(
+      runner,
+      0o755
+    );
 
     return runner;
   }
+
 
   function runHook(options) {
     const runner = createRunner(options);
@@ -243,6 +271,7 @@ source ${path.join(sandboxDir, 'update_rt')}
     );
   }
 
+
   function getCache() {
     const cache = path.join(
       stateDir,
@@ -253,8 +282,12 @@ source ${path.join(sandboxDir, 'update_rt')}
       return null;
     }
 
-    return fs.readFileSync(cache, 'utf8');
+    return fs.readFileSync(
+      cache,
+      'utf8'
+    );
   }
+
 
   function getSudoOutput() {
     return fs.readFileSync(
@@ -263,12 +296,14 @@ source ${path.join(sandboxDir, 'update_rt')}
     );
   }
 
+
   function getEventOutput() {
     return fs.readFileSync(
       eventLog,
       'utf8'
     );
   }
+
 
   function getIpOutput() {
     return fs.readFileSync(
@@ -277,9 +312,13 @@ source ${path.join(sandboxDir, 'update_rt')}
     );
   }
 
+
   beforeEach(() => {
     sandboxDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'firerouter-dhcpcd-')
+      path.join(
+        os.tmpdir(),
+        'firerouter-dhcpcd-'
+      )
     );
 
     stateDir = path.join(
@@ -321,23 +360,52 @@ source ${path.join(sandboxDir, 'update_rt')}
 
     copyHookToSandbox(
       updateRouteScript,
-      path.join(sandboxDir, 'update_rt'),
+      path.join(
+        sandboxDir,
+        'update_rt'
+      ),
       stateDir
     );
 
     fs.writeFileSync(
-      path.join(stateDir, 'dhcpcd.gw6.wan0'),
+      path.join(
+        stateDir,
+        'dhcpcd.gw6.wan0'
+      ),
       'fe80::a\n'
     );
 
-    writeLines(routeState, []);
-    writeLines(queryFailures, []);
-    writeLines(deleteFailures, []);
+    writeLines(
+      routeState,
+      []
+    );
 
-    fs.writeFileSync(sudoLog, '');
-    fs.writeFileSync(eventLog, '');
-    fs.writeFileSync(ipLog, '');
+    writeLines(
+      queryFailures,
+      []
+    );
+
+    writeLines(
+      deleteFailures,
+      []
+    );
+
+    fs.writeFileSync(
+      sudoLog,
+      ''
+    );
+
+    fs.writeFileSync(
+      eventLog,
+      ''
+    );
+
+    fs.writeFileSync(
+      ipLog,
+      ''
+    );
   });
+
 
   afterEach(() => {
     fs.rmSync(
@@ -348,6 +416,7 @@ source ${path.join(sandboxDir, 'update_rt')}
       }
     );
   });
+
 
   it(
     'does not withdraw router A when different router B advertises a zero lifetime',
@@ -394,6 +463,7 @@ source ${path.join(sandboxDir, 'update_rt')}
     }
   );
 
+
   it(
     'withdraws the currently cached router when that router advertises a zero lifetime',
     () => {
@@ -413,7 +483,9 @@ source ${path.join(sandboxDir, 'update_rt')}
       const eventOutput = getEventOutput();
       const ipOutput = getIpOutput();
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
 
       expect(ipOutput).to.include(
         '-6 route show table main default via fe80::a dev wan0'
@@ -432,6 +504,7 @@ source ${path.join(sandboxDir, 'update_rt')}
       );
     }
   );
+
 
   it(
     'installs a default route when the router lifetime is nonzero',
@@ -462,6 +535,7 @@ source ${path.join(sandboxDir, 'update_rt')}
     }
   );
 
+
   it(
     'removes managed routes from every configured routing table',
     () => {
@@ -483,7 +557,11 @@ source ${path.join(sandboxDir, 'update_rt')}
       runHook({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeTables: ['main', '100', '200']
+        routeTables: [
+          'main',
+          '100',
+          '200'
+        ]
       });
 
       const sudoOutput = getSudoOutput();
@@ -500,11 +578,16 @@ source ${path.join(sandboxDir, 'update_rt')}
         'ip -6 r del default via fe80::a dev wan0 table 200'
       );
 
-      expect(readLines(routeState)).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(
+        []
+      );
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
     }
   );
+
 
   it(
     'treats an already-absent route as successful cleanup',
@@ -519,7 +602,10 @@ source ${path.join(sandboxDir, 'update_rt')}
       runHook({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeTables: ['main', '100']
+        routeTables: [
+          'main',
+          '100'
+        ]
       });
 
       const sudoOutput = getSudoOutput();
@@ -532,15 +618,20 @@ source ${path.join(sandboxDir, 'update_rt')}
         'ip -6 r del default via fe80::a dev wan0 table 100'
       );
 
-      expect(readLines(routeState)).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(
+        []
+      );
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
 
       expect(getEventOutput()).to.include(
         'dhcpcd6.ip_change'
       );
     }
   );
+
 
   it(
     'retains the cached gateway when route-query fails and retries successfully later',
@@ -556,12 +647,17 @@ source ${path.join(sandboxDir, 'update_rt')}
         }
       ]);
 
-      setQueryFailures(['100']);
+      setQueryFailures([
+        '100'
+      ]);
 
       runHook({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeTables: ['main', '100']
+        routeTables: [
+          'main',
+          '100'
+        ]
       });
 
       expect(getCache()).to.equal(
@@ -585,18 +681,26 @@ source ${path.join(sandboxDir, 'update_rt')}
       runHook({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeTables: ['main', '100']
+        routeTables: [
+          'main',
+          '100'
+        ]
       });
 
-      expect(readLines(routeState)).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(
+        []
+      );
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
 
       expect(getSudoOutput()).to.include(
         'ip -6 r del default via fe80::a dev wan0 table 100'
       );
     }
   );
+
 
   it(
     'retains the cached gateway when route deletion fails and retries successfully later',
@@ -639,15 +743,20 @@ source ${path.join(sandboxDir, 'update_rt')}
         lifetime: '0'
       });
 
-      expect(readLines(routeState)).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(
+        []
+      );
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
 
       expect(getEventOutput()).to.include(
         'ip_changed: IPv6 default route state changed on wan0'
       );
     }
   );
+
 
   it(
     'supports partial cleanup followed by a successful retry',
@@ -673,7 +782,10 @@ source ${path.join(sandboxDir, 'update_rt')}
       runHook({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeTables: ['main', '100']
+        routeTables: [
+          'main',
+          '100'
+        ]
       });
 
       expect(readLines(routeState)).to.deep.equal([
@@ -697,14 +809,22 @@ source ${path.join(sandboxDir, 'update_rt')}
       runHook({
         gateway: 'fe80::a',
         lifetime: '0',
-        routeTables: ['main', '100']
+        routeTables: [
+          'main',
+          '100'
+        ]
       });
 
-      expect(readLines(routeState)).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(
+        []
+      );
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
     }
   );
+
 
   it(
     'preserves legacy behavior when ra_router_lifetime is missing',
@@ -727,6 +847,7 @@ source ${path.join(sandboxDir, 'update_rt')}
     }
   );
 
+
   it(
     'treats malformed persisted Router Lifetime values as unavailable',
     () => {
@@ -745,7 +866,10 @@ source ${path.join(sandboxDir, 'update_rt')}
         );
 
         fs.writeFileSync(
-          path.join(stateDir, 'dhcpcd.gw6.wan0'),
+          path.join(
+            stateDir,
+            'dhcpcd.gw6.wan0'
+          ),
           'fe80::a\n'
         );
 
@@ -780,6 +904,7 @@ source ${path.join(sandboxDir, 'update_rt')}
     }
   );
 
+
   it(
     'accepts a zero lifetime represented with leading zeroes',
     () => {
@@ -795,9 +920,13 @@ source ${path.join(sandboxDir, 'update_rt')}
         lifetime: '000'
       });
 
-      expect(readLines(routeState)).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(
+        []
+      );
 
-      expect(getCache()).to.equal(null);
+      expect(getCache()).to.equal(
+        null
+      );
 
       expect(getSudoOutput()).to.include(
         'ip -6 r del default via fe80::a dev wan0 table main'
