@@ -1,4 +1,3 @@
-```javascript
 /*    Copyright 2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
@@ -1119,4 +1118,3 @@ source ${path.join(sandboxDir, 'update_rt')}
     }
   );
 });
-```
