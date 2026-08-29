@@ -1,3 +1,4 @@
+```bash
 #!/bin/bash
 
 # NOTE: log() / execute_and_log() are defined in firerouter_dhcpcd_common, and
@@ -18,6 +19,98 @@ if [ -z "$default_rt_tables" ]; then
 fi
 
 ip_changed=""
+
+#
+# Validate the persisted Router Advertisement Router Lifetime.
+#
+# The value is persisted as text in /dev/shm/dhcpcd.ra.<interface>.
+# A valid value must contain only decimal digits and must therefore represent
+# a nonnegative integer. Missing or malformed values are treated as unavailable
+# so that existing route-management behavior is preserved.
+#
+is_valid_router_lifetime() {
+    case "$1" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+#
+# Remove the currently managed IPv6 default route from every configured
+# routing table after a Router Advertisement explicitly withdraws default
+# router status with a Router Lifetime of zero.
+#
+# Results are returned through the global variables:
+#
+#   CLEANUP_COMPLETE
+#       1 when every configured table was confirmed clean.
+#       0 when at least one table could not be confirmed clean.
+#
+#   ANY_ROUTE_REMOVED
+#       1 when at least one managed route was actually removed.
+#       0 when no route was removed.
+#
+# A route that is already absent is considered successfully cleaned.
+# Query failures and genuine deletion failures leave cleanup incomplete so the
+# cached gateway is retained and a later Router Advertisement can retry.
+#
+cleanup_managed_ipv6_default_routes() {
+    local old_gw="$1"
+    local default_rt_table
+    local route_info
+    local query_status
+
+    CLEANUP_COMPLETE=1
+    ANY_ROUTE_REMOVED=0
+
+    if [ -z "$old_gw" ]; then
+        return 0
+    fi
+
+    for default_rt_table in $default_rt_tables; do
+        # A successful query with no output means the route is already absent.
+        route_info=$(ip -6 route show table "$default_rt_table" default via "$old_gw" dev "$interface" 2>/dev/null)
+        query_status=$?
+
+        if [ "$query_status" -ne 0 ]; then
+            log "ROUTERADVERT: failed to query IPv6 default route via $old_gw from table $default_rt_table"
+            CLEANUP_COMPLETE=0
+            continue
+        fi
+
+        if [ -z "$route_info" ]; then
+            log "ROUTERADVERT: IPv6 default route via $old_gw is already absent from table $default_rt_table"
+            continue
+        fi
+
+        if execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"; then
+            log "ROUTERADVERT: removed IPv6 default route via $old_gw from table $default_rt_table"
+            ANY_ROUTE_REMOVED=1
+            continue
+        fi
+
+        # The route may have disappeared between the existence check and
+        # the delete attempt. Re-query before deciding cleanup failed.
+        route_info=$(ip -6 route show table "$default_rt_table" default via "$old_gw" dev "$interface" 2>/dev/null)
+        query_status=$?
+
+        if [ "$query_status" -ne 0 ]; then
+            log "ROUTERADVERT: failed to verify IPv6 default route state in table $default_rt_table after deletion failure"
+            CLEANUP_COMPLETE=0
+        elif [ -n "$route_info" ]; then
+            log "ROUTERADVERT: failed to remove IPv6 default route via $old_gw from table $default_rt_table"
+            CLEANUP_COMPLETE=0
+        else
+            log "ROUTERADVERT: IPv6 default route via $old_gw from table $default_rt_table was already absent after delete attempt"
+        fi
+    done
+
+    return 0
+}
 
 case $reason in
 
@@ -68,6 +161,7 @@ case $reason in
           b4=$(echo "$mac" | cut -d: -f4)
           b5=$(echo "$mac" | cut -d: -f5)
           b6=$(echo "$mac" | cut -d: -f6)
+
           # Flip U/L bit (bit 1 from LSB) to form modified EUI-64
           b1=$(printf '%02x' $((b1 ^ 2)))
 
@@ -104,82 +198,43 @@ case $reason in
         done
       fi
 
+      #
       # Router Lifetime is carried separately from Prefix Information
-      # valid lifetime. A Router Lifetime of 0 means the advertising
+      # valid lifetime. A valid Router Lifetime of 0 means the advertising
       # router must not be installed as an IPv6 default router.
+      #
       ra_file="/dev/shm/dhcpcd.ra.$interface"
       router_lifetime=$(grep -oP '^ra_router_lifetime=\K.*' "$ra_file" 2>/dev/null || true)
 
       old_gw=$(cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo "")
 
-      if [ "$router_lifetime" = "0" ]; then
+      if is_valid_router_lifetime "$router_lifetime" && [[ "$router_lifetime" =~ ^0+$ ]]; then
         if [ "$nd_from" != "$old_gw" ]; then
           log "ROUTERADVERT: router lifetime is 0 for non-managed router $nd_from on $interface; keeping managed route via $old_gw"
         else
           log "ROUTERADVERT: router lifetime is 0 for managed router $nd_from on $interface, removing IPv6 default route"
 
-          cleanup_complete=1
-          any_removed=0
+          cleanup_managed_ipv6_default_routes "$old_gw"
 
-          if [ -n "$old_gw" ]; then
-          for default_rt_table in $default_rt_tables; do
-            # Check whether the managed default route exists. A successful
-            # query with no matching output means the route is already absent.
-            route_info=$(ip -6 route show table "$default_rt_table" default via "$old_gw" dev "$interface" 2>/dev/null)
-            query_status=$?
-
-            if [ "$query_status" -ne 0 ]; then
-              log "ROUTERADVERT: failed to query IPv6 default route via $old_gw from table $default_rt_table"
-              cleanup_complete=0
-              continue
-            fi
-
-            if [ -n "$route_info" ]; then
-              if execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"; then
-                log "ROUTERADVERT: removed IPv6 default route via $old_gw from table $default_rt_table"
-                any_removed=1
-              else
-                # The route may have disappeared between the existence check
-                # and the delete attempt. Re-query and only treat the table
-                # as clean if the query succeeds and confirms the route is gone.
-                route_info=$(ip -6 route show table "$default_rt_table" default via "$old_gw" dev "$interface" 2>/dev/null)
-                query_status=$?
-
-                if [ "$query_status" -ne 0 ]; then
-                  log "ROUTERADVERT: failed to verify IPv6 default route state in table $default_rt_table after deletion failure"
-                  cleanup_complete=0
-                elif [ -n "$route_info" ]; then
-                  log "ROUTERADVERT: failed to remove IPv6 default route via $old_gw from table $default_rt_table"
-                  cleanup_complete=0
-                else
-                  log "ROUTERADVERT: IPv6 default route via $old_gw from table $default_rt_table was already absent after delete attempt"
-                fi
-              fi
-            else
-              log "ROUTERADVERT: IPv6 default route via $old_gw is already absent from table $default_rt_table"
-            fi
-          done
-
-          if [ "$any_removed" -eq 1 ]; then
+          if [ "$ANY_ROUTE_REMOVED" -eq 1 ]; then
             log "ip_changed: IPv6 default route state changed on $interface (previous gateway $old_gw)"
             ip_changed="1"
           fi
 
-          if [ "$cleanup_complete" -eq 1 ]; then
+          if [ "$CLEANUP_COMPLETE" -eq 1 ]; then
             # The cached gateway represents the managed default route.
             # Remove it only after all configured routing tables are confirmed clean.
             rm -f /dev/shm/dhcpcd.gw6.$interface
             log "ROUTERADVERT: all managed IPv6 default routes are absent on $interface; cleared cached gateway"
           else
             # At least one configured table could not be confirmed clean.
-            # Retain the cached gateway so a subsequent RA can retry cleanup.
+            # Retain the cached gateway so a subsequent Router Advertisement can retry cleanup.
             log "ROUTERADVERT: retaining cached IPv6 gateway $old_gw because cleanup is incomplete"
-          fi
           fi
         fi
       else
-        # Preserve existing behavior when Router Lifetime is nonzero or
-        # unavailable in the dhcpcd environment.
+        # Preserve existing behavior when Router Lifetime is nonzero,
+        # missing, or malformed.
         for default_rt_table in $default_rt_tables; do
           execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
         done
@@ -256,3 +311,4 @@ esac
 if [ -n "$ip_changed" ]; then
   redis-cli -n 1 publish "dhcpcd6.ip_change" "$interface"
 fi
+```
