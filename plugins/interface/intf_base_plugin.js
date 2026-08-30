@@ -2026,12 +2026,6 @@ async getLastDHCP6LeaseInfo() {
               info.ra_router_lifetime = Number(value);
             break;
           }
-
-          case "ra_router_lifetime": {
-            if (/^\d+$/.test(value))
-              info.ra_router_lifetime = Number(value);
-            break;
-          }
             
           /*
            * Prefix Information Valid Lifetime.
