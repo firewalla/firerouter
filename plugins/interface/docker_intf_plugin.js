@@ -1,5 +1,4 @@
-/*
- *    Copyright 2021 Firewalla Inc
+/*    Copyright 2021-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,13 +18,11 @@
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const exec = require('child-process-promise').exec;
-
 const _ = require('lodash');
-
 const {Address4, Address6} = require('ip-address');
 
 class DockerInterfacePlugin extends InterfaceBasePlugin {
-
+  
   /*
    * Docker bridge interfaces are virtual interfaces managed by Docker.
    * FireRouter must not attempt physical-interface hardware-address
@@ -34,10 +31,9 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
   hasHardwareAddress() {
     return false;
   }
-
+  
   static async preparePlugin() {
     const hasContainer = await exec(`sudo ls /var/lib/docker/containers -1 | wc -l`).then((result) => result.stdout.trim() !== "0").catch((err) => false);
-
     if (hasContainer)
       await exec(`sudo systemctl start docker`).catch((err) => {});
     else
@@ -46,9 +42,7 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
-
     await this._testAndStartDocker();
-
     await exec(`sudo docker network rm ${this.name}`).catch((err) => {
       this.log.error(`Failed to remove docker network ${this.name}: ${err.message}`);
     });
@@ -56,22 +50,18 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
 
   async _testAndStartDocker() {
     const active = await exec(`sudo systemctl -q is-active docker`).then(() => true).catch((err) => false);
-
     if (!active)
       await exec(`sudo systemctl start docker`).catch((err) => {});
   }
 
   async _checkNetworkExists() {
     const result = await exec(`sudo docker network ls -f name=${this.name} -q`).then((result) => result.stdout.trim()).catch((err) => "");
-
     return result !== "";
   }
 
   async createInterface() {
     await this._testAndStartDocker();
-
     const exists = await this._checkNetworkExists();
-
     if (exists) {
       // do not recreate interface if it already exists
       // this is because super.flush will fail to remove networks if there are containers attached to the network
@@ -81,90 +71,73 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       return true;
     }
 
-    const driver = this.networkConfig.driver || "bridge";
-
+    // driver is interpolated into the docker command below, docker's own driver names are plain words
+    const configDriver = this.networkConfig.driver;
+    if (configDriver && !/^[A-Za-z0-9._-]+$/.test(configDriver))
+      this.fatal(`Invalid docker network driver for ${this.name} ${configDriver}`);
+    const driver = configDriver || "bridge";
     const intfName = this.name;
-
     const subnets = [];
-
     const opts = this.networkConfig.options || [];
-
     // make opts immutable
     const optsCopy = JSON.parse(JSON.stringify(opts));
-
+    // these are docker cli flags and are joined into the command below, so a leading '-' is
+    // expected but nothing a shell would reparse is. checked here, before the entries the code
+    // appends itself
+    for (const opt of optsCopy) {
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/-]+$/.test(opt))
+        this.fatal(`Invalid docker network option for ${this.name} ${opt}`);
+    }
     optsCopy.push(`--driver=${driver}`);
-
     let ip4s = this.networkConfig.ipv4s || [];
-
     if (this.networkConfig.ipv4)
       ip4s.push(this.networkConfig.ipv4);
-
     ip4s = _.uniq(ip4s);
-
     for (const ip4 of ip4s) {
       const ip4Addr = new Address4(ip4);
-
       const subnet = `${ip4Addr.startAddress().correctForm()}/${ip4Addr.subnetMask}`;
-
       const ipRange = subnet;
-
       const gateway = ip4Addr.addressMinusSuffix;
-
       if (!subnets.includes(subnet)) {
         subnets.push(subnet);
-
-        Array.prototype.push.apply(optsCopy, [
-          `--subnet=${subnet}`,
-          `--ip-range=${ipRange}`,
-          `--gateway=${gateway}`
-        ]);
+        Array.prototype.push.apply(optsCopy, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
       } else {
         this.log.error(`IPv4 address ${ip4} overlapped with another subnet on ${intfName} and will be skipped`);
       }
     }
-
     const ip6s = this.networkConfig.ipv6 || [];
-
     for (const ip6 of ip6s) {
       const ip6Addr = new Address6(ip6);
-
       const subnet = `${ip6Addr.startAddress().correctForm()}/${ip6Addr.subnetMask}`;
-
       const ipRange = subnet;
-
       const gateway = ip6Addr.addressMinusSuffix;
-
       if (!subnets.includes(subnet)) {
         subnets.push(subnet);
-
-        Array.prototype.push.apply(optsCopy, [
-          `--subnet=${subnet}`,
-          `--ip-range=${ipRange}`,
-          `--gateway=${gateway}`
-        ]);
+        Array.prototype.push.apply(optsCopy, [`--subnet=${subnet}`, `--ip-range=${ipRange}`, `--gateway=${gateway}`]);
       } else {
         this.log.error(`IPv6 address ${ip6} overlapped with another subnet on ${intfName} and will be skipped`);
       }
     }
-
     const driverOpts = this.networkConfig.driverOptions || [];
-
     // make driverOpts immutable
     const driverOptsCopy = JSON.parse(JSON.stringify(driverOpts));
+    // each option is interpolated into the docker command below, drop anything a shell would
+    // reparse. quotes are excluded too: an unmatched one changes how the rest of the command is
+    // parsed, and docker's own key=value options never need them
+    for (const opt of driverOptsCopy) {
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/-]+$/.test(opt))
+        this.fatal(`Invalid docker driver option for ${this.name} ${opt}`);
+    }
 
     if (driver === "bridge") {
       driverOptsCopy.push(`"com.docker.network.bridge.name"="${intfName}"`);
     }
-
     const args = optsCopy.concat(driverOptsCopy.map(opt => `-o ${opt}`));
-
     await exec(`sudo docker network create ${args.join(" ")} ${intfName}`).catch((err) => {
       this.fatal(`Failed to create docker network ${this.name}`, err.message);
     });
-
     return true;
   }
-
 }
 
 module.exports = DockerInterfacePlugin;
