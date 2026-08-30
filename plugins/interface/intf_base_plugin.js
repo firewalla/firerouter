@@ -2027,6 +2027,12 @@ async getLastDHCP6LeaseInfo() {
             break;
           }
 
+          case "ra_router_lifetime": {
+            if (/^\d+$/.test(value))
+              info.ra_router_lifetime = Number(value);
+            break;
+          }
+            
           /*
            * Prefix Information Valid Lifetime.
            * Keep the existing field/name for backward compatibility.
@@ -2097,38 +2103,12 @@ async getLastDHCP6LeaseInfo() {
   }
 
 async state() {
-  /*
-   * DHCPv6 RA state is only relevant to interfaces running DHCPv6.
-   * Avoid an unnecessary /dev/shm read for unrelated interfaces.
-   */
   let dhcp6Lease = null;
 
   if (this.networkConfig && this.networkConfig.dhcp6)
     dhcp6Lease = await this.getLastDHCP6LeaseInfo();
 
-  let [
-    mac,
-    mtu,
-    carrier,
-    duplex,
-    speed,
-    operstate,
-    txBytes,
-    rxBytes,
-    rtid,
-    ip4s,
-    routableSubnets,
-    ip6,
-    gateway,
-    gateway6,
-    dns,
-    origDns,
-    dns6,
-    origDns6,
-    pds,
-    present,
-    subIntfs
-  ] = await Promise.all([
+  let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
     this._getSysFSClassNetValue("address"),
     this._getSysFSClassNetValue("mtu"),
     this._getSysFSClassNetValue("carrier"),
@@ -2153,7 +2133,6 @@ async state() {
   ]);
 
   const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-
   let wanConnState = null;
   let wanTestResult = null;
 
@@ -2177,19 +2156,9 @@ async state() {
     ip6,
     gateway,
     gateway6,
-
-    /*
-     * Expose Router Advertisement Router Lifetime separately from
-     * Prefix Information Valid Lifetime.
-     *
-     * Return null when the field is unavailable so callers can
-     * distinguish "not reported" from an explicit lifetime of 0.
-     */
-    ra_router_lifetime:
-      dhcp6Lease && Number.isInteger(dhcp6Lease.ra_router_lifetime)
-        ? dhcp6Lease.ra_router_lifetime
-        : null,
-
+    ra_router_lifetime: dhcp6Lease && Number.isInteger(dhcp6Lease.ra_router_lifetime)
+      ? dhcp6Lease.ra_router_lifetime
+      : null,
     dns,
     origDns,
     dns6,
@@ -2201,8 +2170,7 @@ async state() {
     present,
     subIntfs
   };
-}
-  
+}  
   onEvent(e) {
     if (!event.isLoggingSuppressed(e))
       this.log.info(`Received event on ${this.name}`, e);
