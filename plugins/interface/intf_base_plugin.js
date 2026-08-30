@@ -2096,40 +2096,113 @@ async getLastDHCP6LeaseInfo() {
     return this.rtId;
   }
 
-  async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
-      this._getSysFSClassNetValue("address"),
-      this._getSysFSClassNetValue("mtu"),
-      this._getSysFSClassNetValue("carrier"),
-      this._getSysFSClassNetValue("duplex"),
-      this._getSysFSClassNetValue("speed"),
-      this._getSysFSClassNetValue("operstate"),
-      this._getSysFSClassNetValue("statistics/tx_bytes"),
-      this._getSysFSClassNetValue("statistics/rx_bytes"),
-      this._getRtId(),
-      this.getIPv4Addresses(),
-      this.getRoutableSubnets(),
-      this.getIPv6Addresses(),
-      this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
-      this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
-      this.getDns4Nameservers(),
-      this.getOrigDNSNameservers(),
-      this.getDns6Nameservers(),
-      this.getOrigDNS6Nameservers(),
-      this.getPrefixDelegations(),
-      this.isInterfacePresent(),
-      this.getSubIntfs()
-    ]);
-    const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-    let wanConnState = null;
-    let wanTestResult = null;
-    if (this.isWAN()) {
-      wanConnState = this.getWANConnState() || {};
-      wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
-    }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
+async state() {
+  /*
+   * DHCPv6 RA state is only relevant to interfaces running DHCPv6.
+   * Avoid an unnecessary /dev/shm read for unrelated interfaces.
+   */
+  let dhcp6Lease = null;
+
+  if (this.networkConfig && this.networkConfig.dhcp6)
+    dhcp6Lease = await this.getLastDHCP6LeaseInfo();
+
+  let [
+    mac,
+    mtu,
+    carrier,
+    duplex,
+    speed,
+    operstate,
+    txBytes,
+    rxBytes,
+    rtid,
+    ip4s,
+    routableSubnets,
+    ip6,
+    gateway,
+    gateway6,
+    dns,
+    origDns,
+    dns6,
+    origDns6,
+    pds,
+    present,
+    subIntfs
+  ] = await Promise.all([
+    this._getSysFSClassNetValue("address"),
+    this._getSysFSClassNetValue("mtu"),
+    this._getSysFSClassNetValue("carrier"),
+    this._getSysFSClassNetValue("duplex"),
+    this._getSysFSClassNetValue("speed"),
+    this._getSysFSClassNetValue("operstate"),
+    this._getSysFSClassNetValue("statistics/tx_bytes"),
+    this._getSysFSClassNetValue("statistics/rx_bytes"),
+    this._getRtId(),
+    this.getIPv4Addresses(),
+    this.getRoutableSubnets(),
+    this.getIPv6Addresses(),
+    this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
+    this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
+    this.getDns4Nameservers(),
+    this.getOrigDNSNameservers(),
+    this.getDns6Nameservers(),
+    this.getOrigDNS6Nameservers(),
+    this.getPrefixDelegations(),
+    this.isInterfacePresent(),
+    this.getSubIntfs()
+  ]);
+
+  const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
+
+  let wanConnState = null;
+  let wanTestResult = null;
+
+  if (this.isWAN()) {
+    wanConnState = this.getWANConnState() || {};
+    wanTestResult = this._wanStatus;
   }
 
+  return {
+    mac,
+    mtu,
+    carrier,
+    duplex,
+    speed,
+    operstate,
+    txBytes,
+    rxBytes,
+    ip4,
+    ip4s,
+    routableSubnets,
+    ip6,
+    gateway,
+    gateway6,
+
+    /*
+     * Expose Router Advertisement Router Lifetime separately from
+     * Prefix Information Valid Lifetime.
+     *
+     * Return null when the field is unavailable so callers can
+     * distinguish "not reported" from an explicit lifetime of 0.
+     */
+    ra_router_lifetime:
+      dhcp6Lease && Number.isInteger(dhcp6Lease.ra_router_lifetime)
+        ? dhcp6Lease.ra_router_lifetime
+        : null,
+
+    dns,
+    origDns,
+    dns6,
+    origDns6,
+    pds,
+    rtid,
+    wanConnState,
+    wanTestResult,
+    present,
+    subIntfs
+  };
+}
+  
   onEvent(e) {
     if (!event.isLoggingSuppressed(e))
       this.log.info(`Received event on ${this.name}`, e);
