@@ -372,19 +372,19 @@ describe('Test DHCPv6 configuration validation', function() {
     );
   });
 
-  it('should accept prefix length 128', async () => {
-    await plugin.writeDHCPConfFile(
-      'br0',
-      [],
-      'stateful',
-      'fd00::100',
-      'fd00::1ff',
-      [],
-      128,
-      86400,
-      200
-    );
-  });
+it('should accept prefix length 128', async () => {
+  await plugin.writeDHCPConfFile(
+    'br0',
+    [],
+    'stateful',
+    'fd00::100',
+    'fd00::100',
+    [],
+    128,
+    86400,
+    200
+  );
+});
 
   after(async () => {
     await fs.unlinkAsync(
