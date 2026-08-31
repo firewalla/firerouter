@@ -210,7 +210,7 @@ describe('Test DHCPv6 configuration validation', function() {
       );
     }
   });
-  
+
   it('should reject a scoped from address', async () => {
     try {
       await plugin.writeDHCPConfFile(
@@ -252,7 +252,7 @@ describe('Test DHCPv6 configuration validation', function() {
       );
     }
   });
-  
+
   it('should reject a prefix length below 64', async () => {
     try {
       await plugin.writeDHCPConfFile(
