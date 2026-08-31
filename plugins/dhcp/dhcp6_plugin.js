@@ -96,12 +96,6 @@ class DHCP6Plugin extends DHCPPlugin {
         content.push('enable-ra');
         content.push(`ra-param=${iface},${raInterval},3600`);
         break;
-        
-        if (fromAddress.bigInteger().compareTo(toAddress.bigInteger()) > 0)
-          this.fatal(`from address must not be greater than to address for dhcp6 of ${this.name}`);
-
-        if (fromAddress.mask(prefixLen) !== toAddress.mask(prefixLen))
-          this.fatal(`from/to addresses must be in the same prefix for dhcp6 of ${this.name}`);
       }
       default:
     }
