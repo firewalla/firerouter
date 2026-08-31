@@ -67,14 +67,22 @@ class DHCP6Plugin extends DHCPPlugin {
         if (!from || !to)
           this.fatal(`from/to is not specified for dhcp6 of ${this.name}`);
 
-  const fromAddress = new Address6(from);
-  const toAddress = new Address6(to);
+        let fromAddress;
+        let toAddress;
 
-  if (!fromAddress.isValid() || String(from).includes('/'))
-  this.fatal(`from is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        try {
+          fromAddress = new Address6(from);
+          toAddress = new Address6(to);
+        } catch (err) {
+          this.fatal(`from/to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        }
 
-  if (!toAddress.isValid() || String(to).includes('/'))
-  this.fatal(`to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        if (!fromAddress.isValid() || String(from).includes('/'))
+          this.fatal(`from is not a valid IPv6 address for dhcp6 of ${this.name}`);
+
+        if (!toAddress.isValid() || String(to).includes('/'))
+          this.fatal(`to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+
         if (!Number.isInteger(prefixLen) || prefixLen < 64 || prefixLen > 128)
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be an integer between 64 and 128`);
 
