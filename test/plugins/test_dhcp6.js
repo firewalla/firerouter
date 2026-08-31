@@ -253,6 +253,48 @@ describe('Test DHCPv6 configuration validation', function() {
     }
   });
 
+  it('should reject a reversed DHCPv6 range', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::200',
+        'fd00::100',
+        [],
+        64,
+        86400,
+        200
+      );
+      expect.fail('Expected reversed DHCPv6 range to be rejected');
+    } catch (err) {
+      expect(String(err)).to.include(
+        'from address must not be greater than to address'
+      );
+    }
+  });
+
+  it('should reject DHCPv6 range endpoints outside the same prefix', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00:0:0:1::100',
+        [],
+        64,
+        86400,
+        200
+      );
+      expect.fail('Expected DHCPv6 endpoints outside the same prefix to be rejected');
+    } catch (err) {
+      expect(String(err)).to.include(
+        'from/to addresses must be in the same prefix'
+      );
+    }
+  });
+
   it('should reject a prefix length below 64', async () => {
     try {
       await plugin.writeDHCPConfFile(
