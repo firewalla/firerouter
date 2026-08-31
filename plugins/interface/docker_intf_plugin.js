@@ -1,3 +1,4 @@
+```javascript
 /*    Copyright 2021-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
@@ -22,7 +23,7 @@ const _ = require('lodash');
 const {Address4, Address6} = require('ip-address');
 
 class DockerInterfacePlugin extends InterfaceBasePlugin {
-  
+
   /*
    * Docker bridge interfaces are virtual interfaces managed by Docker.
    * FireRouter must not attempt physical-interface hardware-address
@@ -31,7 +32,7 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
   hasHardwareAddress() {
     return false;
   }
-  
+
   static async preparePlugin() {
     const hasContainer = await exec(`sudo ls /var/lib/docker/containers -1 | wc -l`).then((result) => result.stdout.trim() !== "0").catch((err) => false);
     if (hasContainer)
@@ -141,3 +142,4 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
 }
 
 module.exports = DockerInterfacePlugin;
+```
