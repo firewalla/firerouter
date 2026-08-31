@@ -1,0 +1,187 @@
+'use strict'
+
+const chai = require('chai');
+const expect = chai.expect;
+const fs = require('fs');
+const Promise = require('bluebird');
+Promise.promisifyAll(fs);
+
+const DHCP6Plugin = require('../../plugins/dhcp/dhcp6_plugin.js');
+
+describe('Test DHCPv6 configuration validation', function() {
+  this.timeout(30000);
+
+  let plugin;
+
+  before(() => {
+    plugin = new DHCP6Plugin('br0');
+  });
+
+  it('should accept a valid stateful DHCPv6 configuration', async () => {
+    plugin.configure({
+      type: 'stateful'
+    });
+
+    await plugin.writeDHCPConfFile(
+      'br0',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::1ff',
+      [],
+      64,
+      86400,
+      200
+    );
+
+    const content = await fs.readFileAsync(plugin._getConfFilePath(), 'utf8');
+
+    expect(content).to.include(
+      'dhcp-range=tag:br0,fd00::100,fd00::1ff,64,86400'
+    );
+  });
+
+  it('should reject a missing from address', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        null,
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should reject a missing to address', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        null,
+        [],
+        64,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should reject an invalid from address', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'not-an-ipv6-address',
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should reject an invalid to address', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'not-an-ipv6-address',
+        [],
+        64,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should reject a prefix length below 64', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff',
+        [],
+        63,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should reject a prefix length above 128', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff',
+        [],
+        129,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should reject a non-integer prefix length', async () => {
+    await expect(
+      plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff',
+        [],
+        64.5,
+        86400,
+        200
+      )
+    ).to.be.rejected;
+  });
+
+  it('should accept prefix length 64', async () => {
+    await plugin.writeDHCPConfFile(
+      'br0',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::1ff',
+      [],
+      64,
+      86400,
+      200
+    );
+  });
+
+  it('should accept prefix length 128', async () => {
+    await plugin.writeDHCPConfFile(
+      'br0',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::1ff',
+      [],
+      128,
+      86400,
+      200
+    );
+  });
+
+  after(async () => {
+    await fs.unlinkAsync(plugin._getConfFilePath()).catch(() => {});
+  });
+});
