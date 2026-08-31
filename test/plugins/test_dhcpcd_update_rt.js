@@ -922,7 +922,20 @@ source ${path.join(sandboxDir, 'update_rt')}
           gateway: 'fe80::a'
         }
       ]);
+      
+      fs.writeFileSync(
+        path.join(
+          stateDir,
+          'dhcpcd.ip6.wan0'
+        ),
+        ',\n'
+      );
 
+      runHook({
+        gateway: 'fe80::a',
+        lifetime: '0'
+      });
+      
       runHook({
         gateway: 'fe80::a',
         lifetime: '0'
