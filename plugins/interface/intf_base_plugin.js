@@ -451,7 +451,7 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
       await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
-      // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
+      // create fwmark default route ip rule for wan interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(
         [
@@ -1977,112 +1977,72 @@ class InterfaceBasePlugin extends Plugin {
     return info;
   }
 
-async getLastDHCP6LeaseInfo() {
-  const info = {};
-  const paths = [`/dev/shm/dhcpcd.ra.${this.name}`, `/dev/shm/dhcpcd.lease6.${this.name}`];
-
-  for (const path of paths) {
-    const content = await fs.readFileAsync(path, {encoding: "utf8"}).catch((err) => null);
-
-    if (content) {
-      const lines = content.split("\n").filter(line => line.length > 0);
-
-      for (const line of lines) {
-        const [ key, value ] = line.split('=', 2);
-
-        switch (key) {
-          case "ip6": {
-            const ip6 = value && value.split(",").filter(ip => ip.length > 0);
-            info.ip6 = ip6;
-            break;
-          }
-
-          case "gw6": {
-            const gw6 = value;
-            if (gw6)
-              info.gw6 = gw6;
-            break;
-          }
-
-          case "ra_ts": {
-            info.ra_ts = Number(value);
-            break;
-          }
-
-          /*
-           * Router Advertisement Router Lifetime is distinct from
-           * Prefix Information Valid Lifetime.
-           *
-           * ra_router_lifetime:
-           *   - 0 means the advertising router is not a default router
-           *   - nonzero values indicate the router lifetime in seconds
-           *
-           * Only accept an unsigned decimal integer here. This mirrors
-           * the validation performed when the value is persisted and
-           * prevents malformed state from entering the interface state.
-           */
-          case "ra_router_lifetime": {
-            if (/^\d+$/.test(value))
-              info.ra_router_lifetime = Number(value);
-            break;
-          }
-            
-          /*
-           * Prefix Information Valid Lifetime.
-           * Keep the existing field/name for backward compatibility.
-           */
-          case "ra_vltime": {
-            if (!isNaN(value))
-              info.ra_lifetime = Number(value);
-            break;
-          }
-
-          case "ia_na_vltimes": {
-            const addresses = [];
-            info["ia_na"] = {addresses};
-
-            const ianas = value.split(",").filter(iana => iana.length > 0);
-
-            for (const iana of ianas) {
-              const [address, lifetime] = iana.split("@", 2);
-              addresses.push({
-                address,
-                lifetime: lifetime && Number(lifetime)
-              });
+  async getLastDHCP6LeaseInfo() {
+    const info = {};
+    const paths = [`/dev/shm/dhcpcd.ra.${this.name}`, `/dev/shm/dhcpcd.lease6.${this.name}`];
+    for (const path of paths) {
+      const content = await fs.readFileAsync(path, {encoding: "utf8"}).catch((err) => null);
+      if (content) {
+        const lines = content.split("\n").filter(line => line.length > 0);
+        for (const line of lines) {
+          const [ key, value ] = line.split('=', 2);
+          switch (key) {
+            case "ip6": {
+              const ip6 = value && value.split(",").filter(ip => ip.length > 0);
+              info.ip6 = ip6;
+              break;
             }
-
-            break;
-          }
-
-          case "ia_pd_vltimes": {
-            const addresses = [];
-            info["ia_pd"] = {addresses};
-
-            const ianas = value.split(",").filter(iana => iana.length > 0);
-
-            for (const iana of ianas) {
-              const [address, lifetime] = iana.split("@", 2);
-              addresses.push({
-                address,
-                lifetime: lifetime && Number(lifetime)
-              });
+            case "gw6": {
+              const gw6 = value;
+              if (gw6)
+                info.gw6 = gw6;
+              break;
             }
-
-            break;
-          }
-
-          case "ts": {
-            info.ts = Number(value);
-            break;
+            case "ra_ts": {
+              info.ra_ts = Number(value);
+              break;
+            }
+            case "ra_router_lifetime": {
+              if (/^\d+$/.test(value))
+                info.ra_router_lifetime = Number(value);
+              break;
+            }
+            case "ra_vltime": {
+              if (!isNaN(value))
+                info.ra_lifetime = Number(value);
+              break;
+            }
+            case "ia_na_vltimes": {
+              const addresses = [];
+              info["ia_na"] = {addresses};
+              const ianas = value.split(",").filter(iana => iana.length > 0);
+              for (const iana of ianas) {
+                const [address, lifetime] = iana.split("@", 2);
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
+              }
+              break;
+            }
+            case "ia_pd_vltimes": {
+              const addresses = [];
+              info["ia_pd"] = {addresses};
+              const ianas = value.split(",").filter(iana => iana.length > 0);
+              for (const iana of ianas) {
+                const [address, lifetime] = iana.split("@", 2);
+                addresses.push({address, lifetime: lifetime && Number(lifetime)});
+              }
+              break;
+            }
+            case "ts": {
+              info.ts = Number(value);
+              break;
+            }
           }
         }
       }
     }
+    return info;
   }
 
-  return info;
-}
-  
   async getSubIntfs() {
     return null;
   }
@@ -2096,75 +2056,44 @@ async getLastDHCP6LeaseInfo() {
     return this.rtId;
   }
 
-async state() {
-  let dhcp6Lease = null;
+  async state() {
+    let dhcp6Lease = null;
+    if (this.networkConfig && this.networkConfig.dhcp6)
+      dhcp6Lease = await this.getLastDHCP6LeaseInfo();
 
-  if (this.networkConfig && this.networkConfig.dhcp6)
-    dhcp6Lease = await this.getLastDHCP6LeaseInfo();
-
-  let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
-    this._getSysFSClassNetValue("address"),
-    this._getSysFSClassNetValue("mtu"),
-    this._getSysFSClassNetValue("carrier"),
-    this._getSysFSClassNetValue("duplex"),
-    this._getSysFSClassNetValue("speed"),
-    this._getSysFSClassNetValue("operstate"),
-    this._getSysFSClassNetValue("statistics/tx_bytes"),
-    this._getSysFSClassNetValue("statistics/rx_bytes"),
-    this._getRtId(),
-    this.getIPv4Addresses(),
-    this.getRoutableSubnets(),
-    this.getIPv6Addresses(),
-    this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
-    this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
-    this.getDns4Nameservers(),
-    this.getOrigDNSNameservers(),
-    this.getDns6Nameservers(),
-    this.getOrigDNS6Nameservers(),
-    this.getPrefixDelegations(),
-    this.isInterfacePresent(),
-    this.getSubIntfs()
-  ]);
-
-  const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
-  let wanConnState = null;
-  let wanTestResult = null;
-
-  if (this.isWAN()) {
-    wanConnState = this.getWANConnState() || {};
-    wanTestResult = this._wanStatus;
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
+      this._getSysFSClassNetValue("address"),
+      this._getSysFSClassNetValue("mtu"),
+      this._getSysFSClassNetValue("carrier"),
+      this._getSysFSClassNetValue("duplex"),
+      this._getSysFSClassNetValue("speed"),
+      this._getSysFSClassNetValue("operstate"),
+      this._getSysFSClassNetValue("statistics/tx_bytes"),
+      this._getSysFSClassNetValue("statistics/rx_bytes"),
+      this._getRtId(),
+      this.getIPv4Addresses(),
+      this.getRoutableSubnets(),
+      this.getIPv6Addresses(),
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
+      this.getDns4Nameservers(),
+      this.getOrigDNSNameservers(),
+      this.getDns6Nameservers(),
+      this.getOrigDNS6Nameservers(),
+      this.getPrefixDelegations(),
+      this.isInterfacePresent(),
+      this.getSubIntfs()
+    ]);
+    const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
+    let wanConnState = null;
+    let wanTestResult = null;
+    if (this.isWAN()) {
+      wanConnState = this.getWANConnState() || {};
+      wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
+    }
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, ra_router_lifetime: dhcp6Lease && Number.isInteger(dhcp6Lease.ra_router_lifetime) ? dhcp6Lease.ra_router_lifetime : null, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
-  return {
-    mac,
-    mtu,
-    carrier,
-    duplex,
-    speed,
-    operstate,
-    txBytes,
-    rxBytes,
-    ip4,
-    ip4s,
-    routableSubnets,
-    ip6,
-    gateway,
-    gateway6,
-    ra_router_lifetime: dhcp6Lease && Number.isInteger(dhcp6Lease.ra_router_lifetime)
-      ? dhcp6Lease.ra_router_lifetime
-      : null,
-    dns,
-    origDns,
-    dns6,
-    origDns6,
-    pds,
-    rtid,
-    wanConnState,
-    wanTestResult,
-    present,
-    subIntfs
-  };
-}  
   onEvent(e) {
     if (!event.isLoggingSuppressed(e))
       this.log.info(`Received event on ${this.name}`, e);
