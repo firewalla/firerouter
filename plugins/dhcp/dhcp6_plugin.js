@@ -86,6 +86,12 @@ class DHCP6Plugin extends DHCPPlugin {
         if (!Number.isInteger(prefixLen) || prefixLen < 64 || prefixLen > 128)
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be an integer between 64 and 128`);
 
+        if (fromAddress.bigInt() > toAddress.bigInt())
+          this.fatal(`from address must not be greater than to address for dhcp6 of ${this.name}`);
+
+        if (fromAddress.mask(prefixLen) !== toAddress.mask(prefixLen))
+          this.fatal(`from/to addresses must be in the same prefix for dhcp6 of ${this.name}`);
+
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
         content.push(`ra-param=${iface},${raInterval},3600`);
