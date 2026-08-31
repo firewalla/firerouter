@@ -169,6 +169,48 @@ describe('Test DHCPv6 configuration validation', function() {
     }
   });
 
+  it('should reject a from address containing a prefix', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100/64',
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      );
+      expect.fail('Expected prefixed from address to be rejected');
+    } catch (err) {
+      expect(String(err)).to.include(
+        'from is not a valid IPv6 address'
+      );
+    }
+  });
+
+  it('should reject a to address containing a prefix', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff/64',
+        [],
+        64,
+        86400,
+        200
+      );
+      expect.fail('Expected prefixed to address to be rejected');
+    } catch (err) {
+      expect(String(err)).to.include(
+        'to is not a valid IPv6 address'
+      );
+    }
+  });
+
   it('should reject a prefix length below 64', async () => {
     try {
       await plugin.writeDHCPConfFile(
