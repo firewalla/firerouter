@@ -25,6 +25,10 @@ const commonScript = path.join(
   repoRoot,
   'scripts/firerouter_dhcpcd_common'
 );
+const recordLeaseScript = path.join(
+  repoRoot,
+  'scripts/firerouter_dhcpcd_record_lease'
+);
 const updateRouteScript = path.join(
   repoRoot,
   'scripts/firerouter_dhcpcd_update_rt'
@@ -129,6 +133,7 @@ describe('DHCPv6 Router Advertisement route updates', () => {
     gateway,
     lifetime,
     routeTables = ['main'],
+    ndRecords = null,
   }) {
     const runner = path.join(
       sandboxDir,
@@ -137,22 +142,19 @@ describe('DHCPv6 Router Advertisement route updates', () => {
         .slice(2)}`
     );
 
-    const raFile = path.join(
-      stateDir,
-      'dhcpcd.ra.wan0'
-    );
+    const records = ndRecords || [{
+      id: 1,
+      gateway,
+      lifetime
+    }];
 
-    if (lifetime === undefined) {
-      fs.writeFileSync(
-        raFile,
-        ''
-      );
-    } else {
-      fs.writeFileSync(
-        raFile,
-        `ra_router_lifetime=${lifetime}\n`
-      );
-    }
+    const ndEnv = records.map(({ id, gateway: ndGateway, lifetime: ndLifetime }) => {
+      return [
+        `nd${id}_from=${ndGateway || ''}`,
+        `nd${id}_lifetime=${ndLifetime === undefined ? '' : ndLifetime}`,
+        `nd${id}_mtu=1500`
+      ].join('\n');
+    }).join('\n');
 
     fs.writeFileSync(
       runner,
@@ -162,10 +164,10 @@ reason=ROUTERADVERT
 interface=wan0
 default_rt_tables="${routeTables.join(' ')}"
 rt_tables="${routeTables.join(' ')}"
-RECORD_LEASE_GW6=${gateway}
-RECORD_LEASE_ND_ID=1
 mtu=1500
 metric=1024
+
+${ndEnv}
 
 IP_LOG=${ipLog}
 QUERY_LOG=${queryLog}
@@ -183,7 +185,7 @@ ip() {
      [ "$2" = "addr" ] &&
      [ "$3" = "show" ] &&
      [ "$4" = "dev" ]; then
-    echo "inet 192.0.2.10/24"
+    echo "inet 10.0.0.2/24"
     return 0
   fi
 
@@ -254,14 +256,6 @@ ip() {
   return 0
 }
 
-grep() {
-  if [ "$1" = "-oP" ]; then
-    sed -n 's/^ra_router_lifetime=//p' "$3"
-  else
-    command grep "$@"
-  fi
-}
-
 sudo() {
   printf '%s\\\\n' "$*" >> "$SUDO_LOG"
   "\\$@"
@@ -277,6 +271,9 @@ log() {
   printf '%s\\\\n' "$*" >> "$EVENT_LOG"
 }
 
+# Execute the hooks in the same order as dhcpcd-run-hooks:
+# common -> record_lease -> update_rt.
+source ${path.join(sandboxDir, 'record_lease')}
 source ${path.join(sandboxDir, 'update_rt')}
 `
     );
@@ -315,6 +312,17 @@ source ${path.join(sandboxDir, 'update_rt')}
 
     return fs.readFileSync(
       cache,
+      'utf8'
+    );
+  }
+
+
+  function getRAFile() {
+    return fs.readFileSync(
+      path.join(
+        stateDir,
+        'dhcpcd.ra.wan0'
+      ),
       'utf8'
     );
   }
@@ -409,6 +417,15 @@ source ${path.join(sandboxDir, 'update_rt')}
     );
 
     copyHookToSandbox(
+      recordLeaseScript,
+      path.join(
+        sandboxDir,
+        'record_lease'
+      ),
+      stateDir
+    );
+
+    copyHookToSandbox(
       updateRouteScript,
       path.join(
         sandboxDir,
@@ -476,6 +493,47 @@ source ${path.join(sandboxDir, 'update_rt')}
       }
     );
   });
+
+
+  it(
+    'uses the Router Lifetime from the selected Router Advertisement',
+    () => {
+      runHook({
+        gateway: 'fe80::b',
+        lifetime: '1800',
+        ndRecords: [
+          {
+            id: 1,
+            gateway: 'fe80::a',
+            lifetime: '0'
+          },
+          {
+            id: 2,
+            gateway: 'fe80::b',
+            lifetime: '1800'
+          }
+        ]
+      });
+
+      const raFile = getRAFile();
+
+      expect(raFile).to.include(
+        'gw6=fe80::b'
+      );
+
+      expect(raFile).to.include(
+        'ra_router_lifetime=1800'
+      );
+
+      expect(getSudoOutput()).to.include(
+        'ip -6 r replace default via fe80::b dev wan0 mtu 1500 table main'
+      );
+
+      expect(getCache()).to.equal(
+        'fe80::b\n'
+      );
+    }
+  );
 
 
   it(
@@ -1000,6 +1058,12 @@ source ${path.join(sandboxDir, 'update_rt')}
         gateway: 'fe80::b'
       });
 
+      const raFile = getRAFile();
+
+      expect(raFile).to.include(
+        'ra_router_lifetime='
+      );
+
       expect(getSudoOutput()).to.include(
         'ip -6 r replace default via fe80::b dev wan0 mtu 1500 table main'
       );
@@ -1099,6 +1163,12 @@ source ${path.join(sandboxDir, 'update_rt')}
         gateway: 'fe80::a',
         lifetime: '000'
       });
+
+      const raFile = getRAFile();
+
+      expect(raFile).to.include(
+        'ra_router_lifetime=000'
+      );
 
       expect(readLines(routeState)).to.deep.equal(
         []
