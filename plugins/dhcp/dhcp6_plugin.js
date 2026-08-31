@@ -21,6 +21,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const DHCPPlugin = require('./dhcp_plugin.js');
+const {Address6} = require('ip-address');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 
@@ -65,8 +66,16 @@ class DHCP6Plugin extends DHCPPlugin {
       case "stateful": {
         if (!from || !to)
           this.fatal(`from/to is not specified for dhcp6 of ${this.name}`);
-        if (prefixLen < 64)
-          this.fatal(`prefixLen for dhcp6 of ${this.name} should be at least 64`);
+
+        if (!new Address6(from).isValid())
+          this.fatal(`from is not a valid IPv6 address for dhcp6 of ${this.name}`);
+
+        if (!new Address6(to).isValid())
+          this.fatal(`to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+
+        if (!Number.isInteger(prefixLen) || prefixLen < 64 || prefixLen > 128)
+          this.fatal(`prefixLen for dhcp6 of ${this.name} should be an integer between 64 and 128`);
+
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
         content.push(`ra-param=${iface},${raInterval},3600`);
