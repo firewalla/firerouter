@@ -1,4 +1,3 @@
-```javascript
 /*    Copyright 2021-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
@@ -142,4 +141,3 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
 }
 
 module.exports = DockerInterfacePlugin;
-```
