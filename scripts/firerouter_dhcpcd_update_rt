@@ -104,7 +104,11 @@ cleanup_managed_ipv6_default_routes() {
             log "ROUTERADVERT: failed to remove IPv6 default route via $old_gw from table $default_rt_table"
             CLEANUP_COMPLETE=0
         else
+            # The route existed during the initial query but disappeared before
+            # the failed delete could complete. The observed disappearance is
+            # still a routing-state change and must trigger the IPv6 change event.
             log "ROUTERADVERT: IPv6 default route via $old_gw from table $default_rt_table was already absent after delete attempt"
+            ANY_ROUTE_REMOVED=1        
         fi
     done
 
