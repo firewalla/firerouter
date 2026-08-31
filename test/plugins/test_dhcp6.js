@@ -210,7 +210,49 @@ describe('Test DHCPv6 configuration validation', function() {
       );
     }
   });
+  
+  it('should reject a scoped from address', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fe80::1%eth0',
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      );
+      expect.fail('Expected scoped from address to be rejected');
+    } catch (err) {
+      expect(String(err)).to.include(
+        'from is not a valid IPv6 address'
+      );
+    }
+  });
 
+  it('should reject a scoped to address', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        'br0',
+        [],
+        'stateful',
+        'fd00::100',
+        'fe80::2%eth0',
+        [],
+        64,
+        86400,
+        200
+      );
+      expect.fail('Expected scoped to address to be rejected');
+    } catch (err) {
+      expect(String(err)).to.include(
+        'to is not a valid IPv6 address'
+      );
+    }
+  });
+  
   it('should reject a prefix length below 64', async () => {
     try {
       await plugin.writeDHCPConfFile(
