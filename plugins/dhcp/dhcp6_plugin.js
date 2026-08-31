@@ -86,7 +86,7 @@ class DHCP6Plugin extends DHCPPlugin {
         if (!Number.isInteger(prefixLen) || prefixLen < 64 || prefixLen > 128)
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be an integer between 64 and 128`);
 
-        if (fromAddress.bigInt() > toAddress.bigInt())
+        if (fromAddress.bigInteger().compare(toAddress.bigInteger()) > 0)
           this.fatal(`from address must not be greater than to address for dhcp6 of ${this.name}`);
 
         if (fromAddress.mask(prefixLen) !== toAddress.mask(prefixLen))
