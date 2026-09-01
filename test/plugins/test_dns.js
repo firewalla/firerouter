@@ -21,12 +21,17 @@ let expect = chai.expect;
 const childProcess = require('child-process-promise');
 const originalExec = childProcess.exec;
 let execImpl = originalExec;
+
+// DNSPlugin captures exec when it is loaded, so install the wrapper only
+// while loading the module. Restore childProcess.exec immediately afterward.
 childProcess.exec = (...args) => execImpl(...args);
-const exec = originalExec;
 
 let log = require('../../util/logger.js')(__filename, 'info');
 
 let DNSPlugin = require('../../plugins/dns/dns_plugin.js');
+
+childProcess.exec = originalExec;
+const exec = originalExec;
 
 describe('Test interface base dhcp6', function(){
     this.timeout(30000);
@@ -39,7 +44,6 @@ describe('Test interface base dhcp6', function(){
     after(async () => {
         await exec(`rm ${this.plugin._getResolvFilePath()}`).catch(err=>null);
         await exec(`rm ${this.plugin._getConfFilePath()}`).catch(err=>null);
-        childProcess.exec = originalExec;
     });
 
     it('should preserve localhost upstream configuration during preparePlugin', async() => {
@@ -56,6 +60,7 @@ describe('Test interface base dhcp6', function(){
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dns-test-'));
       const confDir = path.join(tempDir, 'dnsmasq');
       const confPath = path.join(confDir, 'localhost-upstream.conf');
+      const cleanupMarker = '/dev/shm/firerouter_dns_boot_cleanup_done';
 
       fs.mkdirSync(confDir, {recursive: true});
       fs.writeFileSync(confPath, 'server=127.0.0.1#5353\n');
@@ -66,9 +71,25 @@ describe('Test interface base dhcp6', function(){
       DNSPlugin.installSystemService = async () => {};
 
       try {
-        // Keep preparePlugin() isolated from host system commands while exercising
-        // the full method, including the point where the old localhost-DNS cleanup ran.
-        execImpl = async () => ({stdout: ''});
+        // Ensure the old one-per-boot cleanup path is not skipped by a stale
+        // marker from a previous local test run.
+        fs.rmSync(cleanupMarker, {force: true});
+
+        // Exercise preparePlugin() without executing host system commands.
+        // Return confPath from the old discovery command and make the
+        // localhost listener check fail. The old implementation would then
+        // delete confPath; the fixed implementation must leave it intact.
+        execImpl = async (command) => {
+          if (command.startsWith('grep -rl ')) {
+            return {stdout: `${confPath}\n`};
+          }
+
+          if (command.startsWith('ss -lntu | grep -q ')) {
+            throw new Error('localhost DNS listener is unavailable');
+          }
+
+          return {stdout: ''};
+        };
 
         await DNSPlugin.preparePlugin();
 
@@ -80,6 +101,7 @@ describe('Test interface base dhcp6', function(){
         DNSPlugin.createDirectories = originalCreateDirectories;
         DNSPlugin.installDNSScript = originalInstallDNSScript;
         DNSPlugin.installSystemService = originalInstallSystemService;
+        fs.rmSync(cleanupMarker, {force: true});
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
     });
