@@ -207,7 +207,7 @@ let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js')
   });
 
 
-describe('Test interface base state router lifetime', function(){
+  describe('Test interface base state router lifetime', function(){
     let plugin;
 
     beforeEach(() => {
