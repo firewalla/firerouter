@@ -22,16 +22,14 @@ const childProcess = require('child-process-promise');
 const originalExec = childProcess.exec;
 let execImpl = originalExec;
 
-// DNSPlugin captures exec when it is loaded, so install the wrapper only
-// while loading the module. Restore childProcess.exec immediately afterward.
+// DNSPlugin captures exec when it is loaded, so install the wrapper before
+// loading the module and restore childProcess.exec after the test suite.
 childProcess.exec = (...args) => execImpl(...args);
+const exec = originalExec;
 
 let log = require('../../util/logger.js')(__filename, 'info');
 
 let DNSPlugin = require('../../plugins/dns/dns_plugin.js');
-
-childProcess.exec = originalExec;
-const exec = originalExec;
 
 describe('Test interface base dhcp6', function(){
     this.timeout(30000);
@@ -44,6 +42,7 @@ describe('Test interface base dhcp6', function(){
     after(async () => {
         await exec(`rm ${this.plugin._getResolvFilePath()}`).catch(err=>null);
         await exec(`rm ${this.plugin._getConfFilePath()}`).catch(err=>null);
+        childProcess.exec = originalExec;
     });
 
     it('should preserve localhost upstream configuration during preparePlugin', async() => {
