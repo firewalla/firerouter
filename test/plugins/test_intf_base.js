@@ -27,7 +27,7 @@ const routing = require('../../util/routing.js');
 
 let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js');
 
-  describe('Test interface base dhcp6', function(){
+describe('Test interface base dhcp6', function(){
     this.timeout(30000);
 
     before(async () => {
