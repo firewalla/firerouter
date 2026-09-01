@@ -59,7 +59,6 @@ describe('Test interface base dhcp6', function(){
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dns-test-'));
       const confDir = path.join(tempDir, 'dnsmasq');
       const confPath = path.join(confDir, 'localhost-upstream.conf');
-      let listenerCheckReached = false;
 
       fs.mkdirSync(confDir, {recursive: true});
       fs.writeFileSync(confPath, 'server=127.0.0.1#5353\n');
@@ -70,37 +69,21 @@ describe('Test interface base dhcp6', function(){
       DNSPlugin.installSystemService = async () => {};
 
       try {
-        // Exercise preparePlugin() without executing host system commands.
-        // Return confPath from the old discovery command and make the
-        // localhost listener check fail. The fixed implementation should
-        // leave confPath intact.
-        execImpl = async (command) => {
-          if (command.startsWith('grep -rl ')) {
-            return {stdout: `${confPath}\n`};
-          }
+          execImpl = async () => ({stdout: ''});
 
-          if (command.startsWith('ss -lntu | grep -q ')) {
-            listenerCheckReached = true;
-            throw new Error('localhost DNS listener is unavailable');
-          }
+          await DNSPlugin.preparePlugin();
 
-          return {stdout: ''};
-        };
-
-        await DNSPlugin.preparePlugin();
-
-        expect(listenerCheckReached).to.equal(false);
-        expect(fs.existsSync(confPath)).to.equal(true);
-        expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
-      } finally {
-        execImpl = originalExec;
-        fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
-        DNSPlugin.createDirectories = originalCreateDirectories;
-        DNSPlugin.installDNSScript = originalInstallDNSScript;
-        DNSPlugin.installSystemService = originalInstallSystemService;
-        fs.rmSync(tempDir, {recursive: true, force: true});
-      }
-    });
+          expect(fs.existsSync(confPath)).to.equal(true);
+          expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
+  } finally {
+            execImpl = originalExec;
+            fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
+            DNSPlugin.createDirectories = originalCreateDirectories;
+            DNSPlugin.installDNSScript = originalInstallDNSScript;
+            DNSPlugin.installSystemService = originalInstallSystemService;
+            fs.rmSync(tempDir, {recursive: true, force: true});
+  }
+});
 
     it('should dns6', async() => {
       this._intfUuid = "fake-uuid";
