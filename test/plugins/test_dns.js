@@ -42,7 +42,7 @@ describe('Test interface base dhcp6', function(){
         childProcess.exec = originalExec;
     });
 
-    it('should preserve localhost upstream configuration when listener is unavailable', async() => {
+    it('should preserve localhost upstream configuration during preparePlugin', async() => {
       const fs = require('fs');
       const os = require('os');
       const path = require('path');
@@ -66,17 +66,23 @@ describe('Test interface base dhcp6', function(){
       DNSPlugin.installSystemService = async () => {};
 
       try {
+        // Keep preparePlugin() isolated from host system commands while exercising
+        // the full method, including the point where the old localhost-DNS cleanup ran.
+        execImpl = async () => ({stdout: ''});
+
         await DNSPlugin.preparePlugin();
+
         expect(fs.existsSync(confPath)).to.equal(true);
         expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
-          } finally {
-                fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
-                DNSPlugin.createDirectories = originalCreateDirectories;
-                DNSPlugin.installDNSScript = originalInstallDNSScript;
-                DNSPlugin.installSystemService = originalInstallSystemService;
-                fs.rmSync(tempDir, {recursive: true, force: true});
-                    }
-});
+      } finally {
+        execImpl = originalExec;
+        fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
+        DNSPlugin.createDirectories = originalCreateDirectories;
+        DNSPlugin.installDNSScript = originalInstallDNSScript;
+        DNSPlugin.installSystemService = originalInstallSystemService;
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
 
     it('should dns6', async() => {
       this._intfUuid = "fake-uuid";
