@@ -393,6 +393,29 @@ describe('Test DHCPv6 configuration validation', function() {
     );
   });
 
+  it('should reject a /128 range with different endpoints', async () => {
+    try {
+      await plugin.writeDHCPConfFile(
+        testIface,
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::101',
+        [],
+        128,
+        86400,
+        200
+      );
+      expect.fail(
+        'Expected /128 range with different endpoints to be rejected'
+      );
+    } catch (err) {
+      expect(String(err)).to.include(
+        'from/to addresses must be in the same prefix'
+      );
+    }
+  });
+
   it('should accept prefix length 128', async () => {
     await plugin.writeDHCPConfFile(
       testIface,
