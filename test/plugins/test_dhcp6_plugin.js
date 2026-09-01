@@ -18,8 +18,26 @@
 const chai = require('chai');
 const expect = chai.expect;
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const Promise = require('bluebird');
+Promise.promisifyAll(fs);
 
 const DHCP6Plugin = require('../../plugins/dhcp/dhcp6_plugin.js');
+
+
+async function expectDHCP6ConfigError(plugin, args, message) {
+  let error = null;
+
+  try {
+    await plugin.writeDHCPConfFile(...args);
+  } catch (err) {
+    error = err;
+  }
+
+  expect(error).to.not.equal(null);
+  expect(String(error)).to.contain(message);
+}
 
 
 describe('Test DHCP6 configuration', function(){
@@ -28,10 +46,18 @@ describe('Test DHCP6 configuration', function(){
   beforeEach(() => {
     this.plugin = new DHCP6Plugin("eth5");
     this.plugin.configure({});
+
+    this.testConfDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'firerouter-dhcp6-')
+    );
+
+    this.plugin._getConfFilePath = () =>
+      path.join(this.testConfDir, 'eth5_v6.conf');
   });
 
   afterEach(async () => {
     await fs.unlinkAsync(this.plugin._getConfFilePath()).catch(() => null);
+    await fs.rmdirAsync(this.testConfDir).catch(() => null);
   });
 
   it('should use the default Router Advertisement lifetime of 3600 seconds', async () => {
@@ -166,7 +192,359 @@ describe('Test DHCP6 configuration', function(){
     }
 
     expect(error).to.not.equal(null);
-    const exists = await fs.accessAsync(this.plugin._getConfFilePath()).then(() => true).catch(() => false);
+
+    const exists = await fs.accessAsync(
+      this.plugin._getConfFilePath()
+    ).then(() => true).catch(() => false);
+
     expect(exists).to.equal(false);
+  });
+
+  it('should accept a valid stateful DHCPv6 configuration', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::1ff',
+      [],
+      64,
+      86400,
+      200
+    );
+
+    const contents = await fs.readFileAsync(
+      this.plugin._getConfFilePath(),
+      {encoding: 'utf8'}
+    );
+
+    expect(contents).to.contain(
+      'dhcp-range=tag:eth5,fd00::100,fd00::1ff,64,86400'
+    );
+
+    expect(contents).to.contain('enable-ra');
+    expect(contents).to.contain('ra-param=eth5,200,3600');
+  });
+
+  it('should preserve the existing configuration when validation fails', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::1ff',
+      [],
+      64,
+      86400,
+      200
+    );
+
+    const original = await fs.readFileAsync(
+      this.plugin._getConfFilePath(),
+      'utf8'
+    );
+
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'invalid',
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from is not a valid IPv6 address'
+    );
+
+    const current = await fs.readFileAsync(
+      this.plugin._getConfFilePath(),
+      'utf8'
+    );
+
+    expect(current).to.equal(original);
+  });
+
+  it('should reject a missing from address', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        null,
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from/to is not specified'
+    );
+  });
+
+  it('should reject a missing to address', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        null,
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from/to is not specified'
+    );
+  });
+
+  it('should reject an invalid from address', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'not-an-ipv6-address',
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from is not a valid IPv6 address'
+    );
+  });
+
+  it('should reject an invalid to address', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'not-an-ipv6-address',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'to is not a valid IPv6 address'
+    );
+  });
+
+  it('should reject a from address containing a prefix', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100/64',
+        'fd00::1ff',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from is not a valid IPv6 address'
+    );
+  });
+
+  it('should reject a to address containing a prefix', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff/64',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'to is not a valid IPv6 address'
+    );
+  });
+
+  it('should reject a scoped from address', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fe80::1%eth0',
+        'fe80::2%eth0',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from is not a valid IPv6 address'
+    );
+  });
+
+  it('should reject a scoped to address', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fe80::2%eth0',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'to is not a valid IPv6 address'
+    );
+  });
+
+  it('should reject a reversed DHCPv6 range', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::200',
+        'fd00::100',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from address must not be greater than to address'
+    );
+  });
+
+  it('should reject DHCPv6 range endpoints outside the same prefix', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00:0:0:1::100',
+        [],
+        64,
+        86400,
+        200
+      ],
+      'from/to addresses must be in the same prefix'
+    );
+  });
+
+  it('should reject a prefix length below 64', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff',
+        [],
+        63,
+        86400,
+        200
+      ],
+      'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
+    );
+  });
+
+  it('should reject a prefix length above 128', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff',
+        [],
+        129,
+        86400,
+        200
+      ],
+      'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
+    );
+  });
+
+  it('should reject a non-integer prefix length', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::1ff',
+        [],
+        64.5,
+        86400,
+        200
+      ],
+      'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
+    );
+  });
+
+  it('should accept prefix length 64', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::1ff',
+      [],
+      64,
+      86400,
+      200
+    );
+  });
+
+  it('should reject a /128 range with different endpoints', async () => {
+    await expectDHCP6ConfigError(
+      this.plugin,
+      [
+        'eth5',
+        [],
+        'stateful',
+        'fd00::100',
+        'fd00::101',
+        [],
+        128,
+        86400,
+        200
+      ],
+      'from/to addresses must be in the same prefix'
+    );
+  });
+
+  it('should accept prefix length 128', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::100',
+      [],
+      128,
+      86400,
+      200
+    );
   });
 });
