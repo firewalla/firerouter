@@ -2057,11 +2057,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let dhcp6Lease = null;
-    if (this.networkConfig && this.networkConfig.dhcp6)
-      dhcp6Lease = await this.getLastDHCP6LeaseInfo();
-
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs, dhcp6Lease] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -2082,8 +2078,12 @@ class InterfaceBasePlugin extends Plugin {
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
       this.isInterfacePresent(),
-      this.getSubIntfs()
+      this.getSubIntfs(),
+      this.networkConfig && this.networkConfig.dhcp6
+        ? this.getLastDHCP6LeaseInfo()
+        : null
     ]);
+
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     let wanConnState = null;
     let wanTestResult = null;
