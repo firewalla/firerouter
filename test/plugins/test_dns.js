@@ -59,7 +59,7 @@ describe('Test interface base dhcp6', function(){
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dns-test-'));
       const confDir = path.join(tempDir, 'dnsmasq');
       const confPath = path.join(confDir, 'localhost-upstream.conf');
-      const cleanupMarker = '/dev/shm/firerouter_dns_boot_cleanup_done';
+      let listenerCheckReached = false;
 
       fs.mkdirSync(confDir, {recursive: true});
       fs.writeFileSync(confPath, 'server=127.0.0.1#5353\n');
@@ -70,20 +70,17 @@ describe('Test interface base dhcp6', function(){
       DNSPlugin.installSystemService = async () => {};
 
       try {
-        // Ensure the old one-per-boot cleanup path is not skipped by a stale
-        // marker from a previous local test run.
-        fs.rmSync(cleanupMarker, {force: true});
-
         // Exercise preparePlugin() without executing host system commands.
         // Return confPath from the old discovery command and make the
-        // localhost listener check fail. The old implementation would then
-        // delete confPath; the fixed implementation must leave it intact.
+        // localhost listener check fail. The fixed implementation should
+        // leave confPath intact.
         execImpl = async (command) => {
           if (command.startsWith('grep -rl ')) {
             return {stdout: `${confPath}\n`};
           }
 
           if (command.startsWith('ss -lntu | grep -q ')) {
+            listenerCheckReached = true;
             throw new Error('localhost DNS listener is unavailable');
           }
 
@@ -92,6 +89,7 @@ describe('Test interface base dhcp6', function(){
 
         await DNSPlugin.preparePlugin();
 
+        expect(listenerCheckReached).to.equal(false);
         expect(fs.existsSync(confPath)).to.equal(true);
         expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
       } finally {
@@ -100,7 +98,6 @@ describe('Test interface base dhcp6', function(){
         DNSPlugin.createDirectories = originalCreateDirectories;
         DNSPlugin.installDNSScript = originalInstallDNSScript;
         DNSPlugin.installSystemService = originalInstallSystemService;
-        fs.rmSync(cleanupMarker, {force: true});
         fs.rmSync(tempDir, {recursive: true, force: true});
       }
     });
