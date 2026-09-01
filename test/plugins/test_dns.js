@@ -46,48 +46,48 @@ describe('Test interface base dhcp6', function(){
     });
 
     it('should preserve localhost upstream configuration during preparePlugin', async() => {
-      const fs = require('fs');
-      const os = require('os');
-      const path = require('path');
-      const fireRouter = require('../../util/firerouter');
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+        const fireRouter = require('../../util/firerouter');
 
-      const originalGetFirewallaUserConfigFolder = fireRouter.getFirewallaUserConfigFolder;
-      const originalCreateDirectories = DNSPlugin.createDirectories;
-      const originalInstallDNSScript = DNSPlugin.installDNSScript;
-      const originalInstallSystemService = DNSPlugin.installSystemService;
+        const originalGetFirewallaUserConfigFolder = fireRouter.getFirewallaUserConfigFolder;
+        const originalCreateDirectories = DNSPlugin.createDirectories;
+        const originalInstallDNSScript = DNSPlugin.installDNSScript;
+        const originalInstallSystemService = DNSPlugin.installSystemService;
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dns-test-'));
-      const confDir = path.join(tempDir, 'dnsmasq');
-      const confPath = path.join(confDir, 'localhost-upstream.conf');
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dns-test-'));
+        const confDir = path.join(tempDir, 'dnsmasq');
+        const confPath = path.join(confDir, 'localhost-upstream.conf');
 
-      fs.mkdirSync(confDir, {recursive: true});
-      fs.writeFileSync(confPath, 'server=127.0.0.1#5353\n');
+        fs.mkdirSync(confDir, {recursive: true});
+        fs.writeFileSync(confPath, 'server=127.0.0.1#5353\n');
 
-      fireRouter.getFirewallaUserConfigFolder = () => tempDir;
-      DNSPlugin.createDirectories = async () => {};
-      DNSPlugin.installDNSScript = async () => {};
-      DNSPlugin.installSystemService = async () => {};
+        fireRouter.getFirewallaUserConfigFolder = () => tempDir;
+        DNSPlugin.createDirectories = async () => {};
+        DNSPlugin.installDNSScript = async () => {};
+        DNSPlugin.installSystemService = async () => {};
 
-      try {
-          execImpl = async () => ({stdout: ''});
+        try {
+            execImpl = async () => ({stdout: ''});
 
-          await DNSPlugin.preparePlugin();
+            await DNSPlugin.preparePlugin();
 
-          expect(fs.existsSync(confPath)).to.equal(true);
-          expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
-  } finally {
+            expect(fs.existsSync(confPath)).to.equal(true);
+            expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
+        } finally {
             execImpl = originalExec;
             fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
             DNSPlugin.createDirectories = originalCreateDirectories;
             DNSPlugin.installDNSScript = originalInstallDNSScript;
             DNSPlugin.installSystemService = originalInstallSystemService;
             fs.rmSync(tempDir, {recursive: true, force: true});
-  }
-});
+        }
+    });
 
     it('should dns6', async() => {
-      this._intfUuid = "fake-uuid";
-      await this.plugin.writeDNSConfFile();
-      log.debug(`dns resolv ${this.plugin._getResolvFilePath()}\n`, await exec(`cat ${this.plugin._getResolvFilePath()}`).then(r => r.stdout.trim()).catch(err => null));
+        this._intfUuid = "fake-uuid";
+        await this.plugin.writeDNSConfFile();
+        log.debug(`dns resolv ${this.plugin._getResolvFilePath()}\n`, await exec(`cat ${this.plugin._getResolvFilePath()}`).then(r => r.stdout.trim()).catch(err => null));
     });
   });
