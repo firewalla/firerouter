@@ -12,7 +12,7 @@ CMD=$(basename $0)
 # release verification, shared implementation maintained in the firewalla
 # repo (same release key and floor, firerouter-specific repo name)
 UV_OFFICIAL_REPO=firerouter
-UV_RELEASE_PUBKEY=$FIREROUTER_HOME/etc/keys/release_pub.key
+UV_RELEASE_PUBKEY=$FIREROUTER_HOME/etc/keys/release_pub.gpg
 if [[ -s /home/pi/scripts/upgrade_verify.sh ]]; then
   source /home/pi/scripts/upgrade_verify.sh
 elif [[ -s $FIREWALLA_HOME/scripts/upgrade_verify.sh ]]; then
