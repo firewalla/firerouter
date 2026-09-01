@@ -38,6 +38,16 @@ const LAN_BRIDGE = "br0";
 const ETH_NAME = /^eth\d+$/;     // wlan/usb interfaces are owned by other plugins, never bridged here
 const DHCP_LEASE = 86400;
 
+// WAN connectivity check, same shape the app writes for a normal box
+const WAN_EXTRA = {
+  pingTestIP: ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
+  pingTestCount: 8,
+  pingSuccessRate: 0.5,
+  pingTestEnabled: true,
+  dnsTestEnabled: true,
+  dnsTestDomain: "github.com"
+};
+
 function ipToInt(ip) {
   const parts = String(ip).split(".");
   if (parts.length !== 4)
@@ -109,7 +119,7 @@ function buildWan(wan) {
     case "dhcp":
       return {
         wanIntf: WAN_PHY,
-        phy: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true}
+        phy: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true, extra: _.cloneDeep(WAN_EXTRA)}
       };
     case "static": {
       const nameservers = toNameservers(wan.dns);
@@ -124,7 +134,8 @@ function buildWan(wan) {
           enabled: true,
           ipv4: toCidr(wan.ip, wan.mask, "wan"),
           gateway: wan.gateway,
-          nameservers
+          nameservers,
+          extra: _.cloneDeep(WAN_EXTRA)
         }
       };
     }
@@ -142,7 +153,8 @@ function buildWan(wan) {
             enabled: true,
             intf: WAN_PHY,
             username: wan.username,
-            password: wan.password
+            password: wan.password,
+            extra: _.cloneDeep(WAN_EXTRA)
           }
         }
       };
