@@ -3,8 +3,6 @@
 const chai = require('chai');
 const expect = chai.expect;
 const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
@@ -13,30 +11,25 @@ const DHCP6Plugin = require('../../plugins/dhcp/dhcp6_plugin.js');
 describe('Test DHCPv6 configuration validation', function() {
   this.timeout(30000);
 
+  // Use a plugin name that cannot collide with a real interface configuration.
+  const testPluginName = 'dhcp6_test_isolation_2052';
+  const testIface = 'dhcp6_test_2052';
+
   let plugin;
-  let tempDir;
   let confFilePath;
 
-  before(async () => {
-    tempDir = await fs.mkdtempAsync(
-      path.join(os.tmpdir(), 'firerouter-dhcp6-')
-    );
-
-    confFilePath = path.join(tempDir, 'br0_v6.conf');
-
-    plugin = new DHCP6Plugin('br0');
-
-    // Isolate the test from the real router configuration directory.
-    plugin._getConfFilePath = () => confFilePath;
-  });
-
-  it('should accept a valid stateful DHCPv6 configuration', async () => {
+  before(() => {
+    plugin = new DHCP6Plugin(testPluginName);
     plugin.configure({
       type: 'stateful'
     });
 
+    confFilePath = plugin._getConfFilePath();
+  });
+
+  it('should accept a valid stateful DHCPv6 configuration', async () => {
     await plugin.writeDHCPConfFile(
-      'br0',
+      testIface,
       [],
       'stateful',
       'fd00::100',
@@ -48,18 +41,18 @@ describe('Test DHCPv6 configuration validation', function() {
     );
 
     const content = await fs.readFileAsync(
-      plugin._getConfFilePath(),
+      confFilePath,
       'utf8'
     );
 
     expect(content).to.include(
-      'dhcp-range=tag:br0,fd00::100,fd00::1ff,64,86400'
+      'dhcp-range=tag:dhcp6_test_2052,fd00::100,fd00::1ff,64,86400'
     );
   });
 
   it('should preserve the existing configuration when validation fails', async () => {
     await plugin.writeDHCPConfFile(
-      'br0',
+      testIface,
       [],
       'stateful',
       'fd00::100',
@@ -71,13 +64,13 @@ describe('Test DHCPv6 configuration validation', function() {
     );
 
     const original = await fs.readFileAsync(
-      plugin._getConfFilePath(),
+      confFilePath,
       'utf8'
     );
 
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'invalid',
@@ -95,7 +88,7 @@ describe('Test DHCPv6 configuration validation', function() {
     }
 
     const current = await fs.readFileAsync(
-      plugin._getConfFilePath(),
+      confFilePath,
       'utf8'
     );
 
@@ -105,7 +98,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a missing from address', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         null,
@@ -117,14 +110,16 @@ describe('Test DHCPv6 configuration validation', function() {
       );
       expect.fail('Expected missing from address to be rejected');
     } catch (err) {
-      expect(String(err)).to.include('from/to is not specified');
+      expect(String(err)).to.include(
+        'from/to is not specified'
+      );
     }
   });
 
   it('should reject a missing to address', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -136,14 +131,16 @@ describe('Test DHCPv6 configuration validation', function() {
       );
       expect.fail('Expected missing to address to be rejected');
     } catch (err) {
-      expect(String(err)).to.include('from/to is not specified');
+      expect(String(err)).to.include(
+        'from/to is not specified'
+      );
     }
   });
 
   it('should reject an invalid from address', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'not-an-ipv6-address',
@@ -164,7 +161,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject an invalid to address', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -185,7 +182,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a from address containing a prefix', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100/64',
@@ -206,7 +203,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a to address containing a prefix', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -227,7 +224,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a scoped from address', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fe80::1%eth0',
@@ -248,7 +245,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a scoped to address', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -269,7 +266,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a reversed DHCPv6 range', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::200',
@@ -290,7 +287,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject DHCPv6 range endpoints outside the same prefix', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -313,7 +310,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a prefix length below 64', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -323,10 +320,13 @@ describe('Test DHCPv6 configuration validation', function() {
         86400,
         200
       );
-      expect.fail('Expected prefix length below 64 to be rejected');
+      expect.fail(
+        'Expected prefix length below 64 to be rejected'
+      );
     } catch (err) {
       expect(String(err)).to.include(
-        'prefixLen for dhcp6 of br0 should be an integer between 64 and 128'
+        'prefixLen for dhcp6 of ' +
+        `${testPluginName} should be an integer between 64 and 128`
       );
     }
   });
@@ -334,7 +334,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a prefix length above 128', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -344,10 +344,13 @@ describe('Test DHCPv6 configuration validation', function() {
         86400,
         200
       );
-      expect.fail('Expected prefix length above 128 to be rejected');
+      expect.fail(
+        'Expected prefix length above 128 to be rejected'
+      );
     } catch (err) {
       expect(String(err)).to.include(
-        'prefixLen for dhcp6 of br0 should be an integer between 64 and 128'
+        'prefixLen for dhcp6 of ' +
+        `${testPluginName} should be an integer between 64 and 128`
       );
     }
   });
@@ -355,7 +358,7 @@ describe('Test DHCPv6 configuration validation', function() {
   it('should reject a non-integer prefix length', async () => {
     try {
       await plugin.writeDHCPConfFile(
-        'br0',
+        testIface,
         [],
         'stateful',
         'fd00::100',
@@ -365,17 +368,20 @@ describe('Test DHCPv6 configuration validation', function() {
         86400,
         200
       );
-      expect.fail('Expected non-integer prefix length to be rejected');
+      expect.fail(
+        'Expected non-integer prefix length to be rejected'
+      );
     } catch (err) {
       expect(String(err)).to.include(
-        'prefixLen for dhcp6 of br0 should be an integer between 64 and 128'
+        'prefixLen for dhcp6 of ' +
+        `${testPluginName} should be an integer between 64 and 128`
       );
     }
   });
 
   it('should accept prefix length 64', async () => {
     await plugin.writeDHCPConfFile(
-      'br0',
+      testIface,
       [],
       'stateful',
       'fd00::100',
@@ -389,7 +395,7 @@ describe('Test DHCPv6 configuration validation', function() {
 
   it('should accept prefix length 128', async () => {
     await plugin.writeDHCPConfFile(
-      'br0',
+      testIface,
       [],
       'stateful',
       'fd00::100',
@@ -402,9 +408,6 @@ describe('Test DHCPv6 configuration validation', function() {
   });
 
   after(async () => {
-    await fs.rmAsync(tempDir, {
-      recursive: true,
-      force: true
-    });
+    await fs.unlinkAsync(confFilePath).catch(() => {});
   });
 });
