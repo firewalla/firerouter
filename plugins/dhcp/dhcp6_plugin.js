@@ -74,9 +74,14 @@ class DHCP6Plugin extends DHCPPlugin {
 
         try {
           fromAddress = new Address6(from);
+        } catch (err) {
+          this.fatal(`from is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        }
+
+        try {
           toAddress = new Address6(to);
         } catch (err) {
-          this.fatal(`from/to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+          this.fatal(`to is not a valid IPv6 address for dhcp6 of ${this.name}`);
         }
 
         if (!fromAddress.isValid() ||
