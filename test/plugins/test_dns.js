@@ -22,14 +22,16 @@ const childProcess = require('child-process-promise');
 const originalExec = childProcess.exec;
 let execImpl = originalExec;
 
-// DNSPlugin captures exec when it is loaded, so install the wrapper before
-// loading the module and restore childProcess.exec after the test suite.
+// DNSPlugin captures exec when it is loaded. Install the wrapper only while
+// loading DNSPlugin, then restore childProcess.exec immediately so unrelated
+// tests see the original module export.
 childProcess.exec = (...args) => execImpl(...args);
+let DNSPlugin = require('../../plugins/dns/dns_plugin.js');
+childProcess.exec = originalExec;
+
 const exec = originalExec;
 
 let log = require('../../util/logger.js')(__filename, 'info');
-
-let DNSPlugin = require('../../plugins/dns/dns_plugin.js');
 
 describe('Test interface base dhcp6', function(){
     this.timeout(30000);
@@ -42,7 +44,6 @@ describe('Test interface base dhcp6', function(){
     after(async () => {
         await exec(`rm ${this.plugin._getResolvFilePath()}`).catch(err=>null);
         await exec(`rm ${this.plugin._getConfFilePath()}`).catch(err=>null);
-        childProcess.exec = originalExec;
     });
 
     it('should preserve localhost upstream configuration during preparePlugin', async() => {
@@ -51,10 +52,13 @@ describe('Test interface base dhcp6', function(){
         const path = require('path');
         const fireRouter = require('../../util/firerouter');
 
+        const marker = '/dev/shm/firerouter_dns_boot_cleanup_done';
         const originalGetFirewallaUserConfigFolder = fireRouter.getFirewallaUserConfigFolder;
         const originalCreateDirectories = DNSPlugin.createDirectories;
         const originalInstallDNSScript = DNSPlugin.installDNSScript;
         const originalInstallSystemService = DNSPlugin.installSystemService;
+        const originalAccessAsync = fs.accessAsync;
+        const originalWriteFileAsync = fs.writeFileAsync;
 
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dns-test-'));
         const confDir = path.join(tempDir, 'dnsmasq');
@@ -69,7 +73,30 @@ describe('Test interface base dhcp6', function(){
         DNSPlugin.installSystemService = async () => {};
 
         try {
-            execImpl = async () => ({stdout: ''});
+            // Reproduce the original boot-race condition:
+            // - grep discovers the localhost upstream configuration
+            // - the listener check fails because port 5353 is not listening
+            execImpl = async (command) => {
+                if (command.includes("grep -rl 'server=127\\.0\\.0\\.1#'"))
+                    return {stdout: `${confPath}\n`};
+                if (command.includes('ss -lntu | grep -q'))
+                    throw new Error('listener not available');
+                return {stdout: ''};
+            };
+
+            // Keep the historical boot marker isolated to this test. This
+            // prevents the test from reading or modifying the real marker.
+            fs.accessAsync = async (filePath) => {
+                if (filePath === marker)
+                    throw new Error('marker does not exist');
+                return originalAccessAsync(filePath);
+            };
+
+            fs.writeFileAsync = async (filePath, ...args) => {
+                if (filePath === marker)
+                    return;
+                return originalWriteFileAsync(filePath, ...args);
+            };
 
             await DNSPlugin.preparePlugin();
 
@@ -77,6 +104,8 @@ describe('Test interface base dhcp6', function(){
             expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
         } finally {
             execImpl = originalExec;
+            fs.accessAsync = originalAccessAsync;
+            fs.writeFileAsync = originalWriteFileAsync;
             fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
             DNSPlugin.createDirectories = originalCreateDirectories;
             DNSPlugin.installDNSScript = originalInstallDNSScript;
