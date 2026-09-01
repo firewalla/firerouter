@@ -153,7 +153,7 @@ class DHCP6Plugin extends DHCPPlugin {
 
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,
       this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval, this.networkConfig.raLifetime);
-      this._restartService();
+    this._restartService();
   }
 }
 
