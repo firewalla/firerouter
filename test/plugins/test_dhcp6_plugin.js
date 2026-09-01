@@ -448,58 +448,43 @@ describe('Test DHCP6 configuration', function(){
     );
   });
 
-  it('should reject a prefix length below 64', async () => {
-    await expectDHCP6ConfigError(
-      this.plugin,
-      [
-        'eth5',
-        [],
-        'stateful',
-        'fd00::100',
-        'fd00::1ff',
-        [],
-        63,
-        86400,
-        200
-      ],
-      'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
-    );
-  });
+  const invalidPrefixLengths = [
+    {
+      value: 63,
+      description: 'below 64'
+    },
+    {
+      value: 129,
+      description: 'above 128'
+    },
+    {
+      value: 64.5,
+      description: 'a non-integer'
+    },
+    {
+      value: '64',
+      description: 'a string'
+    }
+  ];
 
-  it('should reject a prefix length above 128', async () => {
-    await expectDHCP6ConfigError(
-      this.plugin,
-      [
-        'eth5',
-        [],
-        'stateful',
-        'fd00::100',
-        'fd00::1ff',
-        [],
-        129,
-        86400,
-        200
-      ],
-      'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
-    );
-  });
-
-  it('should reject a non-integer prefix length', async () => {
-    await expectDHCP6ConfigError(
-      this.plugin,
-      [
-        'eth5',
-        [],
-        'stateful',
-        'fd00::100',
-        'fd00::1ff',
-        [],
-        64.5,
-        86400,
-        200
-      ],
-      'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
-    );
+  invalidPrefixLengths.forEach(({value, description}) => {
+    it(`should reject a prefix length ${description}`, async () => {
+      await expectDHCP6ConfigError(
+        this.plugin,
+        [
+          'eth5',
+          [],
+          'stateful',
+          'fd00::100',
+          'fd00::1ff',
+          [],
+          value,
+          86400,
+          200
+        ],
+        'prefixLen for dhcp6 of eth5 should be an integer between 64 and 128'
+      );
+    });
   });
 
   it('should accept prefix length 64', async () => {
