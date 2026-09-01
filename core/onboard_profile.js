@@ -224,6 +224,10 @@ function expandProfile(network, phyNames) {
     icmp: {
       [wanIntf]: {echoRequest: false},
       [LAN_BRIDGE]: {echoRequest: true}
+    },
+    mdns_reflector: {
+      [wanIntf]: {enabled: false},
+      [LAN_BRIDGE]: {enabled: true}
     }
   };
   if (pppoe)
