@@ -3,6 +3,8 @@
 const chai = require('chai');
 const expect = chai.expect;
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
@@ -12,9 +14,20 @@ describe('Test DHCPv6 configuration validation', function() {
   this.timeout(30000);
 
   let plugin;
+  let tempDir;
+  let confFilePath;
 
-  before(() => {
+  before(async () => {
+    tempDir = await fs.mkdtempAsync(
+      path.join(os.tmpdir(), 'firerouter-dhcp6-')
+    );
+
+    confFilePath = path.join(tempDir, 'br0_v6.conf');
+
     plugin = new DHCP6Plugin('br0');
+
+    // Isolate the test from the real router configuration directory.
+    plugin._getConfFilePath = () => confFilePath;
   });
 
   it('should accept a valid stateful DHCPv6 configuration', async () => {
@@ -287,7 +300,9 @@ describe('Test DHCPv6 configuration validation', function() {
         86400,
         200
       );
-      expect.fail('Expected DHCPv6 endpoints outside the same prefix to be rejected');
+      expect.fail(
+        'Expected DHCPv6 endpoints outside the same prefix to be rejected'
+      );
     } catch (err) {
       expect(String(err)).to.include(
         'from/to addresses must be in the same prefix'
@@ -387,8 +402,9 @@ describe('Test DHCPv6 configuration validation', function() {
   });
 
   after(async () => {
-    await fs.unlinkAsync(
-      plugin._getConfFilePath()
-    ).catch(() => {});
+    await fs.rmAsync(tempDir, {
+      recursive: true,
+      force: true
+    });
   });
 });
