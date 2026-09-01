@@ -451,7 +451,7 @@ class InterfaceBasePlugin extends Plugin {
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
       await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
-      // create fwmark default route ip rule for wan interface. Application should add this fwmark to packets to implement customized default route
+      // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(
         [
