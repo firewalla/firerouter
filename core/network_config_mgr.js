@@ -766,26 +766,28 @@ class NetworkConfigManager {
   }
 
   async tryApplyConfig(config, dryRun = false) {
-    const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
-    // convert new config to integrated AP config
-    const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
-      log.error(`Failed to convert effective config`, err.message);
-      return config;
-    });
-    const errors = await ns.setup(convertedConfig, dryRun);
+  const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
+  // convert new config to integrated AP config
+  const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
+  log.error(`Failed to convert effective config`, err.message);
+  return config;
+  });
+  const errors = await ns.setup(convertedConfig, dryRun);
     if (errors && errors.length != 0) {
       log.error("Failed to apply network config, rollback to previous setup", errors);
+
+    if (!dryRun) {
       // convert current config to integrated AP config
       const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
-        log.error(`Failed to convert effective config`, err.message);
-        return currentConfig;
+      log.error(`Failed to convert effective config`, err.message);
+      return currentConfig;
       });
       await ns.setup(convertedCurrentConfig).catch((err) => {
-        log.error("Failed to rollback network config", err);
-      });
-    }
-    return errors;
+      log.error("Failed to rollback network config", err);
+    });
   }
+}
+return errors;
 
   async convertIntegratedAPConfig(config) {
     if (!platform.isWLANManagedByAPC()) {
