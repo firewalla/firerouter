@@ -6,10 +6,9 @@ log() {
 }
 
 execute_and_log() {
-  if [ -z "$1" ]; then
+  if [ "$#" -eq 0 ]; then
     return 1
   fi
-  command="$*"
-  log "command: $command"
-  eval "$command"
+  log "command: $*"
+  "$@"
 }
