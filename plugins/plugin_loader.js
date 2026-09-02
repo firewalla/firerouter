@@ -166,6 +166,66 @@ async function acquireApplyLock(func) {
   });
 }
 
+async function reapplyDryRun(config, errors, wlanReloaded) {
+  const dryRunPluginCategoryMap = {};
+
+  for (const pluginConf of pluginConfs) {
+    if (!pluginConf.c)
+      continue;
+
+    dryRunPluginCategoryMap[pluginConf.category] =
+      dryRunPluginCategoryMap[pluginConf.category] || {};
+
+    const keys = pluginConf.config_path.split(".");
+    let value = config;
+
+    for (const key of keys) {
+      if (value)
+        value = value[key];
+    }
+
+    if (!value)
+      continue;
+
+    for (const name in value) {
+      const instance = createPluginInstance(
+        pluginConf.category,
+        name,
+        pluginConf.c,
+        pluginConf.config,
+        dryRunPluginCategoryMap
+      );
+
+      if (!instance)
+        continue;
+
+      const oldConfig = instance.networkConfig;
+
+      if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
+        const changeType = instance.getConfigChangeType(value[name]);
+        instance.propagateConfigChanged(changeType);
+      }
+
+      instance._nextConfig = value[name];
+
+      if (!oldConfig) {
+        instance.propagateConfigChanged(Plugin.CHANGE_FULL);
+        instance.unsubscribeAllChanges();
+      }
+
+      if (wlanReloaded && pluginConf.config_path === "interface.wlan") {
+        instance.propagateConfigChanged(Plugin.CHANGE_FULL);
+      }
+
+      // Keep configure() in dry-run so plugin-specific configuration
+      // validation still occurs, but only on the temporary instance.
+      instance.configure(instance._nextConfig);
+    }
+  }
+
+  return errors;
+}
+
 async function reapply(config, dryRun = false) {
   let t1, t2;
   return await lock.acquire(LOCK_REAPPLY, async () => {
