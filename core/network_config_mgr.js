@@ -788,19 +788,28 @@ class NetworkConfigManager {
   }
 
   async convertIntegratedAPConfig(config) {
-    if (!platform.isWLANManagedByAPC()) {
-      return config;
-    }
-    const fwapcExecPath = r.getFwapcExecPath();
-    const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
+  if (!platform.isWLANManagedByAPC()) {
+    return config;
+  }
+
+  const fwapcExecPath = r.getFwapcExecPath();
+  const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
+
+  try {
     await fsp.writeFile(tempFile, JSON.stringify(config));
-    // turn off log output on stdout to avoid inteference with JSON parsing
+    // turn off log output on stdout to avoid interference with JSON parsing
     const response = await exec(`FW_LOG=OFF ${fwapcExecPath} ciap ${tempFile}`);
     const data = JSON.parse(response.stdout);
-    await fsp.unlink(tempFile).catch((err) => {});
     log.debug(`Converted effective config`, data);
     return data;
+  } finally {
+    await fsp.unlink(tempFile).catch((err) => {
+      if (err.code !== "ENOENT") {
+        log.warn(`Failed to remove temporary config ${tempFile}`, err.message);
+      }
+    });
   }
+}
 
   async validateNcidOrReqId(networkConfig, inTransaction = false, skipNcid = false) {
     const originConfig = await this.getActiveConfig(inTransaction);
