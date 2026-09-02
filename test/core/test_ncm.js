@@ -228,6 +228,7 @@ describe('Test integrated AP config conversion', function(){
         },
       }));
 
+      let conversionError;
       try {
         await ncm.convertIntegratedAPConfig({
           version: 1,
@@ -239,10 +240,10 @@ describe('Test integrated AP config conversion', function(){
             },
           },
         });
-        throw new Error('APC conversion unexpectedly succeeded');
       } catch (err) {
-        expect(err).to.be.instanceOf(Error);
+        conversionError = err;
       }
+      expect(conversionError).to.be.instanceOf(Error);
 
       await fs.promises.access(tempFile).then(
         () => {
