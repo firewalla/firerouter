@@ -12,7 +12,6 @@
  *    You should have received a copy of the GNU Affero General Public License
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 'use strict';
 
 const chai = require('chai');
@@ -86,7 +85,6 @@ describe('Test network config manager dry-run', function() {
 
       expect(setupCalls[0].config).to.equal(candidateConfig);
       expect(setupCalls[0].dryRun).to.equal(false);
-
       expect(setupCalls[1].config).to.equal(currentConfig);
       expect(setupCalls[1].dryRun).to.equal(false);
     } finally {
