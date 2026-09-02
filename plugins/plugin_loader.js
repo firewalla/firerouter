@@ -13,6 +13,7 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 'use strict';
+
 const Plugin = require('./plugin.js');
 const log = require('../util/logger.js')(__filename);
 const config = require('../util/config.js').getConfig();
@@ -21,6 +22,7 @@ const Message = require('../core/Message.js');
 let pluginConfs = [];
 
 let pluginCategoryMap = {};
+
 let scheduledReapplyTask = null;
 let restartRsyslogTask = null;
 const _ = require('lodash');
@@ -32,6 +34,7 @@ const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 let applyInProgress = false;
 let lastAppliedTimestamp = null;
+
 let CHANGE_FLAGS = 0;
 const FLAG_IFACE_CHANGE = 0x1;
 const FLAG_CHANGE = 0x2;
@@ -41,9 +44,11 @@ async function initPlugins() {
   if (_.isEmpty(config.plugins)) {
     return;
   }
+
   pluginConfs = config.plugins.sort((a, b) => {
     return a.init_seq - b.init_seq
   });
+
   for (let pluginConf of pluginConfs) {
     try {
       const filePath = pluginConf.file_path;
@@ -58,26 +63,32 @@ async function initPlugins() {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }
   }
+
   await exec(`sudo systemctl daemon-reload`).catch((err) => {
     log.error(`Failed to reload systemctl daemon`, err.message);
   });
   log.info("Plugin initialized", pluginConfs);
 }
-function createPluginInstance(category, name, constructor, config = null, pluginMap = pluginCategoryMap) {
-  let instance = pluginMap[category] && pluginMap[category][name];
+
+function createPluginInstance(category, name, constructor, config = null) {
+  let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
   if (instance)
     return instance;
 
-  if (!pluginMap[category])
-    pluginMap[category] = {};
+  if (!pluginCategoryMap[category])
+    pluginCategoryMap[category] = {};
+
   if (!constructor)
     return null;
+
   instance = new constructor(name);
   instance.name = name;
-  pluginMap[category][name] = instance;
+  pluginCategoryMap[category][name] = instance;
+
   if (config) {
     instance.init(config);
   }
+
   log.info("Instance created", instance.name);
   return instance;
 }
@@ -93,23 +104,30 @@ function getPluginInstance(category, name) {
 function _isConfigEqual(c1, c2) {
   if (!c1 || !c2)
     return false;
+
   const c1Copy = JSON.parse(JSON.stringify(c1));
   const c2Copy = JSON.parse(JSON.stringify(c2));
+
   // ignore name change
   if (c1Copy.meta && c1Copy.meta.name)
     delete c1Copy.meta["name"];
+
   if (c2Copy.meta && c2Copy.meta.name)
     delete c2Copy.meta["name"];
+
   // ignore extra data
   if (c1Copy.hasOwnProperty("extra"))
     delete c1Copy["extra"];
+
   if (c2Copy.hasOwnProperty("extra"))
     delete c2Copy["extra"];
+
   if (!_.has(c1Copy, ["meta", "type"]) && !_.has(c2Copy, ["meta", "type"])) {
     // ignore meta if both configs have no type, i.e., different uuids in interface configs are treated as the same config in this case
     delete c1Copy.meta;
     delete c2Copy.meta;
   }
+
   return _.isEqual(c1Copy, c2Copy);
 }
 
@@ -152,144 +170,68 @@ async function acquireApplyLock(func) {
   });
 }
 
-async function reapplyDryRun(config, errors) {
-  const dryRunPluginCategoryMap = {};
-
-  for (const pluginConf of pluginConfs) {
-    if (!pluginConf.c)
-      continue;
-
-    dryRunPluginCategoryMap[pluginConf.category] =
-      dryRunPluginCategoryMap[pluginConf.category] || {};
-    const keys = pluginConf.config_path.split(".");
-    let value = config;
-
-    for (const key of keys) {
-      if (value)
-        value = value[key];
-    }
-
-    if (!value)
-      continue;
-
-    const livePluginCategoryMap = pluginCategoryMap[pluginConf.category] || {};
-
-    for (const name in value) {
-      const liveInstance = livePluginCategoryMap[name];
-      const instance = createPluginInstance(
-        pluginConf.category,
-        name,
-        pluginConf.c,
-        pluginConf.config,
-        dryRunPluginCategoryMap
-      );
-
-      if (!instance)
-        continue;
-
-      /*
-       * Dry-run must validate changes against the currently active
-       * configuration, but it must never reuse the live plugin instance.
-       */
-      if (liveInstance && liveInstance.constructor === pluginConf.c && liveInstance.networkConfig) {
-        instance.networkConfig = JSON.parse(JSON.stringify(liveInstance.networkConfig));
-      }
-
-      const oldConfig = instance.networkConfig;
-      if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
-        const changeType = instance.getConfigChangeType(value[name]);
-        instance.propagateConfigChanged(changeType);
-      }
-
-      instance._nextConfig = value[name];
-
-      if (!oldConfig) {
-        instance.propagateConfigChanged(Plugin.CHANGE_FULL);
-        instance.unsubscribeAllChanges();
-      }
-
-      /*
-       * configure() is intentionally executed on the temporary instance.
-       * Plugin-specific configuration validation therefore still runs,
-       * while the live plugin object is never modified.
-       */
-      try {
-        await instance.configure(instance._nextConfig);
-      } catch (err) {
-        log.error(`Failed to validate config of ${pluginConf.category}-->${name}`, err);
-        errors.push(err.message || err);
-      }
-    }
-  }
-
-  return errors;
-}
-
-/*
- * Test-only helper. This keeps tests from mutating the live plugin registry
- * through getPluginInstances() while still allowing the dry-run path to be
- * exercised with controlled plugin configurations.
- */
-function _setPluginStateForTest(testPluginConfs, testPluginCategoryMap) {
-  const originalPluginConfs = pluginConfs;
-  const originalPluginCategoryMap = pluginCategoryMap;
-
-  pluginConfs = testPluginConfs;
-  pluginCategoryMap = testPluginCategoryMap;
-
-  return () => {
-    pluginConfs = originalPluginConfs;
-    pluginCategoryMap = originalPluginCategoryMap;
-  };
-}
-
 async function reapply(config, dryRun = false) {
   let t1, t2;
+
   return await lock.acquire(LOCK_REAPPLY, async () => {
     t1 = Date.now() / 1000;
     applyInProgress = true;
     const errors = [];
-    /*
-     * prepareWLANRegDomainChange can perform platform-level work, so it
-     * must not run during a dry-run.
-     */
-    let wlanReloaded = false;
-    if (!dryRun) {
-      const country = _.get(config, ['apc', 'globalSysConfig', 'country']);
-      wlanReloaded = await platform.prepareWLANRegDomainChange(country).catch((err) => {
-        log.error(`Failed to prepare WLAN reg domain change for country ${country}`, err);
-        errors.push(err.message || err);
-        return false;
-      });
-    }
 
-    if (dryRun) {
-      return await reapplyDryRun(config, errors);
-    }
+    const country = _.get(config, ['apc', 'globalSysConfig', 'country']);
+    const wlanReloaded = await platform.prepareWLANRegDomainChange(country).catch((err) => {
+      log.error(`Failed to prepare WLAN reg domain change for country ${country}`, err);
+      errors.push(err.message || err);
+      return false;
+    });
 
     let newPluginCategoryMap = {};
     const reversedPluginConfs = pluginConfs.reverse();
+
     // if config is not set, simply reapply effective config
     if (config) {
       // remove plugins in descending order by init sequence
       const remove = async (instance, pluginConf) => {
+        if (!dryRun) {
+          log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
+          await instance.flush();
+
+          if (pluginConf.category === "apc") {
+            CHANGE_FLAGS |= FLAG_APC_CHANGE;
+          } else {
+            CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+          }
+        }
+
         instance.propagateConfigChanged(Plugin.CHANGE_FULL);
         instance.unsubscribeAllChanges();
-        pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
+
+        pluginCategoryMap &&
+          pluginCategoryMap[pluginConf.category] &&
+          delete pluginCategoryMap[pluginConf.category][instance.name];
       };
+
       for (let pluginConf of reversedPluginConfs) {
         const concurrent = pluginConf.allow_concurrent;
-        newPluginCategoryMap[pluginConf.category] = newPluginCategoryMap[pluginConf.category] || {};
+
+        newPluginCategoryMap[pluginConf.category] =
+          newPluginCategoryMap[pluginConf.category] || {};
+
         if (!pluginConf.c)
           continue;
 
-        const instances = Object.values(pluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+        const instances = Object.values(pluginCategoryMap[pluginConf.category])
+          .filter(i => i.constructor.name === pluginConf.c.name);
+
         if (instances) {
           for (let instance of instances) {
             instance._mark = 0;
           }
-        } else
+        } else {
           pluginCategoryMap[pluginConf.category] = {};
+        }
 
         const newInstances = {};
         const keys = pluginConf.config_path.split(".");
@@ -299,15 +241,23 @@ async function reapply(config, dryRun = false) {
           if (value)
             value = value[key];
         }
+
         if (value) {
           for (let name in value) {
-            const instance = createPluginInstance(pluginConf.category, name, pluginConf.c, pluginConf.config);
+            const instance = createPluginInstance(
+              pluginConf.category,
+              name,
+              pluginConf.c,
+              pluginConf.config
+            );
 
             if (!instance)
               continue;
 
             instance._mark = 1;
+
             const oldConfig = instance.networkConfig;
+
             if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
               log.info(
                 `Network config of ${pluginConf.category}-->${name} changed`,
@@ -318,7 +268,12 @@ async function reapply(config, dryRun = false) {
               const changeType = instance.getConfigChangeType(value[name]);
               instance.propagateConfigChanged(changeType);
             }
-            instance._nextConfig = value[name];
+
+            // Dry-run must never expose the caller-owned configuration object
+            // to plugin lifecycle methods because configure() may mutate it.
+            instance._nextConfig = dryRun
+              ? _.cloneDeep(value[name])
+              : value[name];
 
             if (!oldConfig) {
               // initialization of network config, flush instance with new config
@@ -326,9 +281,11 @@ async function reapply(config, dryRun = false) {
                 `Initial setup of ${pluginConf.category}-->${name}`,
                 pluginConf.hide_config_in_log ? "hidden" : value[name]
               );
+
               instance.propagateConfigChanged(Plugin.CHANGE_FULL);
               instance.unsubscribeAllChanges();
             }
+
             if (wlanReloaded && pluginConf.config_path === "interface.wlan") {
               instance.propagateConfigChanged(Plugin.CHANGE_FULL);
             }
@@ -340,6 +297,7 @@ async function reapply(config, dryRun = false) {
         if (instances) {
           const removedInstances = instances.filter(i => i._mark == 0);
           const promises = [];
+
           for (let instance of removedInstances) {
             if (concurrent) {
               promises.push(remove(instance, pluginConf));
@@ -348,12 +306,22 @@ async function reapply(config, dryRun = false) {
             }
           }
 
-          if (concurrent && !_.isEmpty(promises))
+          if (concurrent && !_.isEmpty(promises)) {
+            if (!dryRun)
+              log.info(
+                `Removing ${removedInstances.length} instances of ${pluginConf.category} in concurrent mode`
+              );
+
             await Promise.all(promises);
+          }
         }
+
         // merge with new pluginCategoryMap
-        newPluginCategoryMap[pluginConf.category] =
-          Object.assign({}, newPluginCategoryMap[pluginConf.category], newInstances);
+        newPluginCategoryMap[pluginConf.category] = Object.assign(
+          {},
+          newPluginCategoryMap[pluginConf.category],
+          newInstances
+        );
       }
     } else {
       newPluginCategoryMap = pluginCategoryMap;
@@ -362,7 +330,34 @@ async function reapply(config, dryRun = false) {
     const flush = async (instance, pluginConf) => {
       if (!instance.networkConfig) // newly created instance
         instance.configure(instance._nextConfig);
+
       if (instance.isReapplyNeeded()) {
+        if (!dryRun) {
+          if (instance.isFlushNeeded(instance._nextConfig)) {
+            if (instance.isFullFlushNeeded(instance._nextConfig)) {
+              log.info("Flushing old config", pluginConf.category, instance.name);
+              await instance.flush();
+            } else {
+              log.info("Fast flushing old config", pluginConf.category, instance.name);
+              await instance.flushFast();
+            }
+          } else {
+            log.info(
+              "No need to flush old config",
+              pluginConf.category,
+              instance.name
+            );
+          }
+
+          if (pluginConf.category === "apc") {
+            CHANGE_FLAGS |= FLAG_APC_CHANGE;
+          } else {
+            CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+          }
+        }
+
         instance.unsubscribeAllChanges();
       }
 
@@ -371,15 +366,18 @@ async function reapply(config, dryRun = false) {
         instance.configure(instance._nextConfig);
       }
     };
+
     // flush all changed plugins in descending order by init sequence
     for (let pluginConf of reversedPluginConfs) {
-      const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(
-        i => i.constructor.name === pluginConf.c.name
-      );
+      const instances = Object.values(
+        newPluginCategoryMap[pluginConf.category]
+      ).filter(i => i.constructor.name === pluginConf.c.name);
+
       const concurrent = pluginConf.allow_concurrent;
 
       if (instances) {
         const promises = [];
+
         for (let instance of instances) {
           if (concurrent) {
             promises.push(flush(instance, pluginConf));
@@ -389,24 +387,44 @@ async function reapply(config, dryRun = false) {
         }
 
         if (concurrent && !_.isEmpty(promises)) {
-          log.info(`Flushing instances of ${pluginConf.category} in concurrent mode`);
+          if (!dryRun)
+            log.info(
+              `Flushing instances of ${pluginConf.category} in concurrent mode`
+            );
+
           await Promise.all(promises);
         }
       }
     }
+
     // apply plugin configs in ascending order by init sequence
     pluginConfs = reversedPluginConfs.reverse();
+
+    // do not apply config in dry run
+    if (dryRun) {
+      applyInProgress = false;
+      lastAppliedTimestamp = Date.now() / 1000;
+      return errors;
+    }
+
     const apply = async (instance, pluginConf) => {
       if (instance.isReapplyNeeded()) {
-        log.info("Applying new config", pluginConf.category, instance.name);
+        log.info(
+          "Applying new config",
+          pluginConf.category,
+          instance.name
+        );
+
         await instance.apply().catch((err) => {
           log.error(
             `Failed to apply config of ${pluginConf.category}-->${instance.name}`,
             instance.networkConfig,
             err
           );
+
           errors.push(err.message || err);
         });
+
         if (pluginConf.category === "apc") {
           CHANGE_FLAGS |= FLAG_APC_CHANGE;
         } else {
@@ -424,14 +442,17 @@ async function reapply(config, dryRun = false) {
 
       instance.propagateConfigChanged(Plugin.CHANGE_NONE);
     };
+
     for (let pluginConf of pluginConfs) {
       const concurrent = pluginConf.allow_concurrent;
-      const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(
-        i => i.constructor.name === pluginConf.c.name
-      );
+
+      const instances = Object.values(
+        newPluginCategoryMap[pluginConf.category]
+      ).filter(i => i.constructor.name === pluginConf.c.name);
 
       if (instances) {
         const promises = [];
+
         for (let instance of instances) {
           if (concurrent) {
             promises.push(apply(instance, pluginConf));
@@ -441,7 +462,10 @@ async function reapply(config, dryRun = false) {
         }
 
         if (concurrent && !_.isEmpty(promises)) {
-          log.info(`Applying instances of ${pluginConf.category} in concurrent mode`);
+          log.info(
+            `Applying instances of ${pluginConf.category} in concurrent mode`
+          );
+
           await Promise.all(promises);
         }
       }
@@ -449,16 +473,20 @@ async function reapply(config, dryRun = false) {
 
     pluginCategoryMap = newPluginCategoryMap;
     applyInProgress = false;
+
     // clear applyInProgress so that subsequent publish functions will send message to redis immediately
     if (CHANGE_FLAGS & FLAG_CHANGE)
       await publishChangeApplied();
+
     if (CHANGE_FLAGS & FLAG_IFACE_CHANGE)
       await publishIfaceChangeApplied();
+
     if (CHANGE_FLAGS & FLAG_APC_CHANGE)
       await publishAPCChangeApplied();
 
     CHANGE_FLAGS = 0;
     lastAppliedTimestamp = Date.now() / 1000;
+
     return errors;
   }).then((errors) => {
     applyInProgress = false;
@@ -466,7 +494,7 @@ async function reapply(config, dryRun = false) {
     t2 = Date.now() / 1000;
 
     log.info(
-      `reapply is complete ${_.isEmpty(errors) ? "without" : "with error"}, elapsed time: ${(t2 - t1).toFixed(3)}`
+      `reapply is complete ${_.isEmpty(errors) ? "without" : "with"} error, elapsed time: ${(t2 - t1).toFixed(3)}`
     );
 
     return errors;
@@ -476,6 +504,22 @@ async function reapply(config, dryRun = false) {
     return [err.message];
   });
 }
+
+function __getTestStateForTest() {
+  return {
+    pluginConfs: pluginConfs,
+    pluginCategoryMap: pluginCategoryMap
+  };
+}
+
+function __setPluginConfsForTest(confs) {
+  pluginConfs = confs;
+}
+
+function __setPluginCategoryMapForTest(categoryMap) {
+  pluginCategoryMap = categoryMap;
+}
+
 function scheduleReapply() {
   if (!scheduledReapplyTask) {
     scheduledReapplyTask = setTimeout(() => {
@@ -509,5 +553,7 @@ module.exports = {
   getLastAppliedTimestamp: getLastAppliedTimestamp,
   publishChangeApplied: publishChangeApplied,
   publishIfaceChangeApplied: publishIfaceChangeApplied,
-  _setPluginStateForTest: _setPluginStateForTest
+  __getTestStateForTest: __getTestStateForTest,
+  __setPluginConfsForTest: __setPluginConfsForTest,
+  __setPluginCategoryMapForTest: __setPluginCategoryMapForTest
 };
