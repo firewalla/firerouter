@@ -211,7 +211,12 @@ case $reason in
 
       old_gw=$(cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo "")
 
-      if is_valid_router_lifetime "$router_lifetime" && [[ "$router_lifetime" =~ ^0+$ ]]; then
+      if is_valid_router_lifetime "$router_lifetime" &&
+         case "$router_lifetime" in
+           *[1-9]*) false ;;
+           *) true ;;
+         esac
+      then
         if [ "$nd_from" != "$old_gw" ]; then
           log "ROUTERADVERT: router lifetime is 0 for non-managed router $nd_from on $interface; keeping managed route via $old_gw"
         else
