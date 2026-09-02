@@ -240,6 +240,12 @@ async function reapply(config, dryRun = false) {
       return false;
     });
 
+    if (dryRun) {
+      applyInProgress = false;
+      lastAppliedTimestamp = Date.now() / 1000;
+      return errors;
+    }
+
     let newPluginCategoryMap = {};
     const reversedPluginConfs = pluginConfs.reverse();
     // if config is not set, simply reapply effective config
