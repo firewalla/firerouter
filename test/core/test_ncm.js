@@ -16,7 +16,9 @@
 const fs = require('fs');
 const os = require('os');
 const fsp = fs.promises;
+const fs = require('fs');
 const path = require('path');
+
 
 // resolve the plugin registry from this checkout so the suite also runs off-device
 process.env.FIREROUTER_HOME = process.env.FIREROUTER_HOME || path.resolve(__dirname, '../..');
@@ -185,40 +187,51 @@ describe('Test network config validation', function(){
 describe('Test integrated AP config conversion', function(){
   this.timeout(30000);
 
-  it('should remove temporary config when APC conversion fails', async()=> {
-    const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
-    const originalGetFwapcExecPath = r.getFwapcExecPath;
-    const originalWriteFile = fsp.writeFile;
-    const originalUnlink = fsp.unlink;
-    const tempDir = await fsp.mkdtemp(
-      path.join(os.tmpdir(), 'firerouter-ncm-')
-    );
-    const tempFile = path.join(tempDir, 'config.json');
+  let originalIsWLANManagedByAPC;
+  let originalGetFwapcExecPath;
 
-    let fileCreated = false;
-    let writtenPath;
+  beforeEach(() => {
+    originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
+    originalGetFwapcExecPath = r.getFwapcExecPath;
 
     platform.isWLANManagedByAPC = () => true;
+  });
+
+  afterEach(() => {
+    platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
+    r.getFwapcExecPath = originalGetFwapcExecPath;
+  });
+
+  it('should remove temporary config when APC conversion fails', async()=> {
     r.getFwapcExecPath = () => '/bin/false';
+    await expectAPCConversionFailure();
+  });
 
-    // Redirect only the production temp-file write to a portable writable directory.
-    fsp.writeFile = async (_file, data) => {
-      writtenPath = _file;
-      await originalWriteFile(tempFile, data);
-      fileCreated = true;
-    };
+  it('should remove temporary config when APC returns invalid JSON', async()=> {
+    r.getFwapcExecPath = () => '/bin/printf';
+    await expectAPCConversionFailure();
+  });
 
-    // Redirect cleanup only for the exact production temp path used by this test.
-    // All unrelated unlink calls retain their normal behavior.
-    fsp.unlink = async (file) => {
-      if (file === writtenPath) {
-        return originalUnlink(tempFile);
-      }
-      return originalUnlink(file);
-    };
+  async function expectAPCConversionFailure() {
+    const util = require('../../util/util.js');
+    const originalUUID = util.generateUUID;
+    const testUUID = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const tempFile = `/dev/shm/fr_orig_config_${testUUID}.json`;
+
+    util.generateUUID = () => testUUID;
 
     try {
-      let conversionError;
+      await fs.promises.writeFile(tempFile, JSON.stringify({
+        version: 1,
+        interface: {
+          phy: {
+            eth0: {
+              enabled: true,
+            },
+          },
+        },
+      }));
+
       try {
         await ncm.convertIntegratedAPConfig({
           version: 1,
@@ -230,37 +243,22 @@ describe('Test integrated AP config conversion', function(){
             },
           },
         });
+        throw new Error('APC conversion unexpectedly succeeded');
       } catch (err) {
-        conversionError = err;
+        expect(err).to.exist;
       }
 
-      // Prove writeFile succeeded before testing cleanup. This prevents a
-      // missing /dev/shm directory from making the test pass accidentally.
-      expect(fileCreated).to.be.true;
-      expect(writtenPath).to.be.a('string');
-
-      // The APC command must fail after the temporary file was created.
-      expect(conversionError).to.exist;
-
-      await fsp.access(tempFile).then(
+      await fs.promises.access(tempFile).then(
         () => {
-          throw new Error(
-            'temporary config still exists after APC conversion failed'
-          );
+          throw new Error('temporary config still exists after APC conversion failure');
         },
         (err) => {
           expect(err.code).to.equal('ENOENT');
         }
       );
     } finally {
-      platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
-      r.getFwapcExecPath = originalGetFwapcExecPath;
-      fsp.writeFile = originalWriteFile;
-      fsp.unlink = originalUnlink;
-      await fsp.rm(tempDir, {
-        recursive: true,
-        force: true
-      });
+      util.generateUUID = originalUUID;
+      await fs.promises.unlink(tempFile).catch(() => {});
     }
-  });
+  }
 });
