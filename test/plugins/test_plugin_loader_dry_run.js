@@ -11,73 +11,66 @@ class DryRunTestPlugin extends Plugin {
     super(name);
   }
 
-  init(config) {
-    super.init(config);
-  }
-
   configure(networkConfig) {
     super.configure(networkConfig);
+
+    if (networkConfig.invalid)
+      throw new Error('invalid dry-run configuration');
   }
 }
 
 describe('Test plugin loader dry-run', function() {
   this.timeout(30000);
 
-  let originalPluginConfs;
-  let originalPluginInstance;
-  let pluginCategoryMap;
+  let restorePluginState;
 
   beforeEach(() => {
-    originalPluginConfs = pluginLoader.__testPluginConfs;
-    originalPluginInstance = pluginLoader.getPluginInstance('dry_run_test', 'existing');
-
-    pluginCategoryMap = pluginLoader.getPluginInstances('dry_run_test');
-
-    if (!pluginCategoryMap) {
-      pluginCategoryMap = {};
-    }
-
-    pluginLoader.__testPluginConfs = [{
-      category: 'dry_run_test',
-      config_path: 'dry_run_test',
-      init_seq: 0,
-      allow_concurrent: false,
-      c: DryRunTestPlugin,
-      config: {}
-    }];
-  });
-
-  afterEach(() => {
-    pluginLoader.__testPluginConfs = originalPluginConfs;
-  });
-
-  it('should not mutate live plugin state during dry-run', async () => {
     const existing = new DryRunTestPlugin('existing');
     existing.configure({ old: true });
     existing._nextConfig = { old: true };
     existing._reapplyNeeded = false;
 
-    /*
-     * The production plugin loader does not expose a setter for its
-     * internal registry. This assertion is intentionally based on the
-     * public registry returned by getPluginInstances().
-     */
-    const liveInstances = pluginLoader.getPluginInstances('dry_run_test') || {};
-    liveInstances.existing = existing;
+    restorePluginState = pluginLoader._setPluginStateForTest(
+      [{
+        category: 'dry_run_test',
+        config_path: 'dry_run_test',
+        init_seq: 0,
+        allow_concurrent: false,
+        c: DryRunTestPlugin,
+        config: {}
+      }],
+      {
+        dry_run_test: {
+          existing
+        }
+      }
+    );
+  });
 
-    const beforeConfig = existing.networkConfig;
-    const beforeNextConfig = existing._nextConfig;
+  afterEach(() => {
+    restorePluginState();
+  });
+
+  it('should validate config without mutating live plugin state', async () => {
+    const existing = pluginLoader.getPluginInstance('dry_run_test', 'existing');
+    const beforeConfig = JSON.parse(JSON.stringify(existing.networkConfig));
+    const beforeNextConfig = JSON.parse(JSON.stringify(existing._nextConfig));
     const beforeReapplyNeeded = existing._reapplyNeeded;
 
-    await pluginLoader.reapply({
+    const errors = await pluginLoader.reapply({
       dry_run_test: {
-        existing: { new: true },
-        added: { value: true }
+        existing: {
+          invalid: true
+        },
+        added: {
+          value: true
+        }
       }
     }, true);
 
-    const afterInstances =
-      pluginLoader.getPluginInstances('dry_run_test') || {};
+    expect(errors).to.deep.equal(['invalid dry-run configuration']);
+
+    const afterInstances = pluginLoader.getPluginInstances('dry_run_test');
 
     expect(afterInstances.existing).to.equal(existing);
     expect(afterInstances.added).to.be.undefined;
@@ -85,5 +78,21 @@ describe('Test plugin loader dry-run', function() {
     expect(existing.networkConfig).to.deep.equal(beforeConfig);
     expect(existing._nextConfig).to.deep.equal(beforeNextConfig);
     expect(existing._reapplyNeeded).to.equal(beforeReapplyNeeded);
+  });
+
+  it('should validate a new plugin without adding it to the live registry', async () => {
+    const errors = await pluginLoader.reapply({
+      dry_run_test: {
+        added: {
+          value: true
+        }
+      }
+    }, true);
+
+    expect(errors).to.be.empty;
+
+    const afterInstances = pluginLoader.getPluginInstances('dry_run_test');
+
+    expect(afterInstances.added).to.be.undefined;
   });
 });
