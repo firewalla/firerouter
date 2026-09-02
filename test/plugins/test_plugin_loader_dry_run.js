@@ -29,13 +29,24 @@ describe('Test plugin loader dry-run', function() {
   this.timeout(30000);
 
   let originalPrepareWLANRegDomainChange;
+  let interfaceEth0State;
 
   beforeEach(() => {
     originalPrepareWLANRegDomainChange = platform.prepareWLANRegDomainChange;
+    interfaceEth0State = null;
   });
 
   afterEach(() => {
     platform.prepareWLANRegDomainChange = originalPrepareWLANRegDomainChange;
+
+    if (interfaceEth0State) {
+      if (interfaceEth0State.hadOwnEth0) {
+        interfaceEth0State.registry.eth0 = interfaceEth0State.eth0;
+      } else {
+        delete interfaceEth0State.registry.eth0;
+      }
+      interfaceEth0State = null;
+    }
   });
 
   it('should not prepare WLAN regulatory domain during dry-run', async () => {
@@ -92,6 +103,11 @@ describe('Test plugin loader dry-run', function() {
       marker: 'live'
     };
 
+    interfaceEth0State = {
+      registry: liveInterfacePlugins,
+      hadOwnEth0: Object.prototype.hasOwnProperty.call(liveInterfacePlugins, 'eth0'),
+      eth0: liveInterfacePlugins.eth0
+    };
     liveInterfacePlugins.eth0 = livePlugin;
 
     const originalRegistry = pluginLoader.getPluginInstances('interface');
@@ -223,6 +239,11 @@ describe('Test plugin loader dry-run', function() {
       marker: 'live'
     };
 
+    interfaceEth0State = {
+      registry: interfacePlugins,
+      hadOwnEth0: Object.prototype.hasOwnProperty.call(interfacePlugins, 'eth0'),
+      eth0: interfacePlugins.eth0
+    };
     interfacePlugins.eth0 = livePlugin;
 
     const originalRegistry = pluginLoader.getPluginInstances('interface');
@@ -272,6 +293,11 @@ describe('Test plugin loader dry-run', function() {
       marker: 'live'
     };
 
+    interfaceEth0State = {
+      registry: originalRegistry,
+      hadOwnEth0: Object.prototype.hasOwnProperty.call(originalRegistry, 'eth0'),
+      eth0: originalRegistry.eth0
+    };
     originalRegistry.eth0 = livePlugin;
 
     const originalLivePlugin = pluginLoader.getPluginInstance('interface', 'eth0');
