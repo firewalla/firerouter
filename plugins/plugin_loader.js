@@ -314,7 +314,7 @@ async function reapply(config, dryRun = false) {
           // Newly created instance. Use a copy during dry-run because some plugin
           // configure() implementations add generated metadata to their input.
           const nextConfig = dryRun ? _.cloneDeep(instance._nextConfig) : instance._nextConfig;
-          instance.configure(nextConfig);
+          await instance.configure(nextConfig);
         }
 
         if (instance.isReapplyNeeded()) {
@@ -346,7 +346,7 @@ async function reapply(config, dryRun = false) {
         if (config) {
           // Do not change the caller's candidate config during dry-run.
           const nextConfig = dryRun ? _.cloneDeep(instance._nextConfig) : instance._nextConfig;
-          instance.configure(nextConfig);
+          await instance.configure(nextConfig);
         }
       };
 
