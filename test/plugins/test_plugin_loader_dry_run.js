@@ -157,15 +157,9 @@ describe('Test plugin loader dry-run', function() {
     };
 
     try {
-      let thrownError;
+      const errors = await pluginLoader.reapply(candidateConfig, true);
 
-      try {
-        await pluginLoader.reapply(candidateConfig, true);
-      } catch (err) {
-        thrownError = err;
-      }
-
-      expect(thrownError).to.equal(expectedError);
+      expect(errors).to.deep.equal([expectedError.message]);
     } finally {
       Plugin.prototype.propagateConfigChanged = originalPropagateConfigChanged;
     }
