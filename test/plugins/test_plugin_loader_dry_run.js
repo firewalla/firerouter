@@ -55,6 +55,19 @@ describe('Test plugin loader dry-run', function() {
     expect(prepareCalls).to.equal(0);
   });
 
+  it('should not touch the live registry for a config-less dry-run', async () => {
+    await pluginLoader.initPlugins();
+
+    const originalRegistry = pluginLoader.getPluginInstances('interface');
+    const originalLastAppliedTimestamp = pluginLoader.getLastAppliedTimestamp();
+
+    const errors = await pluginLoader.reapply(null, true);
+
+    expect(errors).to.deep.equal([]);
+    expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
+    expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
+  });
+
   it('should not replace or mutate the live plugin registry during dry-run', async () => {
     platform.prepareWLANRegDomainChange = async function() {
       return false;
