@@ -265,57 +265,48 @@ describe('Test network config validation', function(){
 
 describe('Test integrated AP config conversion', function(){
   this.timeout(30000);
-
+  
   it('should remove temporary config when APC conversion fails', async()=> {
-    const pl = require('../../platform/PlatformLoader.js');
-    const platform = pl.getPlatform();
-    const r = require('../../util/firerouter.js');
+  const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
+  const originalGetFwapcExecPath = r.getFwapcExecPath;
+  const originalWriteFile = fs.promises.writeFile;
 
-    expect(platform).to.not.be.null;
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'firerouter-ncm-'));
+  const tempFile = path.join(tempDir, 'config.json');
+  let fileCreated = false;
+  let writtenPath;
 
-    const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
-    const originalGetFwapcExecPath = r.getFwapcExecPath;
-    const originalWriteFile = fs.promises.writeFile;
-    const originalUnlink = fs.promises.unlink;
+  platform.isWLANManagedByAPC = () => true;
+  r.getFwapcExecPath = () => '/bin/false';
 
-    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'firerouter-ncm-'));
-    const tempFile = path.join(tempDir, 'config.json');
-    let fileCreated = false;
+  fs.promises.writeFile = async (_file, data) => {
+    writtenPath = _file;
+    await originalWriteFile(tempFile, data);
+    fileCreated = true;
+  };
 
-    platform.isWLANManagedByAPC = () => true;
-    r.getFwapcExecPath = () => '/bin/false';
-
-    fs.promises.writeFile = async (_file, data) => {
-      await originalWriteFile(tempFile, data);
-      fileCreated = true;
-    };
-
-    fs.promises.unlink = async (_file) => {
-      return originalUnlink(tempFile);
-    };
-
+  try {
+    let error;
     try {
-      let error;
-      try {
-        await ncm.convertIntegratedAPConfig({ test: true });
-      } catch (err) {
-        error = err;
-      }
-
-      expect(fileCreated).to.be.true;
-      expect(error).to.be.an('error');
-
-      await fs.promises.access(tempFile).then(
-        () => { throw new Error('temporary config still exists'); },
-        (err) => expect(err.code).to.equal('ENOENT')
-      );
-    } finally {
-      platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
-      r.getFwapcExecPath = originalGetFwapcExecPath;
-      fs.promises.writeFile = originalWriteFile;
-      fs.promises.unlink = originalUnlink;
-
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
+      await ncm.convertIntegratedAPConfig({ test: true });
+    } catch (err) {
+      error = err;
     }
-  });
+
+    expect(fileCreated).to.be.true;
+    expect(writtenPath).to.be.a('string');
+    expect(error).to.be.an('error');
+
+    await fs.promises.access(tempFile).then(
+      () => { throw new Error('temporary config still exists'); },
+      (err) => expect(err.code).to.equal('ENOENT')
+    );
+  } finally {
+    platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
+    r.getFwapcExecPath = originalGetFwapcExecPath;
+    fs.promises.writeFile = originalWriteFile;
+
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  }
+});
 });
