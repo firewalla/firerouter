@@ -208,4 +208,39 @@ describe('Test network config validation', function(){
       expect(errors).to.not.be.empty;
     });
   });
+
+  describe('Test network config manager dry-run', function() {
+  it('should not rollback with a live setup after a failed dry-run', async function() {
+    const ns = require('../../core/network_setup.js');
+
+    const originalGetActiveConfig = ncm.getActiveConfig;
+    const originalGetDefaultConfig = ncm.getDefaultConfig;
+    const originalConvertIntegratedAPConfig = ncm.convertIntegratedAPConfig;
+    const originalSetup = ns.setup;
+
+    const setupCalls = [];
+
+    try {
+      ncm.getActiveConfig = async () => ({ active: true });
+      ncm.getDefaultConfig = async () => ({ default: true });
+      ncm.convertIntegratedAPConfig = async (config) => config;
+
+      ns.setup = async (config, dryRun = false) => {
+        setupCalls.push({ config, dryRun });
+        return ['configuration error'];
+      };
+
+      const errors = await ncm.tryApplyConfig({ candidate: true }, true);
+
+      expect(errors).to.deep.equal(['configuration error']);
+      expect(setupCalls).to.have.length(1);
+      expect(setupCalls[0].dryRun).to.equal(true);
+    } finally {
+      ncm.getActiveConfig = originalGetActiveConfig;
+      ncm.getDefaultConfig = originalGetDefaultConfig;
+      ncm.convertIntegratedAPConfig = originalConvertIntegratedAPConfig;
+      ns.setup = originalSetup;
+    }
+  });
+});
 });
