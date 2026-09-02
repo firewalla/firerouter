@@ -784,10 +784,11 @@ class NetworkConfigManager {
       });
       await ns.setup(convertedCurrentConfig).catch((err) => {
       log.error("Failed to rollback network config", err);
-    });
+      });
+    }
   }
+    return errors;
 }
-return errors;
 
   async convertIntegratedAPConfig(config) {
     if (!platform.isWLANManagedByAPC()) {
