@@ -2091,7 +2091,15 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, ra_router_lifetime: dhcp6Lease && Number.isInteger(dhcp6Lease.ra_router_lifetime) ? dhcp6Lease.ra_router_lifetime : null, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
+
+    const raRouterLifetime = dhcp6Lease
+      && dhcp6Lease.gw6
+      && dhcp6Lease.gw6 === gateway6
+      && Number.isInteger(dhcp6Lease.ra_router_lifetime)
+      ? dhcp6Lease.ra_router_lifetime
+      : null;
+
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, ra_router_lifetime: raRouterLifetime, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
   onEvent(e) {
