@@ -46,7 +46,6 @@ describe('Test dry-run network setup', function() {
         bootingFinishCalls += 1;
       };
 
-      const originalReapply = require('../../plugins/plugin_loader.js').reapply;
       const pluginLoader = require('../../plugins/plugin_loader.js');
 
       pluginLoader.reapply = async function(config, dryRun) {
