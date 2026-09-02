@@ -104,8 +104,6 @@ describe('Test plugin loader dry-run', function() {
 
     expect(candidateConfig).to.deep.equal(originalCandidateConfig);
     expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
-    expect(candidateConfig).to.deep.equal(originalCandidateConfig);
-    expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
     expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
     expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
     expect(originalLivePlugin.networkConfig).to.deep.equal(originalLiveConfig);
