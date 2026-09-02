@@ -252,18 +252,6 @@ async function reapply(config, dryRun = false) {
     if (config) {
       // remove plugins in descending order by init sequence
       const remove = async (instance, pluginConf) => {
-        if (!dryRun) {
-          log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
-          await instance.flush();
-          if (pluginConf.category === "apc") {
-            CHANGE_FLAGS |= FLAG_APC_CHANGE;
-          } else {
-            CHANGE_FLAGS |= FLAG_CHANGE;
-            if (pluginConf.category === "interface")
-              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
-          }
-
-        }
         instance.propagateConfigChanged(Plugin.CHANGE_FULL);
         instance.unsubscribeAllChanges();
         pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
@@ -323,12 +311,6 @@ async function reapply(config, dryRun = false) {
               await remove(instance, pluginConf);
             }
           }
-          if (concurrent && !_.isEmpty(promises)) {
-            if (!dryRun)
-              log.info(`Removing ${removedInstances.length} instances of ${pluginConf.category} in concurrent mode`);
-            await Promise.all(promises);
-          }
-        }
         // merge with new pluginCategoryMap
         newPluginCategoryMap[pluginConf.category] = Object.assign({}, newPluginCategoryMap[pluginConf.category], newInstances);
       }
@@ -340,25 +322,6 @@ async function reapply(config, dryRun = false) {
       if (!instance.networkConfig) // newly created instance
         instance.configure(instance._nextConfig);
       if (instance.isReapplyNeeded()) {
-        if (!dryRun) {
-          if (instance.isFlushNeeded(instance._nextConfig)) {
-            if (instance.isFullFlushNeeded(instance._nextConfig)) {
-              log.info("Flushing old config", pluginConf.category, instance.name);
-              await instance.flush();
-            } else {
-              log.info("Fast flushing old config", pluginConf.category, instance.name);
-              await instance.flushFast();
-            }
-          } else
-            log.info("No need to flush old config", pluginConf.category, instance.name);
-          if (pluginConf.category === "apc") {
-            CHANGE_FLAGS |= FLAG_APC_CHANGE;
-          } else {
-            CHANGE_FLAGS |= FLAG_CHANGE;
-            if (pluginConf.category === "interface")
-              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
-          }
-        }
         instance.unsubscribeAllChanges();
       }
       if (config) {
