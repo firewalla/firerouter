@@ -14,11 +14,7 @@
  */
 'use strict'
 const fs = require('fs');
-const os = require('os');
-const fsp = fs.promises;
-const fs = require('fs');
 const path = require('path');
-
 
 // resolve the plugin registry from this checkout so the suite also runs off-device
 process.env.FIREROUTER_HOME = process.env.FIREROUTER_HOME || path.resolve(__dirname, '../..');
