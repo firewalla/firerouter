@@ -12,7 +12,9 @@
  *    You should have received a copy of the GNU Affero General Public License
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 'use strict';
+
 let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
@@ -28,18 +30,21 @@ const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
+
 const fsp = require('fs').promises;
 const util = require('../util/util.js');
 const pluginConfig = require('../util/config.js').getConfig();
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
+
 const WPA_ALLOWED_KEYS = new Set([
   'ssid', 'psk', 'key_mgmt', 'eap', 'identity', 'password',
   'phase1', 'phase2', 'ca_cert', 'client_cert', 'private_key',
   'bssid', 'priority', 'scan_ssid', 'proto', 'pairwise', 'group',
   'anonymous_identity', 'domain_suffix_match', 'altsubject_match',
 ]);
+
 // linux caps interface names at IFNAMSIZ-1 and forbids '/' and whitespace, this is that set
 // minus every shell metacharacter
 const INTF_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,15}$/;
@@ -48,6 +53,7 @@ const INTF_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,15}$/;
 const PLUGIN_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,64}$/;
 
 const Promise = require('bluebird');
+
 class NetworkConfigManager {
   constructor() {
     if(instance === null) {
@@ -67,6 +73,7 @@ class NetworkConfigManager {
     const configs = await ns.getWANs();
     return configs;
   }
+
   async getLANs() {
     const configs = await ns.getLANs();
     return configs;
@@ -85,6 +92,7 @@ class NetworkConfigManager {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const plugin = pluginLoader.getPluginInstance('interface', intf);
     // ethX interfaces are always presented in config for now
+
     if(!plugin) {
       return {carrier : 0};
     }
@@ -96,6 +104,7 @@ class NetworkConfigManager {
   isSwitchingWifi() {
     return lock.isBusy(LOCK_SWITCH_WIFI)
   }
+
   async switchWifi(intf, ssid, params = {}, testOnly = false) {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
@@ -220,7 +229,7 @@ class NetworkConfigManager {
               else // deselect ssid
                 await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} disable_network ${selectedNetwork.id}`).catch((err) => { });
               for (const network of networks) {
-                // select_network will disable all other ssid, re-enable other ssid
+                // select_network will disable all other ssids, re-enable other ssid
                 if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
                   await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
               }
@@ -242,6 +251,7 @@ class NetworkConfigManager {
       });
     });
   }
+
   async checkWanConnectivity(iface, options = {pingTestCount: 1}) {
     const pluginLoader = require('../plugins/plugin_loader.js');
     const intfPlugin = pluginLoader.getPluginInstance("interface", iface);
@@ -251,6 +261,7 @@ class NetworkConfigManager {
       throw new Error(`Interface ${iface} is not a WAN interface`);
 
     let result = {};
+
     // always enable ping/dns test in manual test
     options.pingTestEnabled = true;
     options.dnsTestEnabled = true;
@@ -258,9 +269,11 @@ class NetworkConfigManager {
     if (result.dns === null) {
       result.dns = false;
     }
+
     // if carrier not ready, just skip http testings
     if(result.carrier) {
       const sites = options.httpSites || ["http://captive.apple.com", "http://cp.cloudflare.com", "http://clients3.google.com/generate_204"];
+
       // use firewalla-hosted captive check page to check status code as well as content
       let httpResult = await intfPlugin.checkHttpStatus("http://captive.firewalla.com", 200, "<html><body>FIREWALLA SUCCESS</body></html>\n");
       if (!httpResult) {
@@ -279,6 +292,7 @@ class NetworkConfigManager {
         result.http = httpResult;
       }
     }
+
     result.ts = Math.floor(new Date() / 1000);
 
     this.wanTestResult[iface] = result.ts;
@@ -291,6 +305,7 @@ class NetworkConfigManager {
 
     return result;
   }
+
   getWanTestResult() {
     return this.wanTestResult;
   }
@@ -309,6 +324,7 @@ class NetworkConfigManager {
     }
 
     const results = {};
+
     if(options.live) {
       const promises = [];
 
@@ -327,6 +343,7 @@ class NetworkConfigManager {
         results[name] = intfPlugin.getWanStatus();
       }
     }
+
     overallStatus.wans = results;
     return overallStatus;
   }
@@ -343,6 +360,7 @@ class NetworkConfigManager {
     })
 
     const rl = readline.createInterface({input: iwScan.stdout});
+
     const results = []
     let wlan, ie
 
@@ -356,12 +374,13 @@ class NetworkConfigManager {
         }
 
         const ln = line.trimStart() // don't trim end in case SSID has trailing spaces
+
         if (ln.startsWith('signal:')) {
-          // https://git.kernel.org/pub/scm/linux/kernel/git/jberg/iw.git/tree/nl80211.h
+          // https://git.kernel.org/pub/scm/linux/kernel/git/jberg/linux.git/tree/include/uapi/linux/nl80211.h
           // * @NL80211_BSS_SIGNAL_MBM: signal strength of probe response/beacon
           //  in mBm (100 * dBm) (s32)
           // * @NL80211_BSS_SIGNAL_UNSPEC: signal strength of the probe response/beacon
-          // in unspecified units, scaled to 0..100 (u8)
+          //  in unspecified units, scaled to 0..100 (u8)
           //
           // if unspecified unit, it's be positive number, while it's negative in dBm
           wlan.signal = Number(ln.substring(8).split(' ')[0])
@@ -401,6 +420,7 @@ class NetworkConfigManager {
         }
         else if (ln.startsWith('* Authentication suites:')) {
           const splited = ln.substring(25).trim().split(' ')
+
           ie.suites = []
           let i = 0
           while (i < splited.length) {
@@ -419,6 +439,7 @@ class NetworkConfigManager {
     }
 
     if (wlan) results.push(wlan)
+
     const selfWlanMacs = []
     const config = await this.getActiveConfig()
     const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
@@ -430,6 +451,7 @@ class NetworkConfigManager {
 
     return _.sortBy(results.filter(r => !selfWlanMacs.includes(r.mac)), 'channel')
   }
+
   // wait for scan done before parsing result if waitForScan is set to true
   async getWlansViaWpaSupplicant(waitForScan = false) {
     if(!waitForScan) {
@@ -437,310 +459,279 @@ class NetworkConfigManager {
       waitForScan = !!platform.getExclusiveWLANSibling(platform.getAPScanInterface())
     }
     log.info(`getWlansViaWpaSupplicant ${waitForScan ? '' : 'without waiting result'}`)
-    if(waitForScan) {
-      await platform.waitForAPScan();
+    const pluginLoader = require('../plugins/plugin_loader.js')
+    const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin');
+    const apScanInterface = platform.getAPScanInterface();
+    const intfPlugin = pluginLoader.getPluginInstance('interface', apScanInterface);
+    if (!intfPlugin) {
+      log.warn(`AP scan interface ${apScanInterface} is not found in network config`);
+      return [];
     }
-    const iwScan = spawn('sudo', ['wpa_cli', '-i', platform.getAPScanInterface(), 'scan'])
-    iwScan.on('error', err => {
-      log.error('Error running wpa_cli', err.message)
-    })
-    iwScan.on('exit', code => {
-      if (code)
-        log.warn('wpa_cli scan exited with code', code)
-    })
+    if (await intfPlugin.isInterfacePresent() === false) {
+      log.warn(`WLAN interface ${apScanInterface} is not present yet`);
+      return [];
+    }
 
-    const rl = readline.createInterface({input: iwScan.stdout});
-    const results = []
-    let wlan, ie
+    const apScanAcquired = await WLANInterfacePlugin.prepareAPScanInterface(apScanInterface);
+    try {
+      const wpaCliPath = await platform.getWpaCliBinPath();
+      const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${apScanInterface}`
 
-    for await (const line of rl) {
-      try {
-        if (line.startsWith('bssid / frequency / signal level / flags / ssid')) {
-          continue
-        }
-        if (line.startsWith('BSS ')) {
-          wlan && results.push(wlan)
+      // manually create a promise to return right after result parsing is finished, without waiting for process exit
+      const deferred = {}
+      deferred.promise = new Promise((resolve, reject) => {
+        deferred.resolve = resolve
+        deferred.reject = reject
+      })
 
-          const mac = line.substring(4, 21).toUpperCase()
-          wlan = { mac }
+      await platform.setDFSScanState(true);
+      const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
+      wpaCli.on('error', err => {
+        log.error('Error running wpa_cli', err.message)
+      })
+      wpaCli.on('exit', code => {
+        // if the code is 255, wpa_supplicant is probably not initialized
+        switch(code) {
+          case 124: // timeout
+          case 255: // wpa_supplicant not initialized
+            deferred.reject(new Error(`wpa_cli exited with ${code}`))
+            break;
+          default:
+            log.info('wpa_cli exited with code', code)
         }
-        const ln = line.trimStart()
-        if (ln.startsWith('freq:')) {
-          wlan.freq = Number(ln.substring(6))
-        }
-        else if (ln.startsWith('SSID:')) {
-          const escaped = ln.substring(6)
-          wlan.ssid = util.parseEscapedString(escaped)
-          const testSet = new Set(wlan.ssid)
-          if (testSet.size == 1 && testSet.values().next().value == '\x00') {
-            wlan.ssid = ""
+
+        deferred.resolve()
+      })
+      const results = []
+
+      let state = 'waitForResult'
+      const scanResultCommand = platform.getWpaCliScanResultCommand();
+
+      // not using readline here as the final prompt after result won't be followed by line feed
+      // readline will wait for that and cause a 5s delay
+      wpaCli.stdout.on('data', data => {
+        if (!data) return
+        // Keep trailing spaces: SSID is the last field in scan_result output,
+        // so trim() would corrupt SSIDs like "MyWiFi ".
+        const lines = data.toString().split('\n').map(line => line.replace(/\r$/, '').trimStart())
+        for (const line of lines) try {
+          log.debug(state, line)
+
+          // as stdin and stdout are separate streams, the order between input output streams cannot be guaranteed
+          // so the state machine here is not strict and only distinguishes the result parsing state
+
+          // wait for scan finish
+          // ignore FAIL-BUSY event, the ongoing scan will emit result event anyway
+          if (waitForScan && line.includes('CTRL-EVENT-SCAN-FAILED')) {
+            wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+              log.verbose('quit written')
+            })
+            // reject immediately instead of waiting for timeout
+            deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
+            continue
           }
-        }
-        else if (ln.startsWith('RSN:')) {
-          const index = ln.indexOf('Version:')
-          ie = { ver: Number(ln.substring(index + 8)) }
-          wlan.rsn = ie
-        }
-        else if (ln.startsWith('WPA:')) {
-          const index = ln.indexOf('Version:')
-          ie = { ver: Number(ln.substring(index + 8)) }
-          wlan.wpa = ie
-        }
-        else if (ln.startsWith('* Group cipher:')) {
-          ie.group = ln.substring(16)
-        }
-        else if (ln.startsWith('* Pairwise ciphers:')) {
-          ie.pairwises = ln.substring(20).trim().split(' ')
-        }
-        else if (ln.startsWith('* Authentication suites:')) {
-          const splited = ln.substring(25).trim().split(' ')
-          ie.suites = []
-          let i = 0
-          while (i < splited.length) {
-            if (splited[i].includes('IEEE')) {
-              ie.suites.push(splited[i]  + " " + splited[i+1])
-              i += 2
-            } else {
-              ie.suites.push(splited[i])
-              i ++
-            }
+          if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
+            waitForScan = false
+            log.info('scan done, getting result')
+            wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
+              log.verbose(scanResultCommand + ' written')
+            })
+            continue
           }
+
+          if (line.match(/^(> )?bssid \/ frequency/)) {
+            log.verbose('result header seen, state => parsingResult')
+            state = 'parsingResult'
+            continue
+          }
+
+          switch (state) {
+            case 'parsingResult':
+              if (line.startsWith('>')) {
+                log.verbose('prompt seen, quit')
+                state = 'done'
+                deferred.resolve()
+
+                wpaCli.stdin.writable && wpaCli.stdin.write('quit\n', () => {
+                  log.verbose('quit written')
+                })
+                break
+              }
+              if (line.startsWith('<')) {
+                log.verbose('ignoring event', line)
+                break
+              }
+
+              const split = line.split('\t');
+              if (split.length < 4) { 
+                log.verbose('ignoring line', line)
+                break
+              }
+
+              const mac = split.shift().toUpperCase()
+              const freq = parseInt(split.shift())
+              const signal = parseInt(split.shift())
+              const flags = split.shift().split(/[\[\]]/).filter(Boolean)
+
+              const wlan = { mac, freq, signal, flags }
+
+              wlan.ssid = util.parseEscapedString(split.shift())
+              const testSet = new Set(wlan.ssid)
+              if (testSet.size == 1 && testSet.values().next().value == '\x00') {
+                wlan.ssid = ""
+              }
+
+              results.push(wlan)
+
+              break
+            case 'done':
+              // do nothing
+          }
+        } catch(err) {
+          log.error(`Error parsing line \"${line}\"\n`, err)
         }
-      } catch(err) {
-        log.error('Error parsing line', line, '\n', err)
+      })
+
+      // start scan right away
+      wpaCli.stdin.write('scan\n', () => {
+        log.verbose('scan wirtten')
+        // only write after previous one finishes
+        if (!waitForScan) {
+          log.info('not waitForScan, getting result')
+          wpaCli.stdin.write(scanResultCommand + '\n', () => {
+            log.info(scanResultCommand + ' written')
+          })
+        }
+      })
+
+      const selfWlanMacs = []
+      const config = await this.getActiveConfig()
+      const hostapdIntf = _.isObject(config.hostapd) ? Object.keys(config.hostapd) : []
+      for (const intf of hostapdIntf) {
+        const buffer = await fsp.readFile(r.getInterfaceSysFSDirectory(intf) + '/address')
+        selfWlanMacs.push(buffer.toString().trim().toUpperCase())
+      }
+
+      return await new Promise((resolve, reject) => {
+        deferred.promise.then(() => {
+          log.verbose('returning')
+          const final = results.filter(r => !selfWlanMacs.includes(r.mac))
+          log.info(`Found ${final.length} SSIDs`)
+          resolve(final)
+        }).catch((err) => {
+          reject(err)
+        });
+      });
+    } finally {
+      await platform.setDFSScanState(false);
+      if (apScanAcquired) {
+        WLANInterfacePlugin.releaseAPScanInterface();
       }
     }
-
-    if (wlan) results.push(wlan)
-    return results
   }
 
-  async setConfig(config, inTransaction = false) {
-    const originConfig = await this.getActiveConfig(inTransaction);
-    if (!config)
-      return [new Error("Invalid config")];
+  async getAvailableChannelsHostapd() {
+    const HostapdPlugin = require('../plugins/hostapd/hostapd_plugin')
 
-    const errors = await this.validateConfig(config);
-    if (errors.length) {
-      return errors;
+    const channels = await HostapdPlugin.getAvailableChannels()
+    const scores = HostapdPlugin.calculateChannelScores(await this.getWlansViaWpaSupplicant(true), false)
+
+    const result = {}
+    for (const channel of channels) {
+      if (!scores[channel])
+        result[channel] = { score: 0 }
+      else
+        result[channel] = { score: _.round(scores[channel], 10) }
     }
 
-    const currentConfig = await this.getActiveConfig(inTransaction);
-    const currentNcid = currentConfig && currentConfig.ncid;
-    if (config.ncid && config.ncid !== currentNcid) {
-      return [new Error(`network config ncid ${config.ncid} is not the latest version ${currentNcid}`)];
-    }
-
-    const convertedConfig = await this.convertIntegratedAPConfig(config);
-    const result = await this.tryApplyConfig(config, false);
-    if (result && result.length) {
-      return result;
-    }
-
-    await this.saveConfig(config, inTransaction);
-    return [];
+    return result
   }
 
-  async setConfigInTransaction(config) {
-    const errors = await this.validateConfig(config);
-    if (errors.length) {
-      return errors;
-    }
-
-    const result = await this.tryApplyConfig(config, false);
-    if (result && result.length) {
-      return result;
-    }
-
-    await this.saveConfig(config, true);
-    return [];
-  }
-
-  async beginTransaction(config) {
-    const errors = await this.validateConfig(config);
-    if (errors.length) {
-      return errors;
-    }
-    await this.saveConfig(config, true);
-    return [];
-  }
-
-  async commitTransaction() {
-    const config = await this.getActiveConfig(true);
-    if (!config)
-      return [new Error("No transaction in progress")];
-
-    const errors = await this.validateConfig(config);
-    if (errors.length) {
-      return errors;
-    }
-
-    const result = await this.tryApplyConfig(config, false);
-    if (result && result.length) {
-      return result;
-    }
-
-    await this.saveConfig(config, false);
-    return [];
-  }
-
-  async revertTransaction() {
-    await this.deleteTransactionConfig();
-    return [];
-  }
-
-  async getConfig(inTransaction = false) {
-    let config = null;
-    if (inTransaction) {
-      config = await this.getTransactionConfig();
+  async getActiveConfig(transaction = false) {
+    const configString = await rclient.getAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig");
+    if(configString) {
+      try {
+        const config = JSON.parse(configString);
+        return config;
+      } catch(err) {
+        return null;
+      }
     } else {
-      config = await this.getActiveConfig();
+      return null;
     }
-
-    return config;
-  }
-
-  async saveConfig(networkConfig, inTransaction = false) {
-    if (!networkConfig)
-      throw new Error("Invalid config");
-    if (!inTransaction && !networkConfig.ncid) {
-      networkConfig.ncid = util.generateUUID();
-    }
-
-    const key = inTransaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig";
-    await rclient.setAsync(key, JSON.stringify(networkConfig));
-    if (!inTransaction) {
-      await util.bgsaveRedis();
-    }
-  }
-
-  async getActiveConfig(inTransaction = false) {
-    const key = inTransaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig";
-    const config = await rclient.getAsync(key);
-    if (config) {
-      return JSON.parse(config);
-    }
-
-    return null;
   }
 
   async getDefaultConfig() {
-    const configFile = platform.getDefaultNetworkJsonFile();
-    const config = await fsp.readFile(configFile);
-    return JSON.parse(config);
-  }
-
-  async deleteTransactionConfig() {
-    await rclient.delAsync("sysdb:transaction:networkConfig");
-  }
-
-  async getTransactionConfig() {
-    const config = await rclient.getAsync("sysdb:transaction:networkConfig");
-    if (config) {
-      return JSON.parse(config);
-    }
-
-    return null;
+    const defaultConfigJson = platform.getDefaultNetworkJsonFile();
+    const config = require(defaultConfigJson);
+    return config;
   }
 
   async validateConfig(config) {
-    const errors = [];
-    if (!config || !_.isObject(config)) {
-      return [new Error("Invalid config")];
-    }
+    if (!config)
+      return ["config is not defined"];
+    if (!config.interface)
+      return ["interface is not defined"];
 
-    if (config.ncid) {
-      if (typeof config.ncid !== 'string') {
-        errors.push(new Error("Invalid network config ncid"));
-      }
-    }
+    const ifaceIp4PrefixMap = {};
+    const wanIntfs = [];
+    for (const ifaceType in config.interface) {
+      const ifaces = config.interface[ifaceType];
+      for (const name in ifaces) {
+        // interface names are interpolated into shell commands all over the plugins, reject
+        // anything that could not be a real kernel interface name in the first place
+        if (!INTF_NAME_REGEX.test(name))
+          return [`interface name is not valid ${name}`];
 
-    for (const section of Object.keys(config)) {
-      if (section === "ncid" || section === "plugins") {
-        continue;
-      }
-
-      if (!_.isObject(config[section])) {
-        errors.push(new Error(`Invalid config section ${section}`));
-        continue;
-      }
-
-      for (const name of Object.keys(config[section])) {
-        if (!INTF_NAME_REGEX.test(name) && !PLUGIN_NAME_REGEX.test(name)) {
-          errors.push(new Error(`Invalid config name ${name}`));
+        const iface = ifaces[name];
+        // vlan/bond/pppoe name their lower interface here and it is interpolated into ip commands
+        // before the plugin looks it up, so hold references to the same rules as the keys
+        const lowerIntfs = _.isArray(iface.intf) ? iface.intf : (_.isString(iface.intf) ? [iface.intf] : []);
+        for (const lowerIntf of lowerIntfs) {
+          if (!INTF_NAME_REGEX.test(lowerIntf))
+            return [`intf of ${name} is not valid ${lowerIntf}`];
         }
 
-        const iface = config[section][name];
-        if (!_.isObject(iface)) {
-          errors.push(new Error(`Invalid config for ${section}.${name}`));
-          continue;
-        }
+        const meta = iface.meta || {};
+        if (!meta.uuid)
+          meta.uuid = uuid.v4();
+        else if (!util.isValidUUID(meta.uuid))
+          return [`meta.uuid of ${name} is not valid ${meta.uuid}`];
+        iface.meta = meta;
 
-        if (section === "interface") {
-          if (iface.meta && iface.meta.type && !["wan", "lan"].includes(iface.meta.type)) {
-            errors.push(new Error(`Invalid interface type ${iface.meta.type} for ${name}`));
-          }
+        const wanType = meta.type;
+        if (wanType === "wan")
+          wanIntfs.push(name);
 
-          if (iface.meta && iface.meta.uuid && typeof iface.meta.uuid !== 'string') {
-            errors.push(new Error(`Invalid interface uuid for ${name}`));
-          }
+        if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
+          let ipv4s = [];
+          if (iface.ipv4 && _.isString(iface.ipv4))
+            ipv4s.push(iface.ipv4);
+          if (iface.ipv4s && _.isArray(iface.ipv4s))
+            Array.prototype.push.apply(ipv4s, iface.ipv4s);
+          ipv4s = ipv4s.filter((v, i, a) => a.indexOf(v) === i);
 
-          if (!iface.meta) {
-            iface.meta = {};
-          }
+          for (const ipv4 of ipv4s) {
+            const addr = new Address4(ipv4);
+            if (!addr.isValid())
+              return [`ipv4 of ${name} is not valid ${ipv4}`];
 
-          if (!iface.meta.uuid) {
-            iface.meta.uuid = uuid.v4();
+            // check ipv4 subnet conflict
+            for (const prefix in ifaceIp4PrefixMap) {
+              const i = ifaceIp4PrefixMap[prefix];
+              const addr2 = new Address4(prefix);
+              if ((addr.isInSubnet(addr2) || addr2.isInSubnet(addr)) && name !== i && !(wanType === "wan" && wanIntfs.includes(i)))
+                return [`ipv4 of ${name} conflicts with ipv4 of ${i}`];
+            }
+            ifaceIp4PrefixMap[ipv4] = name;
           }
         }
       }
     }
-
-    return errors;
+    return [];
   }
 
-  async getWanByName(name) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("interface", name);
-    if (!plugin)
-      return null;
-    return plugin;
-  }
-
-  async getLanByName(name) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("interface", name);
-    if (!plugin)
-      return null;
-    return plugin;
-  }
-
-  async getInterfaceState(name) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("interface", name);
-    if (!plugin)
-      return null;
-    return await plugin.state();
-  }
-
-  async getNetworkConfig() {
-    return await this.getActiveConfig();
-  }
-
-  async getNetworkConfigForTransaction() {
-    return await this.getTransactionConfig();
-  }
-
-  async withConfigReadLock(func) {
-    return lock.acquire(LOCK_CONFIG_RW, async () => {
-      log.info("Config RW Lock acquired");
-      return func();
-    }).finally(() => {
-      log.info("Config RW Lock released");
-    });
-  }
-
-  async withConfigWriteLock(func) {
+  async acquireConfigRWLock(func) {
     return lock.acquire(LOCK_CONFIG_RW, async () => {
       log.info("Config RW Lock acquired");
       return func();
@@ -767,7 +758,7 @@ class NetworkConfigManager {
     });
     const errors = await ns.setup(convertedConfig, dryRun);
     if (errors && errors.length != 0) {
-      log.error("Failed to apply network config", errors);
+      log.error("Failed to apply network config, rollback to previous setup", errors);
       if (!dryRun) {
         // convert current config to integrated AP config
         const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
@@ -799,670 +790,111 @@ class NetworkConfigManager {
 
   async validateNcidOrReqId(networkConfig, inTransaction = false, skipNcid = false) {
     const originConfig = await this.getActiveConfig(inTransaction);
-    if (!originConfig) {
-      return [new Error("No active network config")];
-    }
-
-    if (!skipNcid && networkConfig.ncid !== originConfig.ncid) {
-      return [new Error(`network config ncid ${networkConfig.ncid} is not the latest version ${originConfig.ncid}`)];
-    }
-
-    if (networkConfig.reqId && originConfig.reqId && networkConfig.reqId !== originConfig.reqId) {
-      return [new Error(`network config reqId ${networkConfig.reqId} is not the latest version ${originConfig.reqId}`)];
-    }
-
-    return [];
-  }
-
-  async getStatus() {
-    const result = {};
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    result.interfaces = {};
-    const interfaces = await this.getInterfaces();
-    for (const iface of interfaces) {
-      result.interfaces[iface.name] = iface;
-    }
-    result.wans = await this.getWANs();
-    result.lans = await this.getLANs();
-    result.apc = {
-      managed: platform.isWLANManagedByAPC(),
-      country: platform.getCountry()
-    };
-    return result;
-  }
-
-  async getInterfaceSimpleByName(name) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance('interface', name);
-    if (!plugin) {
-      return { carrier: 0 };
-    }
-    return { carrier: (await plugin.readyToConnect().catch(() => false)) ? 1 : 0 };
-  }
-
-  async getInterfacesSimple() {
-    const interfaces = await this.getInterfaces();
-    return interfaces.map(iface => ({
-      name: iface.name,
-      carrier: iface.carrier
-    }));
-  }
-
-  async getInterfaceConfig(name) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance('interface', name);
-    if (!plugin) {
-      return null;
-    }
-    return plugin.networkConfig;
-  }
-
-  async validateInterfaceName(name) {
-    if (!INTF_NAME_REGEX.test(name)) {
-      return false;
-    }
-    return true;
-  }
-
-  async validatePluginName(name) {
-    if (!PLUGIN_NAME_REGEX.test(name)) {
-      return false;
-    }
-    return true;
-  }
-
-  async getDHCPLeaseInfo(iface) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("dhcp", iface);
-    if (!plugin)
-      return null;
-    return plugin.getDHCPLeaseInfo();
-  }
-
-  async renewDHCPLease(iface) {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("interface", iface);
-    if (!plugin)
-      return null;
-    return plugin.renewDHCPLease();
-  }
-
-  async getDNSConfig() {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("dns", "global");
-    if (!plugin)
-      return null;
-    return plugin.networkConfig;
-  }
-
-  async getRoutingConfig() {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("routing", "global");
-    if (!plugin)
-      return null;
-    return plugin.networkConfig;
-  }
-
-  async getNATConfig() {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("nat", "global");
-    if (!plugin)
-      return null;
-    return plugin.networkConfig;
-  }
-
-  async getHostapdConfig() {
-    const pluginLoader = require('../plugins/plugin_loader.js');
-    const plugin = pluginLoader.getPluginInstance("hostapd", "global");
-    if (!plugin)
-      return null;
-    return plugin.networkConfig;
-  }
-
-  async getConfigStatus() {
-    const config = await this.getActiveConfig();
-    if (!config) {
-      return null;
-    }
-    return {
-      ncid: config.ncid,
-      reqId: config.reqId
-    };
-  }
-
-  async getConfigDiff(config) {
-    const currentConfig = await this.getActiveConfig();
-    if (!currentConfig) {
-      return null;
-    }
-
-    const diff = {};
-    for (const section of Object.keys(config || {})) {
-      if (section === "ncid" || section === "reqId") {
-        continue;
-      }
-
-      const currentSection = currentConfig[section] || {};
-      const newSection = config[section] || {};
-      diff[section] = {};
-
-      for (const name of Object.keys(newSection)) {
-        if (!_.isEqual(currentSection[name], newSection[name])) {
-          diff[section][name] = {
-            current: currentSection[name],
-            next: newSection[name]
-          };
-        }
-      }
-
-      for (const name of Object.keys(currentSection)) {
-        if (!Object.prototype.hasOwnProperty.call(newSection, name)) {
-          diff[section][name] = {
-            current: currentSection[name],
-            next: undefined
-          };
-        }
-      }
-    }
-
-    return diff;
-  }
-
-  async getConfigNcid() {
-    const config = await this.getActiveConfig();
-    return config && config.ncid;
-  }
-
-  async getConfigReqId() {
-    const config = await this.getActiveConfig();
-    return config && config.reqId;
-  }
-
-  async setReqId(config, reqId) {
-    if (!config || typeof config !== 'object') {
+    // reqId is generated by client, if reqId matches, skip ncid validation
+    // This is usually used if WAN is disconnected during the process of applying config change.
+    // The client may retry with the same config but ncid mismatches after the WAN is back
+    if (originConfig && originConfig.reqId && networkConfig.reqId && originConfig.reqId == networkConfig.reqId) {
       return;
     }
-    config.reqId = reqId;
-  }
-
-  async clearReqId(config) {
-    if (!config || typeof config !== 'object') {
-      return;
+    if (originConfig && originConfig.ncid && networkConfig.ncid && originConfig.ncid !== networkConfig.ncid) {
+      if (!skipNcid) return ["ncid not match"];
     }
-    delete config.reqId;
   }
 
-  async getActiveNetworkConfig() {
-    return await this.getActiveConfig();
-  }
-
-  async getTransactionNetworkConfig() {
-    return await this.getTransactionConfig();
-  }
-
-  async applyCurrentConfig() {
-    const config = await this.getActiveConfig();
-    if (!config) {
-      return [new Error("No active network config")];
+  async saveConfig(networkConfig, transaction = false) {
+    // do not generate ncid in transaction
+    if (!networkConfig.ncid && !transaction) {
+      networkConfig.ncid = util.generateUUID();
     }
-    return await this.tryApplyConfig(config, false);
+    const configString = JSON.stringify(networkConfig);
+    if (configString) {
+      await rclient.setAsync(transaction ? "sysdb:transaction:networkConfig" : "sysdb:networkConfig", configString);
+      this._scheduleRedisBackgroundSave();
+    }
   }
 
-  async getConfigSource(inTransaction = false) {
-    return inTransaction ? "transaction" : "active";
+  _scheduleRedisBackgroundSave() {
+    if (this.bgsaveTask)
+      clearTimeout(this.bgsaveTask);
+    this.bgsaveTask = setTimeout(() => {
+      rclient.bgsaveAsync().then(() => exec("sync")).catch((err) => {
+        log.error("Redis background save returns error", err.message);
+      });
+    }, 3000);
   }
 
-  async getNetworkConfigWithSource(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return {
-      source: await this.getConfigSource(inTransaction),
-      config
-    };
-  }
-
-  async saveTransactionConfig(config) {
-    return await this.saveConfig(config, true);
-  }
-
-  async clearTransactionConfig() {
-    return await this.deleteTransactionConfig();
-  }
-
-  async getCurrentConfig() {
-    return await this.getActiveConfig();
-  }
-
-  async getDefaultNetworkConfig() {
-    return await this.getDefaultConfig();
-  }
-
-  async resetToDefaultConfig() {
-    const config = await this.getDefaultConfig();
-    return await this.tryApplyConfig(config, false);
-  }
-
-  async hasTransactionConfig() {
-    const config = await this.getTransactionConfig();
-    return !!config;
-  }
-
-  async getNetworkConfigNcid(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return config && config.ncid;
-  }
-
-  async getNetworkConfigReqId(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return config && config.reqId;
-  }
-
-  async removeTransactionConfig() {
-    return await this.deleteTransactionConfig();
-  }
-
-  async getEffectiveConfig(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return config || await this.getDefaultConfig();
-  }
-
-  async getEffectiveConfigNcid(inTransaction = false) {
-    const config = await this.getEffectiveConfig(inTransaction);
-    return config && config.ncid;
-  }
-
-  async getEffectiveConfigReqId(inTransaction = false) {
-    const config = await this.getEffectiveConfig(inTransaction);
-    return config && config.reqId;
-  }
-
-  async getConfigExists(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return !!config;
-  }
-
-  async getConfigSourceValue(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return config ? (inTransaction ? "transaction" : "active") : "default";
-  }
-
-  async getWanNames() {
-    const wans = await this.getWANs();
-    return wans.map(wan => wan.name);
-  }
-
-  async getLanNames() {
-    const lans = await this.getLANs();
-    return lans.map(lan => lan.name);
-  }
-
-  async getInterfaceNames() {
-    const interfaces = await this.getInterfaces();
-    return interfaces.map(iface => iface.name);
-  }
-
-  async getInterfaceNamesByType(type) {
-    const interfaces = await this.getInterfaces();
-    return interfaces.filter(iface => _.get(iface, 'config.meta.type') === type).map(iface => iface.name);
-  }
-
-  async getWansAndLans() {
-    return {
-      wans: await this.getWANs(),
-      lans: await this.getLANs()
-    };
-  }
-
-  async getInterfaceSummary(name) {
-    const iface = await this.getInterface(name);
-    if (!iface) {
+  async renewDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    const info = await plugin.renewDHCPLease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
       return null;
+    });
+    return info;
+  }
+
+  async renewDHCP6Lease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
     }
-    return {
-      name: iface.name,
-      carrier: iface.carrier,
-      state: iface.state
-    };
-  }
-
-  async getAllInterfaceStates() {
-    const interfaces = await this.getInterfaces();
-    const states = {};
-    for (const iface of interfaces) {
-      states[iface.name] = iface.state;
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
     }
-    return states;
-  }
-
-  async validateRequestConfig(config, inTransaction = false) {
-    const errors = await this.validateConfig(config);
-    if (errors.length) {
-      return errors;
+    if (!_.isObject(_.get(plugin, "networkConfig.dhcp6"))) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
     }
-    return await this.validateNcidOrReqId(config, inTransaction);
-  }
-
-  async updateConfig(config, inTransaction = false) {
-    return await this.setConfig(config, inTransaction);
-  }
-
-  async applyConfig(config, dryRun = false) {
-    return await this.tryApplyConfigWithRWLock(config, dryRun);
-  }
-
-  async getPluginConfig() {
-    return pluginConfig;
-  }
-
-  async getPlatformCountry() {
-    return platform.getCountry();
-  }
-
-  async getFwapcExecPath() {
-    return r.getFwapcExecPath();
-  }
-
-  async getWlanManagedByAPC() {
-    return platform.isWLANManagedByAPC();
-  }
-
-  async getPlatformModel() {
-    return platform.getPlatformModel();
-  }
-
-  async getPlatformVersion() {
-    return platform.getPlatformVersion();
-  }
-
-  async getRuntimeFolder() {
-    return r.getRuntimeFolder();
-  }
-
-  async getFirerouterHome() {
-    return r.getFireRouterHome();
-  }
-
-  async getFirewallaHome() {
-    return r.getFirewallaHome();
-  }
-
-  async getNodeBinPath() {
-    return r.getNodeBinPath();
-  }
-
-  async getDnsmasqBinPath() {
-    return r.getDnsmasqBinPath();
-  }
-
-  async getWpaCliBinPath() {
-    return platform.getWpaCliBinPath();
-  }
-
-  async getDefaultNetworkJsonFile() {
-    return platform.getDefaultNetworkJsonFile();
-  }
-
-  async getConfigFile(configPath) {
-    const filePath = r.resolve(configPath);
-    return await fsp.readFile(filePath);
-  }
-
-  async writeConfigFile(configPath, content) {
-    const filePath = r.resolve(configPath);
-    await fsp.writeFile(filePath, content);
-  }
-
-  async deleteConfigFile(configPath) {
-    const filePath = r.resolve(configPath);
-    await fsp.unlink(configPath);
-  }
-
-  async fileExists(configPath) {
-    try {
-      await fsp.access(r.resolve(configPath));
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  async createConfigDirectory(configPath) {
-    await fsp.mkdir(r.resolve(configPath), {recursive: true});
-  }
-
-  async getPlatformConfig() {
-    return platform;
-  }
-
-  async getRuntimeInfo() {
-    return {
-      firerouterHome: r.getFireRouterHome(),
-      firewallaHome: r.getFirewallaHome(),
-      runtimeFolder: r.getRuntimeFolder(),
-      nodeBinPath: r.getNodeBinPath()
-    };
-  }
-
-  async getHealthStatus() {
-    return {
-      config: await this.getConfigStatus(),
-      interfaces: await this.getInterfacesSimple(),
-      wans: await this.getWANs(),
-      lans: await this.getLANs()
-    };
-  }
-
-  async getVersionInfo() {
-    return {
-      platform: await this.getPlatformModel(),
-      version: await this.getPlatformVersion()
-    };
-  }
-
-  async getSystemInfo() {
-    return {
-      runtime: await this.getRuntimeInfo(),
-      version: await this.getVersionInfo(),
-      platformCountry: await this.getPlatformCountry()
-    };
-  }
-
-  async getNetworkOverview() {
-    return {
-      config: await this.getActiveConfig(),
-      interfaces: await this.getInterfaces(),
-      wans: await this.getWANs(),
-      lans: await this.getLANs()
-    };
-  }
-
-  async getApplyStatus() {
-    return {
-      switchingWifi: this.isSwitchingWifi(),
-      hasTransaction: await this.hasTransactionConfig()
-    };
-  }
-
-  async getConfigValidationResult(config) {
-    const errors = await this.validateConfig(config);
-    return {
-      valid: errors.length === 0,
-      errors
-    };
-  }
-
-  async validateAndApplyConfig(config, dryRun = false) {
-    const errors = await this.validateConfig(config);
-    if (errors.length) {
-      return errors;
-    }
-    return await this.tryApplyConfigWithRWLock(config, dryRun);
-  }
-
-  async getCurrentAndDefaultConfig() {
-    return {
-      current: await this.getActiveConfig(),
-      default: await this.getDefaultConfig()
-    };
-  }
-
-  async getConfigForApply(dryRun = false) {
-    return dryRun ? null : await this.getActiveConfig();
-  }
-
-  async getReadonlyConfig() {
-    return await this.getActiveConfig();
-  }
-
-  async isConfigApplied(config) {
-    const current = await this.getActiveConfig();
-    return _.isEqual(current, config);
-  }
-
-  async isTransactionConfigApplied() {
-    const config = await this.getTransactionConfig();
-    const active = await this.getActiveConfig();
-    return _.isEqual(config, active);
-  }
-
-  async getConfigMetadata(config) {
-    return {
-      ncid: config && config.ncid,
-      reqId: config && config.reqId
-    };
-  }
-
-  async getConfigMeta(config) {
-    return this.getConfigMetadata(config);
-  }
-
-  async validateConfigMetadata(config) {
-    if (!config || typeof config !== 'object') {
-      return [new Error("Invalid config")];
-    }
-    return [];
-  }
-
-  async ensureConfigNcid(config) {
-    if (!config.ncid) {
-      config.ncid = util.generateUUID();
-    }
-    return config;
-  }
-
-  async ensureConfigReqId(config, reqId) {
-    config.reqId = reqId;
-    return config;
-  }
-
-  async getConfigSummary() {
-    const config = await this.getActiveConfig();
-    if (!config) {
+    const info = await plugin.renewDHCP6Lease().catch((err) => {
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
       return null;
+    });
+    return info;
+  }
+
+  async getDHCPLease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
     }
-    return {
-      ncid: config.ncid,
-      reqId: config.reqId,
-      sections: Object.keys(config)
-    };
-  }
-
-  async getConfigSection(section, inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return config && config[section];
-  }
-
-  async getConfigEntry(section, name, inTransaction = false) {
-    const sectionConfig = await this.getConfigSection(section, inTransaction);
-    return sectionConfig && sectionConfig[name];
-  }
-
-  async hasConfigSection(section, inTransaction = false) {
-    const sectionConfig = await this.getConfigSection(section, inTransaction);
-    return !!sectionConfig;
-  }
-
-  async hasConfigEntry(section, name, inTransaction = false) {
-    const entry = await this.getConfigEntry(section, name, inTransaction);
-    return !!entry;
-  }
-
-  async getConfigSections(inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return config ? Object.keys(config) : [];
-  }
-
-  async getConfigEntries(section, inTransaction = false) {
-    const sectionConfig = await this.getConfigSection(section, inTransaction);
-    return sectionConfig ? Object.keys(sectionConfig) : [];
-  }
-
-  async getConfigEntryNames(section, inTransaction = false) {
-    return await this.getConfigEntries(section, inTransaction);
-  }
-
-  async getConfigSectionExists(section, inTransaction = false) {
-    return await this.hasConfigSection(section, inTransaction);
-  }
-
-  async getConfigEntryExists(section, name, inTransaction = false) {
-    return await this.hasConfigEntry(section, name, inTransaction);
-  }
-
-  async getNetworkConfigSections(inTransaction = false) {
-    return await this.getConfigSections(inTransaction);
-  }
-
-  async getNetworkConfigEntries(section, inTransaction = false) {
-    return await this.getConfigEntries(section, inTransaction);
-  }
-
-  async getNetworkConfigEntryNames(section, inTransaction = false) {
-    return await this.getConfigEntryNames(section, inTransaction);
-  }
-
-  async getNetworkConfigEntry(section, name, inTransaction = false) {
-    return await this.getConfigEntry(section, name, inTransaction);
-  }
-
-  async getConfigValue(path, inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    return _.get(config, path);
-  }
-
-  async setConfigValue(path, value, inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    if (!config) {
-      return false;
+    if (_.get(plugin, "networkConfig.dhcp") != true) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
     }
-    _.set(config, path, value);
-    await this.saveConfig(config, inTransaction);
-    return true;
-  }
-
-  async deleteConfigValue(path, inTransaction = false) {
-    const config = await this.getConfig(inTransaction);
-    if (!config) {
-      return false;
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
     }
-    _.unset(config, path);
-    await this.saveConfig(config, inTransaction);
-    return true;
+    const info = await plugin.getLastDHCPLeaseInfo();
+    return info;
   }
 
-  async cloneConfig(config) {
-    return _.cloneDeep(config);
-  }
-
-  async compareConfigs(a, b) {
-    return _.isEqual(a, b);
-  }
-
-  async isDryRunSupported() {
-    return true;
-  }
-
-  async shutdown() {
-    this.wanTestResult = {};
+  async getDHCP6Lease(intf) {
+    const pluginLoader = require('../plugins/plugin_loader.js');
+    const plugin = pluginLoader.getPluginInstance('interface', intf);
+    
+    if (!plugin) {
+      throw new Error(`interface ${intf} is not found`);
+    }
+    if (!_.isObject(_.get(plugin, "networkConfig.dhcp6"))) {
+      throw new Error(`dhcp is not enabled on interface ${intf}`);
+    }
+    if (_.get(plugin, "networkConfig.enabled") != true) {
+      throw new Error(`interface ${intf} is not enabled`);
+    }
+    const info = await plugin.getLastDHCP6LeaseInfo();
+    return info;
   }
 }
 
