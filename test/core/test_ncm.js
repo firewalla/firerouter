@@ -13,7 +13,6 @@
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 'use strict'
-
 const fs = require('fs');
 const os = require('os');
 const fsp = fs.promises;
@@ -24,7 +23,6 @@ process.env.FIREROUTER_HOME = process.env.FIREROUTER_HOME || path.resolve(__dirn
 
 let chai = require('chai');
 let expect = chai.expect;
-
 const uuid = require('uuid');
 const ncm = require('../../core/network_config_mgr.js');
 let log = require('../../util/logger.js')(__filename, 'info');
@@ -40,7 +38,6 @@ describe('Test network config manager', function(){
       this.nwkey = "sysdb:networkConfig";
       this.nw = await rclient.getAsync(this.nwkey);
   });
-
   afterEach(async () => {
       await rclient.setAsync(this.testkey, this.origin);
       await rclient.setAsync(this.nwkey, this.nw);
@@ -48,13 +45,11 @@ describe('Test network config manager', function(){
   it('should validate network ncid', async()=> {
     const nwConfig = {"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944};
     expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.undefined;
-
     await rclient.setAsync(this.testkey, `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`);
     expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.undefined;
   });
   it('should fail to validate network ncid', async()=> {
     await rclient.setAsync(this.testkey, `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`);
-
     const nwConfig = {"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, ncid: "2df97f9efb0ad09b7201726801377449"};
     expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.eql(["ncid not match"]);
 
@@ -65,7 +60,6 @@ describe('Test network config manager', function(){
 
 describe('Test network config validation', function(){
   this.timeout(30000);
-
   // validateConfig fills in meta.uuid, so every case works on a copy
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const baseConfig = () => clone(require('../../network/default_setup.json'));
@@ -196,7 +190,6 @@ describe('Test integrated AP config conversion', function(){
     const originalGetFwapcExecPath = r.getFwapcExecPath;
     const originalWriteFile = fsp.writeFile;
     const originalUnlink = fsp.unlink;
-
     const tempDir = await fsp.mkdtemp(
       path.join(os.tmpdir(), 'firerouter-ncm-')
     );
@@ -221,7 +214,6 @@ describe('Test integrated AP config conversion', function(){
       if (file === writtenPath) {
         return originalUnlink(tempFile);
       }
-
       return originalUnlink(file);
     };
 
