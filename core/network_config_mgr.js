@@ -376,11 +376,11 @@ class NetworkConfigManager {
         const ln = line.trimStart() // don't trim end in case SSID has trailing spaces
 
         if (ln.startsWith('signal:')) {
-          // https://git.kernel.org/pub/scm/linux/kernel/git/jberg/linux.git/tree/include/uapi/linux/nl80211.h
+          // https://git.kernel.org/pub/scm/linux/kernel/git/jberg/iw.git/tree/nl80211.h
           // * @NL80211_BSS_SIGNAL_MBM: signal strength of probe response/beacon
-          //  in mBm (100 * dBm) (s32)
+          // *  in mBm (100 * dBm) (s32)
           // * @NL80211_BSS_SIGNAL_UNSPEC: signal strength of the probe response/beacon
-          //  in unspecified units, scaled to 0..100 (u8)
+          // *  in unspecified units, scaled to 0..100 (u8)
           //
           // if unspecified unit, it's be positive number, while it's negative in dBm
           wlan.signal = Number(ln.substring(8).split(' ')[0])
@@ -672,7 +672,28 @@ class NetworkConfigManager {
       return ["config is not defined"];
     if (!config.interface)
       return ["interface is not defined"];
-
+    // plugin_loader creates an instance per key of every registered config_path, and those keys
+    // are interpolated into shell commands and file paths in most plugins. config.interface is
+    // checked separately below against the stricter kernel interface name rules.
+    for (const pluginConf of pluginConfig.plugins || []) {
+      const configPath = pluginConf.config_path;
+      if (!configPath || configPath.startsWith("interface."))
+        continue;
+      const section = _.get(config, configPath.split("."));
+      if (!_.isObject(section))
+        continue;
+      for (const name of Object.keys(section)) {
+        if (!PLUGIN_NAME_REGEX.test(name))
+          return [`${configPath} name is not valid ${name}`];
+        // nat names its egress interface in a value and interpolates it into an iptables rule
+        // without ever resolving it through the plugin registry
+        if (configPath === "nat") {
+          const oif = section[name] && section[name].out;
+          if (oif !== undefined && !INTF_NAME_REGEX.test(oif))
+            return [`out of nat ${name} is not valid ${oif}`];
+        }
+      }
+    }
     const ifaceIp4PrefixMap = {};
     const wanIntfs = [];
     for (const ifaceType in config.interface) {
@@ -682,7 +703,6 @@ class NetworkConfigManager {
         // anything that could not be a real kernel interface name in the first place
         if (!INTF_NAME_REGEX.test(name))
           return [`interface name is not valid ${name}`];
-
         const iface = ifaces[name];
         // vlan/bond/pppoe name their lower interface here and it is interpolated into ip commands
         // before the plugin looks it up, so hold references to the same rules as the keys
@@ -691,18 +711,16 @@ class NetworkConfigManager {
           if (!INTF_NAME_REGEX.test(lowerIntf))
             return [`intf of ${name} is not valid ${lowerIntf}`];
         }
-
         const meta = iface.meta || {};
         if (!meta.uuid)
           meta.uuid = uuid.v4();
+        // reject a malformed caller supplied uuid rather than regenerating it silently
         else if (!util.isValidUUID(meta.uuid))
           return [`meta.uuid of ${name} is not valid ${meta.uuid}`];
         iface.meta = meta;
-
         const wanType = meta.type;
         if (wanType === "wan")
           wanIntfs.push(name);
-
         if (iface.ipv4 && _.isString(iface.ipv4) || iface.ipv4s && _.isArray(iface.ipv4s)) {
           let ipv4s = [];
           if (iface.ipv4 && _.isString(iface.ipv4))
@@ -710,12 +728,10 @@ class NetworkConfigManager {
           if (iface.ipv4s && _.isArray(iface.ipv4s))
             Array.prototype.push.apply(ipv4s, iface.ipv4s);
           ipv4s = ipv4s.filter((v, i, a) => a.indexOf(v) === i);
-
           for (const ipv4 of ipv4s) {
             const addr = new Address4(ipv4);
             if (!addr.isValid())
               return [`ipv4 of ${name} is not valid ${ipv4}`];
-
             // check ipv4 subnet conflict
             for (const prefix in ifaceIp4PrefixMap) {
               const i = ifaceIp4PrefixMap[prefix];
