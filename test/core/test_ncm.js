@@ -15,7 +15,12 @@
 
 'use strict'
 
+const fsp = require('fs').promises;
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const r = require('../../util/firerouter.js');
+const util = require('../../util/util.js');
 const path = require('path');
+
 // resolve the plugin registry from this checkout so the suite also runs off-device
 process.env.FIREROUTER_HOME = process.env.FIREROUTER_HOME || path.resolve(__dirname, '../..');
 
@@ -56,6 +61,52 @@ describe('Test network config manager', function(){
     expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.eql(["ncid not match"]);
 
     expect(await ncm.validateNcidOrReqId(nwConfig, true, true)).to.be.undefined;
+  });
+
+  it('should remove the temporary config file when APC conversion fails', async()=> {
+    const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
+    const originalGetFwapcExecPath = r.getFwapcExecPath;
+    const originalGenerateUUID = util.generateUUID;
+
+    const testUUID = `ncm-apc-test-${process.pid}-${Date.now()}`;
+    const tempFile = `/dev/shm/fr_orig_config_${testUUID}.json`;
+
+    platform.isWLANManagedByAPC = () => true;
+    r.getFwapcExecPath = () => '/bin/false';
+    util.generateUUID = () => testUUID;
+
+    try {
+      let conversionError;
+
+      try {
+        await ncm.convertIntegratedAPConfig({
+          version: 1,
+          interface: {
+            phy: {
+              eth0: {
+                enabled: true,
+              },
+            },
+          },
+        });
+      } catch (err) {
+        conversionError = err;
+      }
+
+      expect(conversionError).to.exist;
+
+      const tempFileExists = await fsp.access(tempFile)
+        .then(() => true)
+        .catch(() => false);
+
+      expect(tempFileExists)
+        .to.equal(false, 'temporary config file should be removed after APC conversion fails');
+    } finally {
+      platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
+      r.getFwapcExecPath = originalGetFwapcExecPath;
+      util.generateUUID = originalGenerateUUID;
+      await fsp.unlink(tempFile).catch(() => {});
+    }
   });
 
 });
