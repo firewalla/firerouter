@@ -501,6 +501,43 @@ describe('Test DHCP6 configuration', function(){
     );
   });
 
+  it('should accept an equal-address DHCPv6 range', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::100',
+      [],
+      128,
+      86400,
+      200
+    );
+
+    const contents = await fs.readFileAsync(
+      this.plugin._getConfFilePath(),
+      {encoding: 'utf8'}
+    );
+
+    expect(contents).to.contain(
+      'dhcp-range=tag:eth5,fd00::100,fd00::100,128,86400'
+    );
+  });
+
+  it('should accept distinct endpoints within a /127 prefix', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5',
+      [],
+      'stateful',
+      'fd00::100',
+      'fd00::101',
+      [],
+      127,
+      86400,
+      200
+    );
+  });
+
   it('should reject a /128 range with different endpoints', async () => {
     await expectDHCP6ConfigError(
       this.plugin,
