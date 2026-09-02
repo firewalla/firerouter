@@ -23,6 +23,7 @@ const Message = require('../core/Message.js');
 let pluginConfs = [];
 
 let pluginCategoryMap = {};
+let activePluginCategoryMap = null;
 
 let scheduledReapplyTask = null;
 let restartRsyslogTask = null;
@@ -94,11 +95,13 @@ function createPluginInstance(category, name, constructor, config = null, catego
 }
 
 function getPluginInstances(category) {
-  return pluginCategoryMap[category];
+  const categoryMap = activePluginCategoryMap || pluginCategoryMap;
+  return categoryMap[category];
 }
 
 function getPluginInstance(category, name) {
-  return pluginCategoryMap[category] && pluginCategoryMap[category][name];
+  const categoryMap = activePluginCategoryMap || pluginCategoryMap;
+  return categoryMap[category] && categoryMap[category][name];
 }
 
 function _isConfigEqual(c1, c2) {
@@ -183,6 +186,9 @@ async function reapply(config, dryRun = false) {
     // Dry-run uses a private plugin registry so candidate instances cannot replace,
     // mutate, or temporarily hide the live registry from other callers.
     const workingPluginCategoryMap = dryRun ? {} : pluginCategoryMap;
+    const previousActivePluginCategoryMap = activePluginCategoryMap;
+    if (dryRun)
+      activePluginCategoryMap = workingPluginCategoryMap;
 
     try {
       let wlanReloaded = false;
@@ -445,8 +451,10 @@ async function reapply(config, dryRun = false) {
       lastAppliedTimestamp = Date.now() / 1000;
       return errors;
     } finally {
-      if (dryRun)
+      if (dryRun) {
+        activePluginCategoryMap = previousActivePluginCategoryMap;
         applyInProgress = false;
+      }
     }
   }).then((errors) => {
     if (!dryRun)
