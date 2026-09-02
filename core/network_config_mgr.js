@@ -787,7 +787,7 @@ class NetworkConfigManager {
     return errors;
   }
 
-async convertIntegratedAPConfig(config) {
+  async convertIntegratedAPConfig(config) {
     if (!platform.isWLANManagedByAPC()) {
       return config;
     }
