@@ -72,20 +72,20 @@ async function initPlugins() {
   log.info("Plugin initialized", pluginConfs);
 }
 
-function createPluginInstance(category, name, constructor, config = null) {
-  let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
+function createPluginInstance(category, name, constructor, config = null, pluginMap = pluginCategoryMap) {
+  let instance = pluginMap[category] && pluginMap[category][name];
   if (instance)
     return instance;
 
-  if (!pluginCategoryMap[category])
-    pluginCategoryMap[category] = {};
+  if (!pluginMap[category])
+    pluginMap[category] = {};
 
   if (!constructor)
     return null;
 
   instance = new constructor(name);
   instance.name = name;
-  pluginCategoryMap[category][name] = instance;
+  pluginMap[category][name] = instance;
   if (config) {
     instance.init(config);
   }
