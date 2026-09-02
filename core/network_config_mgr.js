@@ -788,9 +788,9 @@ class NetworkConfigManager {
   }
 
   async convertIntegratedAPConfig(config) {
-  if (!platform.isWLANManagedByAPC()) {
-    return config;
-  }
+    if (!platform.isWLANManagedByAPC()) {
+      return config;
+    }
 
   const fwapcExecPath = r.getFwapcExecPath();
   const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
