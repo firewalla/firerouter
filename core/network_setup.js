@@ -91,7 +91,9 @@ class NetworkSetup {
     const errors = await pl.reapply(config, dryRun);
     await this.post_setup(dryRun);
     // no need to await
-    this.booting_finish();
+    if (!dryRun) {
+      this.booting_finish();
+    }
     return errors;
   }
 
