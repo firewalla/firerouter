@@ -103,10 +103,24 @@ describe('Test plugin loader dry-run', function() {
     const observedPluginInstances = [];
     const observedPlugin = [];
     const originalConfigure = PhyInterfacePlugin.prototype.configure;
+    let releaseConfigure;
+    let configureStartedResolve;
+    let firstConfigure = true;
+    const configureStarted = new Promise((resolve) => {
+      configureStartedResolve = resolve;
+    });
+    const configureRelease = new Promise((resolve) => {
+      releaseConfigure = resolve;
+    });
 
     PhyInterfacePlugin.prototype.configure = async function(networkConfig) {
       observedPluginInstances.push(pluginLoader.getPluginInstances('interface'));
       observedPlugin.push(pluginLoader.getPluginInstance('interface', this.name));
+      if (firstConfigure) {
+        firstConfigure = false;
+        configureStartedResolve();
+        await configureRelease;
+      }
       return originalConfigure.call(this, networkConfig);
     };
 
@@ -124,8 +138,18 @@ describe('Test plugin loader dry-run', function() {
     const originalLastAppliedTimestamp = pluginLoader.getLastAppliedTimestamp();
 
     try {
-      await pluginLoader.reapply(candidateConfig, true);
+      const dryRun = pluginLoader.reapply(candidateConfig, true);
+      await configureStarted;
+
+      // The dry-run is suspended inside configure(). An unrelated caller must
+      // continue to see the live registry rather than the candidate registry.
+      expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
+      expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
+
+      releaseConfigure();
+      await dryRun;
     } finally {
+      releaseConfigure();
       PhyInterfacePlugin.prototype.configure = originalConfigure;
     }
 
@@ -140,6 +164,44 @@ describe('Test plugin loader dry-run', function() {
     expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
     expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
     expect(originalLivePlugin.networkConfig).to.deep.equal(originalLiveConfig);
+  });
+
+  it('should configure a newly created plugin exactly once during dry-run', async () => {
+    platform.prepareWLANRegDomainChange = async function() {
+      return false;
+    };
+
+    await pluginLoader.initPlugins();
+
+    const PhyInterfacePlugin = require('../../plugins/interface/phy_intf_plugin.js');
+    const newInstanceName = 'dryrun-new0';
+    const originalConfigure = PhyInterfacePlugin.prototype.configure;
+    let configureCalls = 0;
+
+    PhyInterfacePlugin.prototype.configure = async function(networkConfig) {
+      configureCalls += 1;
+      return originalConfigure.call(this, networkConfig);
+    };
+
+    const candidateConfig = {
+      interface: {
+        phy: {
+          [newInstanceName]: {
+            enabled: false,
+            marker: 'candidate'
+          }
+        }
+      }
+    };
+
+    try {
+      await pluginLoader.reapply(candidateConfig, true);
+    } finally {
+      PhyInterfacePlugin.prototype.configure = originalConfigure;
+    }
+
+    expect(configureCalls).to.equal(1);
+    expect(pluginLoader.getPluginInstance('interface', newInstanceName)).to.equal(undefined);
   });
 
   it('should not replace or mutate the live plugin registry during dry-run', async () => {
