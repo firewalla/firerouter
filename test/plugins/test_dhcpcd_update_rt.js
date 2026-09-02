@@ -158,7 +158,7 @@ describe('DHCPv6 Router Advertisement route updates', () => {
 
     fs.writeFileSync(
       runner,
-      `#!/bin/bash
+      `#!/bin/sh
 
 reason=ROUTERADVERT
 interface=wan0
@@ -265,7 +265,7 @@ redis-cli() {
   printf '%s\\\\n' "$*" >> "$EVENT_LOG"
 }
 
-source ${commonScript}
+. ${commonScript}
 
 log() {
   printf '%s\\\\n' "$*" >> "$EVENT_LOG"
@@ -273,8 +273,8 @@ log() {
 
 # Execute the hooks in the same order as dhcpcd-run-hooks:
 # common -> record_lease -> update_rt.
-source ${path.join(sandboxDir, 'record_lease')}
-source ${path.join(sandboxDir, 'update_rt')}
+. ${path.join(sandboxDir, 'record_lease')}
+. ${path.join(sandboxDir, 'update_rt')}
 `
     );
 
@@ -291,7 +291,7 @@ source ${path.join(sandboxDir, 'update_rt')}
     const runner = createRunner(options);
 
     execFileSync(
-      'bash',
+      '/bin/sh',
       [runner],
       {
         stdio: 'pipe'
