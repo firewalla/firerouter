@@ -28,11 +28,9 @@ describe('Test dry-run network setup', function() {
   this.timeout(30000);
 
   describe('NetworkSetup.setup()', function() {
-    let originalReapply;
     let originalBootingFinish;
 
     beforeEach(() => {
-      originalReapply = ns.constructor && ns.constructor.name;
       originalBootingFinish = ns.booting_finish;
       ns.booting_finish = async function() {};
     });
