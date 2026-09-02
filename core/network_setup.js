@@ -1,4 +1,3 @@
-
 /*    Copyright 2019 Firewalla Inc
  *
  *    This program is free software: you can redistribute it and/or modify
@@ -72,7 +71,10 @@ class NetworkSetup {
     await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
   }
 
-  async booting_finish() {
+  async booting_finish(dryRun = false) {
+    if (dryRun)
+      return;
+
     if(!this.runOnce) {
       this.runOnce = true;
       await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
@@ -91,7 +93,7 @@ class NetworkSetup {
     const errors = await pl.reapply(config, dryRun);
     await this.post_setup(dryRun);
     // no need to await
-    this.booting_finish();
+    this.booting_finish(dryRun);
     return errors;
   }
 
