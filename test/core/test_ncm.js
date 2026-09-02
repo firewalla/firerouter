@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 const os = require('os');
-const fsp = require('fs').promises;
+const fsp = fs.promises;
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const r = require('../../util/firerouter.js');
 const util = require('../../util/util.js');
@@ -36,81 +36,63 @@ const rclient = require('../../util/redis_manager').getRedisClient();
 
 describe('Test network config manager', function(){
   this.timeout(30000);
+
   beforeEach(async () => {
-      this.testkey = "sysdb:transaction:networkConfig";
-      this.origin = await rclient.getAsync(this.testkey);
-      this.nwkey = "sysdb:networkConfig";
-      this.nw = await rclient.getAsync(this.nwkey);
+    this.testkey = "sysdb:transaction:networkConfig";
+    this.origin = await rclient.getAsync(this.testkey);
+    this.nwkey = "sysdb:networkConfig";
+    this.nw = await rclient.getAsync(this.nwkey);
   });
 
   afterEach(async () => {
-      await rclient.setAsync(this.testkey, this.origin);
-      await rclient.setAsync(this.nwkey, this.nw);
+    await rclient.setAsync(this.testkey, this.origin);
+    await rclient.setAsync(this.nwkey, this.nw);
   });
 
   it('should validate network ncid', async()=> {
-    const nwConfig = {"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944};
+    const nwConfig = {
+      "version": 1,
+      "interface": {
+        "phy": {
+          "eth0": {}
+        }
+      },
+      "ts": 1726648571944
+    };
+
     expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.undefined;
 
-    await rclient.setAsync(this.testkey, `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`);
+    await rclient.setAsync(
+      this.testkey,
+      `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`
+    );
+
     expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.undefined;
   });
 
   it('should fail to validate network ncid', async()=> {
-    await rclient.setAsync(this.testkey, `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`);
+    await rclient.setAsync(
+      this.testkey,
+      `{"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, "ncid":"test"}`
+    );
 
-    const nwConfig = {"version":1,"interface":{"phy":{"eth0":{}}},"ts":1726648571944, ncid: "2df97f9efb0ad09b7201726801377449"};
-    expect(await ncm.validateNcidOrReqId(nwConfig, true)).to.be.eql(["ncid not match"]);
+    const nwConfig = {
+      "version": 1,
+      "interface": {
+        "phy": {
+          "eth0": {}
+        }
+      },
+      "ts": 1726648571944,
+      ncid: "2df97f9efb0ad09b7201726801377449"
+    };
 
-    expect(await ncm.validateNcidOrReqId(nwConfig, true, true)).to.be.undefined;
+    expect(await ncm.validateNcidOrReqId(nwConfig, true))
+      .to.be.eql(["ncid not match"]);
+
+    expect(await ncm.validateNcidOrReqId(nwConfig, true, true))
+      .to.be.undefined;
   });
-
-  it('should remove the temporary config file when APC conversion fails', async()=> {
-    const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
-    const originalGetFwapcExecPath = r.getFwapcExecPath;
-    const originalGenerateUUID = util.generateUUID;
-
-    const testUUID = `ncm-apc-test-${process.pid}-${Date.now()}`;
-    const tempFile = `/dev/shm/fr_orig_config_${testUUID}.json`;
-
-    platform.isWLANManagedByAPC = () => true;
-    r.getFwapcExecPath = () => '/bin/false';
-    util.generateUUID = () => testUUID;
-
-    try {
-      let conversionError;
-
-      try {
-        await ncm.convertIntegratedAPConfig({
-          version: 1,
-          interface: {
-            phy: {
-              eth0: {
-                enabled: true,
-              },
-            },
-          },
-        });
-      } catch (err) {
-        conversionError = err;
-      }
-
-      expect(conversionError).to.exist;
-
-      const tempFileExists = await fsp.access(tempFile)
-        .then(() => true)
-        .catch(() => false);
-
-      expect(tempFileExists)
-        .to.equal(false, 'temporary config file should be removed after APC conversion fails');
-    } finally {
-      platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
-      r.getFwapcExecPath = originalGetFwapcExecPath;
-      util.generateUUID = originalGenerateUUID;
-      await fsp.unlink(tempFile).catch(() => {});
-    }
-  });
-
 });
 
 // validateConfig is the single choke point that keeps config values out of the shell commands and
@@ -138,22 +120,46 @@ describe('Test network config validation', function(){
   describe('shipped configs', function(){
     // guards against a rule that is too strict to accept what firerouter itself ships
     it('should accept default_setup.json', async()=> {
-      const errors = await ncm.validateConfig(clone(require('../../network/default_setup.json')));
+      const errors = await ncm.validateConfig(
+        clone(require('../../network/default_setup.json'))
+      );
+
       expect(errors).to.be.empty;
     });
 
     it('should accept default_4ports.json', async()=> {
-      const errors = await ncm.validateConfig(clone(require('../../network/default_4ports.json')));
+      const errors = await ncm.validateConfig(
+        clone(require('../../network/default_4ports.json'))
+      );
+
       expect(errors).to.be.empty;
     });
   });
 
   describe('interface names', function(){
     it('should accept real kernel interface names', async()=> {
-      for (const name of ["eth0", "br0", "eth0.100", "eth0:0", "wg_ap", "tun_fwvpn", "bond0", "vbr100"]) {
+      for (const name of [
+        "eth0",
+        "br0",
+        "eth0.100",
+        "eth0:0",
+        "wg_ap",
+        "tun_fwvpn",
+        "bond0",
+        "vbr100"
+      ]) {
         const config = baseConfig();
-        config.interface.phy = { [name]: { enabled: true, meta: { type: "wan" } } };
+        config.interface.phy = {
+          [name]: {
+            enabled: true,
+            meta: {
+              type: "wan"
+            }
+          }
+        };
+
         const errors = await ncm.validateConfig(config);
+
         expect(errors, `expected ${name} to be accepted`).to.be.empty;
       }
     });
@@ -161,10 +167,24 @@ describe('Test network config validation', function(){
     it('should reject names carrying shell metacharacters', async()=> {
       for (const name of INJECTION_NAMES) {
         const config = baseConfig();
-        config.interface.phy = { [name]: { enabled: true, meta: { type: "wan" } } };
+
+        config.interface.phy = {
+          [name]: {
+            enabled: true,
+            meta: {
+              type: "wan"
+            }
+          }
+        };
+
         const errors = await ncm.validateConfig(config);
+
         log.debug("rejected interface name", name, errors);
-        expect(errors, `expected ${JSON.stringify(name)} to be rejected`).to.not.be.empty;
+
+        expect(
+          errors,
+          `expected ${JSON.stringify(name)} to be rejected`
+        ).to.not.be.empty;
       }
     });
   });
@@ -174,22 +194,48 @@ describe('Test network config validation', function(){
     // command before the plugin ever looks it up
     it('should accept a normal vlan lower interface', async()=> {
       const config = baseConfig();
-      config.interface.vlan = { "eth0.100": { intf: "eth0", vid: 100, enabled: true } };
+
+      config.interface.vlan = {
+        "eth0.100": {
+          intf: "eth0",
+          vid: 100,
+          enabled: true
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.be.empty;
     });
 
     it('should reject an injected string lower interface', async()=> {
       const config = baseConfig();
-      config.interface.vlan = { "eth0.100": { intf: "eth0; id #", vid: 100, enabled: true } };
+
+      config.interface.vlan = {
+        "eth0.100": {
+          intf: "eth0; id #",
+          vid: 100,
+          enabled: true
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.not.be.empty;
     });
 
     it('should reject an injected member of a bond interface array', async()=> {
       const config = baseConfig();
-      config.interface.bond = { "bond0": { intf: ["eth1", "eth2; id #"], enabled: true } };
+
+      config.interface.bond = {
+        "bond0": {
+          intf: ["eth1", "eth2; id #"],
+          enabled: true
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.not.be.empty;
     });
   });
@@ -197,8 +243,18 @@ describe('Test network config validation', function(){
   describe('meta.uuid', function(){
     it('should generate a uuid when absent', async()=> {
       const config = baseConfig();
-      config.interface.phy = { "eth0": { enabled: true, meta: { type: "wan" } } };
+
+      config.interface.phy = {
+        "eth0": {
+          enabled: true,
+          meta: {
+            type: "wan"
+          }
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.be.empty;
       expect(config.interface.phy.eth0.meta.uuid).to.be.a('string');
     });
@@ -206,16 +262,38 @@ describe('Test network config validation', function(){
     it('should accept a caller supplied canonical uuid', async()=> {
       const config = baseConfig();
       const id = uuid.v4();
-      config.interface.phy = { "eth0": { enabled: true, meta: { type: "wan", uuid: id } } };
+
+      config.interface.phy = {
+        "eth0": {
+          enabled: true,
+          meta: {
+            type: "wan",
+            uuid: id
+          }
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.be.empty;
       expect(config.interface.phy.eth0.meta.uuid).to.be.equal(id);
     });
 
     it('should reject a malformed uuid instead of regenerating it', async()=> {
       const config = baseConfig();
-      config.interface.phy = { "eth0": { enabled: true, meta: { type: "wan", uuid: "x; id > /tmp/pwn; #" } } };
+
+      config.interface.phy = {
+        "eth0": {
+          enabled: true,
+          meta: {
+            type: "wan",
+            uuid: "x; id > /tmp/pwn; #"
+          }
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.not.be.empty;
     });
   });
@@ -223,24 +301,63 @@ describe('Test network config validation', function(){
   describe('non-interface plugin sections', function(){
     // plugin_loader creates an instance per key of every registered config_path, and those keys
     // reach shell commands and file paths in most plugins
-    const CATEGORIES = ["upnp", "icmp", "hostapd", "docker", "dns", "sshd", "nat", "routing", "dhcp", "mroute"];
+    const CATEGORIES = [
+      "upnp",
+      "icmp",
+      "hostapd",
+      "docker",
+      "dns",
+      "sshd",
+      "nat",
+      "routing",
+      "dhcp",
+      "mroute"
+    ];
 
     it('should reject an injected key in any plugin section', async()=> {
       for (const category of CATEGORIES) {
         const config = baseConfig();
-        config[category] = { "eth0; sudo sh -c 'id > /tmp/pwned' #": {} };
+
+        config[category] = {
+          "eth0; sudo sh -c 'id > /tmp/pwned' #": {}
+        };
+
         const errors = await ncm.validateConfig(config);
-        expect(errors, `expected injected key in config.${category} to be rejected`).to.not.be.empty;
+
+        expect(
+          errors,
+          `expected injected key in config.${category} to be rejected`
+        ).to.not.be.empty;
       }
     });
 
     it('should accept the section keys firerouter actually uses', async()=> {
       const config = baseConfig();
-      config.nat = { "br0_eth3": { out: "eth0", srcSubnets: ["10.0.0.0/8"] } };
-      config.routing = { "global": {} };
-      config.dns = { "default": {}, "br0": {} };
-      config.sshd = { "br0": { enabled: true } };
+
+      config.nat = {
+        "br0_eth3": {
+          out: "eth0",
+          srcSubnets: ["10.0.0.0/8"]
+        }
+      };
+
+      config.routing = {
+        "global": {}
+      };
+
+      config.dns = {
+        "default": {},
+        "br0": {}
+      };
+
+      config.sshd = {
+        "br0": {
+          enabled: true
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.be.empty;
     });
   });
@@ -249,15 +366,31 @@ describe('Test network config validation', function(){
     // nat names its egress interface in a value and never resolves it through the plugin registry
     it('should accept a real egress interface', async()=> {
       const config = baseConfig();
-      config.nat = { "x": { out: "eth0", srcSubnets: ["10.0.0.0/8"] } };
+
+      config.nat = {
+        "x": {
+          out: "eth0",
+          srcSubnets: ["10.0.0.0/8"]
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.be.empty;
     });
 
     it('should reject an injected egress interface', async()=> {
       const config = baseConfig();
-      config.nat = { "x": { out: "eth0 -j ACCEPT; sudo id; #", srcSubnets: ["10.0.0.0/8"] } };
+
+      config.nat = {
+        "x": {
+          out: "eth0 -j ACCEPT; sudo id; #",
+          srcSubnets: ["10.0.0.0/8"]
+        }
+      };
+
       const errors = await ncm.validateConfig(config);
+
       expect(errors).to.not.be.empty;
     });
   });
@@ -265,48 +398,87 @@ describe('Test network config validation', function(){
 
 describe('Test integrated AP config conversion', function(){
   this.timeout(30000);
-  
+
   it('should remove temporary config when APC conversion fails', async()=> {
-  const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
-  const originalGetFwapcExecPath = r.getFwapcExecPath;
-  const originalWriteFile = fs.promises.writeFile;
+    const originalIsWLANManagedByAPC = platform.isWLANManagedByAPC;
+    const originalGetFwapcExecPath = r.getFwapcExecPath;
+    const originalWriteFile = fsp.writeFile;
+    const originalUnlink = fsp.unlink;
 
-  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'firerouter-ncm-'));
-  const tempFile = path.join(tempDir, 'config.json');
-  let fileCreated = false;
-  let writtenPath;
-
-  platform.isWLANManagedByAPC = () => true;
-  r.getFwapcExecPath = () => '/bin/false';
-
-  fs.promises.writeFile = async (_file, data) => {
-    writtenPath = _file;
-    await originalWriteFile(tempFile, data);
-    fileCreated = true;
-  };
-
-  try {
-    let error;
-    try {
-      await ncm.convertIntegratedAPConfig({ test: true });
-    } catch (err) {
-      error = err;
-    }
-
-    expect(fileCreated).to.be.true;
-    expect(writtenPath).to.be.a('string');
-    expect(error).to.be.an('error');
-
-    await fs.promises.access(tempFile).then(
-      () => { throw new Error('temporary config still exists'); },
-      (err) => expect(err.code).to.equal('ENOENT')
+    const tempDir = await fsp.mkdtemp(
+      path.join(os.tmpdir(), 'firerouter-ncm-')
     );
-  } finally {
-    platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
-    r.getFwapcExecPath = originalGetFwapcExecPath;
-    fs.promises.writeFile = originalWriteFile;
+    const tempFile = path.join(tempDir, 'config.json');
 
-    await fs.promises.rm(tempDir, { recursive: true, force: true });
-  }
-});
+    let fileCreated = false;
+    let writtenPath;
+
+    platform.isWLANManagedByAPC = () => true;
+    r.getFwapcExecPath = () => '/bin/false';
+
+    // Redirect only the production temp-file write to a portable writable directory.
+    fsp.writeFile = async (_file, data) => {
+      writtenPath = _file;
+      await originalWriteFile(tempFile, data);
+      fileCreated = true;
+    };
+
+    // Redirect cleanup only for the exact production temp path used by this test.
+    // All unrelated unlink calls retain their normal behavior.
+    fsp.unlink = async (file) => {
+      if (file === writtenPath) {
+        return originalUnlink(tempFile);
+      }
+
+      return originalUnlink(file);
+    };
+
+    try {
+      let conversionError;
+
+      try {
+        await ncm.convertIntegratedAPConfig({
+          version: 1,
+          interface: {
+            phy: {
+              eth0: {
+                enabled: true,
+              },
+            },
+          },
+        });
+      } catch (err) {
+        conversionError = err;
+      }
+
+      // Prove that writeFile succeeded before testing cleanup. This prevents a
+      // missing /dev/shm directory from making the test pass accidentally.
+      expect(fileCreated).to.be.true;
+      expect(writtenPath).to.be.a('string');
+
+      // /bin/false must have been reached after the temporary file was created.
+      expect(conversionError).to.exist;
+
+      await fsp.access(tempFile).then(
+        () => {
+          throw new Error(
+            'temporary config still exists after APC conversion failed'
+          );
+        },
+        (err) => {
+          expect(err.code).to.equal('ENOENT');
+        }
+      );
+    } finally {
+      platform.isWLANManagedByAPC = originalIsWLANManagedByAPC;
+      r.getFwapcExecPath = originalGetFwapcExecPath;
+      fsp.writeFile = originalWriteFile;
+      fsp.unlink = originalUnlink;
+
+      await fsp.rm(tempDir, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
 });
