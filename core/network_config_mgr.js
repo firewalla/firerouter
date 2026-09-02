@@ -794,7 +794,6 @@ class NetworkConfigManager {
 
   const fwapcExecPath = r.getFwapcExecPath();
   const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
-
   try {
     await fsp.writeFile(tempFile, JSON.stringify(config));
     // turn off log output on stdout to avoid interference with JSON parsing
