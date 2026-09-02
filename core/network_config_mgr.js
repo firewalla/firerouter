@@ -766,29 +766,36 @@ class NetworkConfigManager {
   }
 
   async tryApplyConfig(config, dryRun = false) {
-  const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
-  // convert new config to integrated AP config
-  const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
-  log.error(`Failed to convert effective config`, err.message);
-  return config;
-  });
-  const errors = await ns.setup(convertedConfig, dryRun);
-    if (errors && errors.length != 0) {
-      log.error("Failed to apply network config, rollback to previous setup", errors);
+    const currentConfig = (await this.getActiveConfig()) || (await this.getDefaultConfig());
 
-    if (!dryRun) {
-      // convert current config to integrated AP config
-      const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
+    // convert new config to integrated AP config
+    const convertedConfig = await this.convertIntegratedAPConfig(config).catch((err) => {
       log.error(`Failed to convert effective config`, err.message);
-      return currentConfig;
-      });
-      await ns.setup(convertedCurrentConfig).catch((err) => {
-      log.error("Failed to rollback network config", err);
-      });
+      return config;
+    });
+
+    const errors = await ns.setup(convertedConfig, dryRun);
+
+    if (errors && errors.length != 0) {
+      if (dryRun) {
+        log.error("Failed to validate network config", errors);
+      } else {
+        log.error("Failed to apply network config, rollback to previous setup", errors);
+
+        // convert current config to integrated AP config
+        const convertedCurrentConfig = await this.convertIntegratedAPConfig(currentConfig).catch((err) => {
+          log.error(`Failed to convert effective config`, err.message);
+          return currentConfig;
+        });
+
+        await ns.setup(convertedCurrentConfig).catch((err) => {
+          log.error("Failed to rollback network config", err);
+        });
+      }
     }
-  }
+
     return errors;
-}
+  }
 
   async convertIntegratedAPConfig(config) {
     if (!platform.isWLANManagedByAPC()) {
