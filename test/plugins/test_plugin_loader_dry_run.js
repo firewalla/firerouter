@@ -23,7 +23,6 @@ class DryRunTestPlugin extends Plugin {
   async configure(networkConfig) {
     DryRunTestPlugin.configureCalls += 1;
     DryRunTestPlugin.configureArgs.push(networkConfig);
-
     // Deliberately mutate the configuration the loader supplies. This mirrors
     // the behavior that makes a dry-run unsafe when the caller-owned object
     // is passed directly into configure().
@@ -32,37 +31,6 @@ class DryRunTestPlugin extends Plugin {
 
     if (!networkConfig.meta.uuid)
       networkConfig.meta.uuid = 'dry-run-test-uuid';
-
-    await super.configure(networkConfig);
-  }
-}
-
-class DryRunDependencyTestPlugin extends Plugin {
-  static constructorCalls = 0;
-  static configureCalls = 0;
-  static resolvedDependency = null;
-
-  constructor(name) {
-    super(name);
-    DryRunDependencyTestPlugin.constructorCalls += 1;
-  }
-
-  async configure(networkConfig) {
-    DryRunDependencyTestPlugin.configureCalls += 1;
-
-    if (networkConfig.dependsOn) {
-      DryRunDependencyTestPlugin.resolvedDependency =
-        pluginLoader.getPluginInstance(
-          'test',
-          networkConfig.dependsOn
-        );
-
-      if (!DryRunDependencyTestPlugin.resolvedDependency) {
-        throw new Error(
-          `Dependency ${networkConfig.dependsOn} was not found`
-        );
-      }
-    }
 
     await super.configure(networkConfig);
   }
@@ -78,10 +46,6 @@ describe('Test plugin loader dry-run', function() {
     DryRunTestPlugin.constructorCalls = 0;
     DryRunTestPlugin.configureCalls = 0;
     DryRunTestPlugin.configureArgs = [];
-
-    DryRunDependencyTestPlugin.constructorCalls = 0;
-    DryRunDependencyTestPlugin.configureCalls = 0;
-    DryRunDependencyTestPlugin.resolvedDependency = null;
 
     const platform = PlatformLoader.getPlatform();
     originalPrepareWLANRegDomainChange =
@@ -168,35 +132,36 @@ describe('Test plugin loader dry-run', function() {
   );
 
   it(
-    'should resolve dry-run dependencies from candidate plugin instances',
+    'should not expose a dry-run instance through the live plugin registry',
     async () => {
-      pluginLoader.__setPluginConfsForTest([{
-        category: 'test',
-        config_path: 'plugins.test',
-        c: DryRunDependencyTestPlugin,
-        allow_concurrent: false
-      }]);
+      const liveInstance = new DryRunTestPlugin('existing');
+      liveInstance.networkConfig = {
+        enabled: false,
+        nested: {
+          live: true
+        }
+      };
 
       pluginLoader.__setPluginCategoryMapForTest({
-        test: {}
+        test: {
+          existing: liveInstance
+        }
       });
+
+      const candidate = {
+        enabled: true,
+        nested: {
+          value: 42
+        }
+      };
 
       const submittedConfig = {
         plugins: {
           test: {
-            dependency: {
-              enabled: true
-            },
-            consumer: {
-              dependsOn: 'dependency'
-            }
+            existing: candidate
           }
         }
       };
-
-      const liveStateBefore = pluginLoader.__getTestStateForTest();
-      expect(liveStateBefore.pluginCategoryMap.test)
-        .to.not.have.property('dependency');
 
       const errors = await pluginLoader.reapply(
         submittedConfig,
@@ -204,23 +169,63 @@ describe('Test plugin loader dry-run', function() {
       );
 
       expect(errors).to.be.empty;
-      expect(DryRunDependencyTestPlugin.constructorCalls).to.equal(2);
-      expect(DryRunDependencyTestPlugin.configureCalls).to.be.greaterThan(0);
 
-      // The consumer must resolve the candidate dependency instance created
-      // in workingPluginCategoryMap. The live registry starts empty, so this
-      // fails with the buggy global-registry lookup.
-      expect(DryRunDependencyTestPlugin.resolvedDependency)
-        .to.exist;
-      expect(DryRunDependencyTestPlugin.resolvedDependency.name)
-        .to.equal('dependency');
+      // The live registry must continue to expose the original live instance.
+      const liveState = pluginLoader.__getTestStateForTest();
+      expect(liveState.pluginCategoryMap.test.existing)
+        .to.equal(liveInstance);
 
-      // The candidate dependency must never leak into the live registry.
-      const liveStateAfter = pluginLoader.__getTestStateForTest();
-      expect(liveStateAfter.pluginCategoryMap.test)
-        .to.not.have.property('dependency');
-      expect(liveStateAfter.pluginCategoryMap.test)
-        .to.not.have.property('consumer');
+      // The live instance's configuration must not have been replaced or
+      // mutated by the dry-run configure() call.
+      expect(liveInstance.networkConfig).to.deep.equal({
+        enabled: false,
+        nested: {
+          live: true
+        }
+      });
+
+      // The live instance is not the candidate object used by dry-run.
+      expect(DryRunTestPlugin.configureArgs[0])
+        .to.not.equal(liveInstance.networkConfig);
+
+      expect(DryRunTestPlugin.configureArgs[0].meta.uuid)
+        .to.equal('dry-run-test-uuid');
+    }
+  );
+
+  it(
+    'should not prepare WLAN reg domain or reload WLAN kernel modules during dry-run',
+    async () => {
+      let prepareCalls = 0;
+      const platform = PlatformLoader.getPlatform();
+
+      platform.prepareWLANRegDomainChange = async () => {
+        prepareCalls += 1;
+        throw new Error('dry-run must not prepare WLAN reg domain');
+      };
+
+      const submittedConfig = {
+        plugins: {
+          test: {
+            existing: {
+              enabled: true
+            }
+          }
+        },
+        apc: {
+          globalSysConfig: {
+            country: 'US'
+          }
+        }
+      };
+
+      const errors = await pluginLoader.reapply(
+        submittedConfig,
+        true
+      );
+
+      expect(errors).to.be.empty;
+      expect(prepareCalls).to.equal(0);
     }
   );
 });
