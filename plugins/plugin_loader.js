@@ -181,6 +181,7 @@ async function reapply(config, dryRun = false) {
     });
 
     let newPluginCategoryMap = {};
+    const reversedPluginConfs = [...pluginConfs].reverse();
     const reversedPluginConfs = pluginConfs.reverse();
     // if config is not set, simply reapply effective config
     if (config) {
