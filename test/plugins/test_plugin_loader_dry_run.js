@@ -21,6 +21,7 @@ process.env.FIREROUTER_HOME = process.env.FIREROUTER_HOME || path.resolve(__dirn
 const chai = require('chai');
 const expect = chai.expect;
 
+const Plugin = require('../../plugins/plugin.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const pluginLoader = require('../../plugins/plugin_loader.js');
 
@@ -99,6 +100,72 @@ describe('Test plugin loader dry-run', function() {
 
     await pluginLoader.reapply(candidateConfig, true);
 
+    expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
+    expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
+    expect(originalLivePlugin.networkConfig).to.deep.equal(originalLiveConfig);
+  });
+
+  it('should restore live state after a dry-run throws', async () => {
+    platform.prepareWLANRegDomainChange = async function() {
+      return false;
+    };
+
+    await pluginLoader.initPlugins();
+
+    const originalRegistry = pluginLoader.getPluginInstances('interface');
+    expect(originalRegistry).to.be.an('object');
+
+    const PhyInterfacePlugin = require('../../plugins/interface/phy_intf_plugin.js');
+    const livePlugin = new PhyInterfacePlugin('eth0');
+
+    livePlugin.name = 'eth0';
+    livePlugin.networkConfig = {
+      enabled: true,
+      marker: 'live'
+    };
+
+    originalRegistry.eth0 = livePlugin;
+
+    const originalLivePlugin = pluginLoader.getPluginInstance('interface', 'eth0');
+    const originalLiveConfig = JSON.parse(
+      JSON.stringify(originalLivePlugin.networkConfig)
+    );
+
+    const originalPropagateConfigChanged = Plugin.prototype.propagateConfigChanged;
+    const expectedError = new Error('dry-run regression test');
+
+    Plugin.prototype.propagateConfigChanged = function() {
+      throw expectedError;
+    };
+
+    try {
+      let thrownError;
+
+      try {
+        await pluginLoader.reapply({
+          interface: {
+            phy: {
+              eth0: {
+                enabled: false,
+                marker: 'candidate'
+              }
+            }
+          }
+        }, true);
+      } catch (err) {
+        thrownError = err;
+      }
+
+      expect(thrownError).to.equal(expectedError);
+    } finally {
+      Plugin.prototype.propagateConfigChanged = originalPropagateConfigChanged;
+    }
+
+    /*
+     * The exception occurs while operating on the temporary dry-run registry.
+     * The finally block in reapply() must restore the original live registry
+     * and leave the existing live plugin untouched.
+     */
     expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
     expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
     expect(originalLivePlugin.networkConfig).to.deep.equal(originalLiveConfig);
