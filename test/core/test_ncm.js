@@ -211,7 +211,7 @@ describe('Test integrated AP config conversion', function(){
   async function expectAPCConversionFailure() {
     const util = require('../../util/util.js');
     const originalUUID = util.generateUUID;
-    const testUUID = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const testUUID = `test-${process.pid}-${Date.now()}`;
     const tempFile = `/dev/shm/fr_orig_config_${testUUID}.json`;
 
     util.generateUUID = () => testUUID;
@@ -241,7 +241,7 @@ describe('Test integrated AP config conversion', function(){
         });
         throw new Error('APC conversion unexpectedly succeeded');
       } catch (err) {
-        expect(err).to.exist;
+        expect(err).to.be.instanceOf(Error);
       }
 
       await fs.promises.access(tempFile).then(
