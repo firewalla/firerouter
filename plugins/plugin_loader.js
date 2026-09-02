@@ -15,6 +15,7 @@
 
 'use strict';
 
+const { AsyncLocalStorage } = require('async_hooks');
 const Plugin = require('./plugin.js');
 const log = require('../util/logger.js')(__filename);
 const config = require('../util/config.js').getConfig();
@@ -23,7 +24,7 @@ const Message = require('../core/Message.js');
 let pluginConfs = [];
 
 let pluginCategoryMap = {};
-let activePluginCategoryMap = null;
+const pluginLookupContext = new AsyncLocalStorage();
 
 let scheduledReapplyTask = null;
 let restartRsyslogTask = null;
@@ -94,13 +95,17 @@ function createPluginInstance(category, name, constructor, config = null, catego
   return instance;
 }
 
+function getPluginCategoryMap() {
+  return pluginLookupContext.getStore() || pluginCategoryMap;
+}
+
 function getPluginInstances(category) {
-  const categoryMap = activePluginCategoryMap || pluginCategoryMap;
+  const categoryMap = getPluginCategoryMap();
   return categoryMap[category];
 }
 
 function getPluginInstance(category, name) {
-  const categoryMap = activePluginCategoryMap || pluginCategoryMap;
+  const categoryMap = getPluginCategoryMap();
   return categoryMap[category] && categoryMap[category][name];
 }
 
@@ -186,9 +191,6 @@ async function reapply(config, dryRun = false) {
     // Dry-run uses a private plugin registry so candidate instances cannot replace,
     // mutate, or temporarily hide the live registry from other callers.
     const workingPluginCategoryMap = dryRun ? {} : pluginCategoryMap;
-    const previousActivePluginCategoryMap = activePluginCategoryMap;
-    if (dryRun)
-      activePluginCategoryMap = workingPluginCategoryMap;
 
     try {
       let wlanReloaded = false;
@@ -316,11 +318,23 @@ async function reapply(config, dryRun = false) {
       }
 
       const flush = async (instance, pluginConf) => {
+        let configuredInitial = false;
+        const configure = async (nextConfig) => {
+          if (dryRun) {
+            await pluginLookupContext.run(workingPluginCategoryMap, async () => {
+              await instance.configure(nextConfig);
+            });
+          } else {
+            await instance.configure(nextConfig);
+          }
+        };
+
         if (!instance.networkConfig) {
           // Newly created instance. Use a copy during dry-run because some plugin
           // configure() implementations add generated metadata to their input.
           const nextConfig = dryRun ? _.cloneDeep(instance._nextConfig) : instance._nextConfig;
-          await instance.configure(nextConfig);
+          await configure(nextConfig);
+          configuredInitial = true;
         }
 
         if (instance.isReapplyNeeded()) {
@@ -349,10 +363,10 @@ async function reapply(config, dryRun = false) {
           instance.unsubscribeAllChanges();
         }
 
-        if (config) {
+        if (config && !configuredInitial) {
           // Do not change the caller's candidate config during dry-run.
           const nextConfig = dryRun ? _.cloneDeep(instance._nextConfig) : instance._nextConfig;
-          await instance.configure(nextConfig);
+          await configure(nextConfig);
         }
       };
 
@@ -451,10 +465,8 @@ async function reapply(config, dryRun = false) {
       lastAppliedTimestamp = Date.now() / 1000;
       return errors;
     } finally {
-      if (dryRun) {
-        activePluginCategoryMap = previousActivePluginCategoryMap;
+      if (dryRun)
         applyInProgress = false;
-      }
     }
   }).then((errors) => {
     if (!dryRun)
