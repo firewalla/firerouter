@@ -97,9 +97,15 @@ describe('Test plugin loader dry-run', function() {
         }
       }
     };
+    const originalCandidateConfig = JSON.parse(JSON.stringify(candidateConfig));
+    const originalLastAppliedTimestamp = pluginLoader.getLastAppliedTimestamp();
 
     await pluginLoader.reapply(candidateConfig, true);
 
+    expect(candidateConfig).to.deep.equal(originalCandidateConfig);
+    expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
+    expect(candidateConfig).to.deep.equal(originalCandidateConfig);
+    expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
     expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
     expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
     expect(originalLivePlugin.networkConfig).to.deep.equal(originalLiveConfig);
@@ -130,6 +136,18 @@ describe('Test plugin loader dry-run', function() {
     const originalLiveConfig = JSON.parse(
       JSON.stringify(originalLivePlugin.networkConfig)
     );
+    const candidateConfig = {
+      interface: {
+        phy: {
+          eth0: {
+            enabled: false,
+            marker: 'candidate'
+          }
+        }
+      }
+    };
+    const originalCandidateConfig = JSON.parse(JSON.stringify(candidateConfig));
+    const originalLastAppliedTimestamp = pluginLoader.getLastAppliedTimestamp();
 
     const originalPropagateConfigChanged = Plugin.prototype.propagateConfigChanged;
     const expectedError = new Error('dry-run regression test');
@@ -142,16 +160,7 @@ describe('Test plugin loader dry-run', function() {
       let thrownError;
 
       try {
-        await pluginLoader.reapply({
-          interface: {
-            phy: {
-              eth0: {
-                enabled: false,
-                marker: 'candidate'
-              }
-            }
-          }
-        }, true);
+        await pluginLoader.reapply(candidateConfig, true);
       } catch (err) {
         thrownError = err;
       }
