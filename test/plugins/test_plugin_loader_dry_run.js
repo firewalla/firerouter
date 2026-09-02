@@ -68,7 +68,7 @@ describe('Test plugin loader dry-run', function() {
     expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
   });
 
-  it('should not replace or mutate the live plugin registry during dry-run', async () => {
+  it('should resolve plugin lookups against the dry-run candidate registry', async () => {
     platform.prepareWLANRegDomainChange = async function() {
       return false;
     };
@@ -78,6 +78,75 @@ describe('Test plugin loader dry-run', function() {
      * plugin constructors. Its system-level preparation calls are not part
      * of this regression and are therefore not used here after initialization.
      */
+    await pluginLoader.initPlugins();
+
+    const liveInterfacePlugins = pluginLoader.getPluginInstances('interface');
+    expect(liveInterfacePlugins).to.be.an('object');
+
+    const PhyInterfacePlugin = require('../../plugins/interface/phy_intf_plugin.js');
+    const livePlugin = new PhyInterfacePlugin('eth0');
+
+    livePlugin.name = 'eth0';
+    livePlugin.networkConfig = {
+      enabled: true,
+      marker: 'live'
+    };
+
+    liveInterfacePlugins.eth0 = livePlugin;
+
+    const originalRegistry = pluginLoader.getPluginInstances('interface');
+    const originalLivePlugin = pluginLoader.getPluginInstance('interface', 'eth0');
+    const originalLiveConfig = JSON.parse(
+      JSON.stringify(originalLivePlugin.networkConfig)
+    );
+
+    const observedPluginInstances = [];
+    const observedPlugin = [];
+    const originalConfigure = PhyInterfacePlugin.prototype.configure;
+
+    PhyInterfacePlugin.prototype.configure = async function(networkConfig) {
+      observedPluginInstances.push(pluginLoader.getPluginInstances('interface'));
+      observedPlugin.push(pluginLoader.getPluginInstance('interface', this.name));
+      return originalConfigure.call(this, networkConfig);
+    };
+
+    const candidateConfig = {
+      interface: {
+        phy: {
+          eth0: {
+            enabled: false,
+            marker: 'candidate'
+          }
+        }
+      }
+    };
+    const originalCandidateConfig = JSON.parse(JSON.stringify(candidateConfig));
+    const originalLastAppliedTimestamp = pluginLoader.getLastAppliedTimestamp();
+
+    try {
+      await pluginLoader.reapply(candidateConfig, true);
+    } finally {
+      PhyInterfacePlugin.prototype.configure = originalConfigure;
+    }
+
+    expect(observedPluginInstances).to.have.length.greaterThan(0);
+    expect(observedPlugin).to.have.length.greaterThan(0);
+    expect(observedPluginInstances.every(registry => registry !== originalRegistry)).to.equal(true);
+    expect(observedPlugin.every(instance => instance !== originalLivePlugin)).to.equal(true);
+    expect(observedPlugin.every(instance => instance && instance !== livePlugin)).to.equal(true);
+    expect(observedPlugin.every(instance => instance === observedPluginInstances[0].eth0)).to.equal(true);
+    expect(candidateConfig).to.deep.equal(originalCandidateConfig);
+    expect(pluginLoader.getLastAppliedTimestamp()).to.equal(originalLastAppliedTimestamp);
+    expect(pluginLoader.getPluginInstances('interface')).to.equal(originalRegistry);
+    expect(pluginLoader.getPluginInstance('interface', 'eth0')).to.equal(originalLivePlugin);
+    expect(originalLivePlugin.networkConfig).to.deep.equal(originalLiveConfig);
+  });
+
+  it('should not replace or mutate the live plugin registry during dry-run', async () => {
+    platform.prepareWLANRegDomainChange = async function() {
+      return false;
+    };
+
     await pluginLoader.initPlugins();
 
     const interfacePlugins = pluginLoader.getPluginInstances('interface');
