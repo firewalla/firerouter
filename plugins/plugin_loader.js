@@ -174,6 +174,12 @@ async function reapply(config, dryRun = false) {
       applyInProgress = true;
     const errors = [];
 
+    // A dry-run without a candidate config has nothing to validate. Do not
+    // fall through to the live-registry reapply path, which is intentionally
+    // allowed for normal (non-dry-run) reapply().
+    if (dryRun && !config)
+      return errors;
+
     // Dry-run uses a private plugin registry so candidate instances cannot replace,
     // mutate, or temporarily hide the live registry from other callers.
     const workingPluginCategoryMap = dryRun ? {} : pluginCategoryMap;
