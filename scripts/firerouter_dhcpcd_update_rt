@@ -48,9 +48,9 @@ case $reason in
           elif [ -n "$addr" ]; then
             # here we should take other addresses as the old addresses and remove them and related routes.
             for rt_table in $rt_tables; do
-              execute_and_log "sudo ip -6 r del $addr dev $interface table $rt_table"
+              execute_and_log sudo ip -6 r del "$addr" dev "$interface" table "$rt_table"
             done
-            execute_and_log "sudo ip -6 addr del $addr dev $interface"
+            execute_and_log sudo ip -6 addr del "$addr" dev "$interface"
           fi
           addr_id=$((addr_id - 1))
         done
@@ -85,7 +85,7 @@ case $reason in
 
           slaac_addr="${prefix_upper}:${b1}${b2}:${b3}ff:fe${b4}:${b5}${b6}"
           log "prefix=$prefix slaac_addr=$slaac_addr"
-          execute_and_log "sudo ip -6 addr add ${slaac_addr}/128 dev $interface"
+          execute_and_log sudo ip -6 addr add "${slaac_addr}/128" dev "$interface"
         fi
       fi
 
@@ -95,7 +95,7 @@ case $reason in
             # seen in one customer's environment that RA assigns a /47 address that overlaps with PD address range.
             # this solution is not perfect, if there are other cases that RA assigns a /64 address that overlaps with PD address range (I don't think it's likely), we need to do more work.
             */64)
-              execute_and_log "sudo ip -6 r add $new_addrs dev $interface metric $metric mtu $mtu table $rt_table"
+              execute_and_log sudo ip -6 r add "$new_addrs" dev "$interface" metric "$metric" mtu "$mtu" table "$rt_table"
               ;;
             *)
               log "invalid RA addr that does not end with /64: $new_addrs"
@@ -105,7 +105,7 @@ case $reason in
       fi
 
       for default_rt_table in $default_rt_tables; do
-        execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
+        execute_and_log sudo ip -6 r replace default via "$nd_from" dev "$interface" mtu "$mtu" table "$default_rt_table"
       done
       old_gw=`cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo ""`
       if [ "$nd_from" != "$old_gw" ]; then
@@ -120,7 +120,7 @@ case $reason in
       old_addrs="${old_addrs%,}"
       if [ -n "$old_addrs" ]; then
         for rt_table in $rt_tables; do
-          execute_and_log "sudo ip -6 r del $old_addrs dev $interface table $rt_table"
+          execute_and_log sudo ip -6 r del "$old_addrs" dev "$interface" table "$rt_table"
         done
       fi
       echo "$new_addrs," > /dev/shm/dhcpcd.ip6.$interface
