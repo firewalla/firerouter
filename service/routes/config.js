@@ -265,6 +265,7 @@ router.post('/set',
         const errMsg = `Unrecognized transactionOp in config: ${transactionOp}`;
         log.error(errMsg);
         res.status(400).json({errors:[errMsg]});
+        return;
       }
       if (inTransaction && !validTransactionOps.includes(transactionOp)) {
         const errMsg = "A config change transaction context is in progress, reject non-transaction change request";
