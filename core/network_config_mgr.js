@@ -32,6 +32,7 @@ const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 
 const fsp = require('fs').promises;
+const path = require('path');
 const util = require('../util/util.js');
 const pluginConfig = require('../util/config.js').getConfig();
 
@@ -787,13 +788,13 @@ class NetworkConfigManager {
     return errors;
   }
 
-  async convertIntegratedAPConfig(config) {
+  async convertIntegratedAPConfig(config, tempDir = "/dev/shm") {
     if (!platform.isWLANManagedByAPC()) {
       return config;
     }
 
     const fwapcExecPath = r.getFwapcExecPath();
-    const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
+    const tempFile = path.join(tempDir, `fr_orig_config_${util.generateUUID()}.json`);
     try {
       await fsp.writeFile(tempFile, JSON.stringify(config));
       // turn off log output on stdout to avoid interference with JSON parsing
