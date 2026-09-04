@@ -205,3 +205,138 @@ describe('Test interface base dhcp6', function(){
       ]);
     });
   });
+
+  describe('Test interface base state router lifetime', function(){
+    let plugin;
+
+    beforeEach(() => {
+      plugin = new InterfaceBasePlugin('eth0');
+      plugin.configure({dhcp6: {}, dhcp: true});
+
+      // Isolate state() from host interface, routing, DNS, and filesystem state.
+      plugin._getSysFSClassNetValue = async () => null;
+      plugin._getRtId = async () => null;
+      plugin.getIPv4Addresses = async () => [];
+      plugin.getRoutableSubnets = async () => [];
+      plugin.getIPv6Addresses = async () => [];
+      plugin.getDns4Nameservers = async () => [];
+      plugin.getOrigDNSNameservers = async () => [];
+      plugin.getDns6Nameservers = async () => [];
+      plugin.getOrigDNS6Nameservers = async () => [];
+      plugin.getPrefixDelegations = async () => [];
+      plugin.isInterfacePresent = async () => true;
+      plugin.getSubIntfs = async () => null;
+      plugin.getLastDHCP6LeaseInfo = async () => ({});
+
+      plugin.isWAN = () => true;
+    });
+
+    it('returns a zero Router Lifetime for the reported gateway', async () => {
+      plugin.getLastDHCP6LeaseInfo = async () => ({
+        gw6: 'fe80::1',
+        ra_router_lifetime: 0
+      });
+
+      const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+      routing.getInterfaceGWIP = async (intf, af) => {
+        expect(intf).to.equal('eth0');
+        return af === 6 ? 'fe80::1' : null;
+      };
+
+      try {
+        const state = await plugin.state();
+
+        expect(state.gateway6).to.equal('fe80::1');
+        expect(state.ra_router_lifetime).to.equal(0);
+      } finally {
+        routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+      }
+    });
+
+    it('does not expose a Router Lifetime from a different gateway', async () => {
+      plugin.getLastDHCP6LeaseInfo = async () => ({
+        gw6: 'fe80::2',
+        ra_router_lifetime: 0
+      });
+
+      const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+      routing.getInterfaceGWIP = async (intf, af) => {
+        expect(intf).to.equal('eth0');
+        return af === 6 ? 'fe80::1' : null;
+      };
+
+      try {
+        const state = await plugin.state();
+
+        expect(state.gateway6).to.equal('fe80::1');
+        expect(state.ra_router_lifetime).to.equal(null);
+      } finally {
+        routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+      }
+    });
+
+    it('returns a positive Router Lifetime for the reported gateway', async () => {
+      plugin.getLastDHCP6LeaseInfo = async () => ({
+        gw6: 'fe80::1',
+        ra_router_lifetime: 1800
+      });
+
+      const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+      routing.getInterfaceGWIP = async (intf, af) => {
+        expect(intf).to.equal('eth0');
+        return af === 6 ? 'fe80::1' : null;
+      };
+
+      try {
+        const state = await plugin.state();
+
+        expect(state.gateway6).to.equal('fe80::1');
+        expect(state.ra_router_lifetime).to.equal(1800);
+      } finally {
+        routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+      }
+    });
+
+    it('returns null for a malformed Router Lifetime', async () => {
+      plugin.getLastDHCP6LeaseInfo = async () => ({
+        gw6: 'fe80::1',
+        ra_router_lifetime: '1800s'
+      });
+
+      const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+      routing.getInterfaceGWIP = async (intf, af) => {
+        expect(intf).to.equal('eth0');
+        return af === 6 ? 'fe80::1' : null;
+      };
+
+      try {
+        const state = await plugin.state();
+
+        expect(state.gateway6).to.equal('fe80::1');
+        expect(state.ra_router_lifetime).to.equal(null);
+      } finally {
+        routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+      }
+    });
+
+    it('returns null when Router Lifetime is absent', async () => {
+      plugin.getLastDHCP6LeaseInfo = async () => ({
+        gw6: 'fe80::1'
+      });
+
+      const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+      routing.getInterfaceGWIP = async (intf, af) => {
+        expect(intf).to.equal('eth0');
+        return af === 6 ? 'fe80::1' : null;
+      };
+
+      try {
+        const state = await plugin.state();
+
+        expect(state.gateway6).to.equal('fe80::1');
+        expect(state.ra_router_lifetime).to.equal(null);
+      } finally {
+        routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+      }
+    });
+  });
