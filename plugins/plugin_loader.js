@@ -181,7 +181,7 @@ async function reapply(config, dryRun = false) {
     });
 
     let newPluginCategoryMap = {};
-    const reversedPluginConfs = pluginConfs.reverse();
+    const reversedPluginConfs = [...pluginConfs].reverse();
     // if config is not set, simply reapply effective config
     if (config) {
       // remove plugins in descending order by init sequence
@@ -323,7 +323,7 @@ async function reapply(config, dryRun = false) {
     }
 
     // apply plugin configs in ascending order by init sequence
-    pluginConfs = reversedPluginConfs.reverse();
+    // Keep the module-level pluginConfs ordering unchanged. reversedPluginConfs is a copy.
     // do not apply config in dry run
     if (dryRun) {
       applyInProgress = false;
