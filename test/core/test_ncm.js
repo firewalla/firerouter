@@ -14,6 +14,7 @@
  */
 'use strict'
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 // resolve the plugin registry from this checkout so the suite also runs off-device
@@ -212,7 +213,8 @@ describe('Test integrated AP config conversion', function(){
     const util = require('../../util/util.js');
     const originalUUID = util.generateUUID;
     const testUUID = `test-${process.pid}-${Date.now()}`;
-    const tempFile = `/dev/shm/fr_orig_config_${testUUID}.json`;
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'firerouter-'));
+    const tempFile = path.join(tempDir, `fr_orig_config_${testUUID}.json`);
 
     util.generateUUID = () => testUUID;
 
@@ -239,7 +241,7 @@ describe('Test integrated AP config conversion', function(){
               },
             },
           },
-        });
+        }, tempDir);
       } catch (err) {
         conversionError = err;
       }
@@ -256,6 +258,7 @@ describe('Test integrated AP config conversion', function(){
     } finally {
       util.generateUUID = originalUUID;
       await fs.promises.unlink(tempFile).catch(() => {});
+      await fs.promises.rmdir(tempDir).catch(() => {});
     }
   }
 });

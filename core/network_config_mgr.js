@@ -798,7 +798,9 @@ class NetworkConfigManager {
     try {
       await fsp.writeFile(tempFile, JSON.stringify(config));
       // turn off log output on stdout to avoid interference with JSON parsing
-      const response = await exec(`FW_LOG=OFF ${fwapcExecPath} ciap ${tempFile}`);
+      const response = await execFile(fwapcExecPath, ["ciap", tempFile], {
+        env: { ...process.env, FW_LOG: "OFF" },
+      });
       const data = JSON.parse(response.stdout);
       log.debug(`Converted effective config`, data);
       return data;
