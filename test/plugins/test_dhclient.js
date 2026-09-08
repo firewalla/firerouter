@@ -76,4 +76,27 @@ describe('Test populate etc conf templates', function(){
     expect(contents).to.contains("rfc3442-classless-static-routes, ntp-servers;");
 
   });
+
+  // the request list above only decides what is asked for, some DHCP servers announce ntp-servers
+  // regardless, so this env file is what keeps the NTP exit hooks off an interface
+  it('should populate dhclient env', async()=> {
+    await fs.writeFileAsync(this.plugin._getDHClientEnvPath(), this.plugin._getDHClientEnvContent());
+
+    const contents = await fs.readFileAsync(this.plugin._getDHClientEnvPath(), {encoding: "utf8"});
+    log.debug(contents);
+
+    expect(contents).to.equal("FR_ALLOW_NTP=0\n");
+  });
+
+  it('should populate dhclient env, allowNTPviaDHCP', async()=> {
+    const allowNTPviaDHCP = true;
+    this.plugin.configure({allowNTPviaDHCP});
+
+    await fs.writeFileAsync(this.plugin._getDHClientEnvPath(), this.plugin._getDHClientEnvContent());
+
+    const contents = await fs.readFileAsync(this.plugin._getDHClientEnvPath(), {encoding: "utf8"});
+    log.debug(contents);
+
+    expect(contents).to.equal("FR_ALLOW_NTP=1\n");
+  });
 });
