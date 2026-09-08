@@ -22,6 +22,7 @@ const Promise = require('bluebird');
 const exec = require('child-process-promise').exec;
 const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const ntpViaDHCP = require('../dhcp/ntp_via_dhcp.js');
 
 Promise.promisifyAll(fs);
 
@@ -37,6 +38,7 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await exec(`sudo rm -f /etc/dhcp/dhclient-exit-hooks.d/firerouter_*`).catch((err) => {});
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_update_rt /etc/dhcp/dhclient-exit-hooks.d/`);
     await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_ip_change /etc/dhcp/dhclient-exit-hooks.d/`);
+    await ntpViaDHCP.installHook();
     // copy dhcpcd hook script
     if (!fs.existsSync('/lib/dhcpcd/dhcpcd-run-hooks')) {
       await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_run_hooks /lib/dhcpcd/dhcpcd-run-hooks`);
