@@ -111,6 +111,10 @@ class Platform {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/files`;
   }
 
+  getNtpServiceName() {
+    return "ntp";
+  }
+
   async ledNormalVisibleStart() {
   }
 
