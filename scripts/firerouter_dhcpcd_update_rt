@@ -86,7 +86,7 @@ cleanup_managed_ipv6_default_routes() {
             continue
         fi
 
-        if execute_and_log "sudo ip -6 r del default via $old_gw dev $interface table $default_rt_table"; then
+        if execute_and_log sudo ip -6 r del default via "$old_gw" dev "$interface" table "$default_rt_table"; then
             log "ROUTERADVERT: removed IPv6 default route via $old_gw from table $default_rt_table"
             ANY_ROUTE_REMOVED=1
             continue
@@ -244,7 +244,7 @@ case $reason in
         # Preserve existing behavior when Router Lifetime is nonzero,
         # missing, or malformed.
         for default_rt_table in $default_rt_tables; do
-          execute_and_log "sudo ip -6 r replace default via $nd_from dev $interface mtu $mtu table $default_rt_table"
+          execute_and_log sudo ip -6 r replace default via "$nd_from" dev "$interface" mtu "$mtu" table "$default_rt_table"
         done
 
         if [ "$nd_from" != "$old_gw" ]; then
