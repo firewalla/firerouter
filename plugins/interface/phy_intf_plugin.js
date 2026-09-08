@@ -53,6 +53,7 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhclient@.service`, "/etc/systemd/system/"]);
     await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd6@.service`, "/etc/systemd/system/"]);
     await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_ndppd@.service`, "/etc/systemd/system/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_mcproxy@.service`, "/etc/systemd/system/"]);
   }
 
   async prepareEnvironment() {

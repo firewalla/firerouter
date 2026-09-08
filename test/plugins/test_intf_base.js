@@ -205,3 +205,44 @@ describe('Test interface base dhcp6', function(){
       ]);
     });
   });
+
+  describe('Test interface base mcproxy config for ipv6PassthroughFrom', function(){
+    it('should derive a distinct routing table number per LAN bridge', () => {
+      expect(new InterfaceBasePlugin("br0")._mcproxyTableNumber()).to.equal(1);
+      expect(new InterfaceBasePlugin("br1")._mcproxyTableNumber()).to.equal(2);
+      expect(new InterfaceBasePlugin("br2")._mcproxyTableNumber()).to.equal(3);
+      // an interface name with no trailing digit can't be mapped to a table number
+      expect(new InterfaceBasePlugin("eth")._mcproxyTableNumber()).to.be.null;
+      // non-bridge interfaces are rejected even with a trailing digit, so they can never
+      // collide with an unrelated bridge's table number (e.g. eth0 vs br0)
+      expect(new InterfaceBasePlugin("eth0")._mcproxyTableNumber()).to.be.null;
+    });
+
+    it('should derive a distinct table number per bond and per VLAN-on-bond, even when the VLAN tag repeats across bonds', () => {
+      const bond0vlan100 = new InterfaceBasePlugin("bond0.100")._mcproxyTableNumber();
+      const bond1vlan100 = new InterfaceBasePlugin("bond1.100")._mcproxyTableNumber();
+      expect(bond0vlan100).to.not.equal(bond1vlan100);
+      expect(bond0vlan100).to.equal(2000100);
+      expect(bond1vlan100).to.equal(2010100);
+
+      expect(new InterfaceBasePlugin("bond0")._mcproxyTableNumber()).to.equal(1000000);
+      expect(new InterfaceBasePlugin("bond1")._mcproxyTableNumber()).to.equal(1000001);
+
+      // plain bonds must not collide with VLANs-on-bonds either
+      expect(new InterfaceBasePlugin("bond0")._mcproxyTableNumber())
+        .to.not.equal(new InterfaceBasePlugin("bond0.100")._mcproxyTableNumber());
+    });
+
+    it('should write a pinstance config bound to the assigned table', async () => {
+      const plugin = new InterfaceBasePlugin("br0");
+      plugin.configure({});
+      const confDir = `${r.getUserConfigFolder()}/mcproxy`;
+      const confPath = `${confDir}/br0.conf`;
+      await fs.promises.mkdir(confDir, { recursive: true });
+      await plugin._writeMcproxyConfigFile("eth1", "br0", 1);
+      const content = await fs.promises.readFile(confPath, { encoding: "utf8" });
+      expect(content).to.equal("protocol MLDv2;\npinstance \"br0\"(1): \"eth1\" ==> \"br0\";\n");
+      await fs.promises.unlink(confPath).catch(() => {});
+      await fs.promises.rmdir(confDir).catch(() => {});
+    });
+  });
