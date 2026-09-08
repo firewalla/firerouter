@@ -247,6 +247,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       if (this.networkConfig.dhcp) {
         await fs.unlinkAsync(this._getDHClientConfigPath()).catch((err) => {});
+        await fs.unlinkAsync(this._getDHClientEnvPath()).catch((err) => {});
       }
       if (this.isWAN() || this.isLAN()) {
         await Promise.all([
@@ -750,6 +751,16 @@ class InterfaceBasePlugin extends Plugin {
     return `${r.getUserConfigFolder()}/dhclient/${this.name}.conf`;
   }
 
+  // sourced by firerouter_dhclient@.service and handed to dhclient-script through dhclient -e,
+  // this is what actually decides whether the NTP exit hooks may act on this interface
+  _getDHClientEnvPath() {
+    return `${r.getUserConfigFolder()}/dhclient/${this.name}.env`;
+  }
+
+  _getDHClientEnvContent() {
+    return `FR_ALLOW_NTP=${this._allowNTPviaDHCP() ? 1 : 0}\n`;
+  }
+
   _getDuidType(duid) {
     const prefix = duid.slice(0,5);
     let duidType = '';
@@ -890,9 +901,16 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  _allowNTPviaDHCP() {
+    return this.networkConfig.allowNTPviaDHCP === true;
+  }
+
+  // Keeping ntp-servers out of the parameter request list only avoids asking for it, it does not
+  // stop a server that announces it anyway, so this is an optimization and not enforcement.
+  // Enforcement is _getDHClientEnvPath() below, which dhclient-script reads.
   _overrideNTPoverDHCP(dhclientConf){
     // replace with ntp options
-    if (this.networkConfig.allowNTPviaDHCP === true){
+    if (this._allowNTPviaDHCP()){
       dhclientConf = dhclientConf.replace(/%NTP_SERVERS%/g, ", ntp-servers");
       dhclientConf = dhclientConf.replace(/%DHCP6_SNTP_SERVERS%/g, " dhcp6.sntp-servers,");
     } else {
@@ -915,6 +933,7 @@ class InterfaceBasePlugin extends Plugin {
       dhclientConf=this._overrideNTPoverDHCP(dhclientConf);
       dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
       await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
+      await fs.writeFileAsync(this._getDHClientEnvPath(), this._getDHClientEnvContent());
       await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
