@@ -2111,9 +2111,12 @@ class InterfaceBasePlugin extends Plugin {
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
 
-    const raRouterLifetime = dhcp6Lease
-      && dhcp6Lease.gw6
-      && dhcp6Lease.gw6 === gateway6
+    const leaseGateway6 = dhcp6Lease && dhcp6Lease.gw6
+      ? new Address6(dhcp6Lease.gw6) : null;
+    const activeGateway6 = gateway6 ? new Address6(gateway6) : null;
+    const raRouterLifetime = leaseGateway6 && leaseGateway6.isValid()
+      && activeGateway6 && activeGateway6.isValid()
+      && leaseGateway6.correctForm() === activeGateway6.correctForm()
       && Number.isInteger(dhcp6Lease.ra_router_lifetime)
       ? dhcp6Lease.ra_router_lifetime
       : null;

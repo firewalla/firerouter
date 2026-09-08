@@ -253,6 +253,34 @@ describe('Test interface base dhcp6', function(){
       }
     });
 
+    for (const [leaseGateway, routeGateway, lifetime, expected] of [
+      ['fe80:0:0:0:0:0:0:1', 'fe80::1', 0, 0],
+      ['fe80::1', 'fe80:0:0:0:0:0:0:1', 1800, 1800],
+      ['FE80:0000:0000:0000:0000:0000:0000:000A', 'fe80::a', 1800, 1800],
+      ['invalid', 'invalid', 1800, null],
+      ['invalid', 'fe80::1', 1800, null],
+      ['fe80::1', 'invalid', 1800, null],
+      ['', 'fe80::1', 1800, null],
+      ['fe80::1', null, 1800, null]
+    ]) {
+      it(`compares parsed gateways ${leaseGateway} and ${routeGateway} with lifetime ${lifetime}`, async () => {
+        plugin.getLastDHCP6LeaseInfo = async () => ({
+          gw6: leaseGateway,
+          ra_router_lifetime: lifetime
+        });
+        const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+        routing.getInterfaceGWIP = async (intf, af) => af === 6 ? routeGateway : null;
+
+        try {
+          const state = await plugin.state();
+          expect(state.gateway6).to.equal(routeGateway);
+          expect(state.ra_router_lifetime).to.equal(expected);
+        } finally {
+          routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+        }
+      });
+    }
+
     it('does not expose a Router Lifetime from a different gateway', async () => {
       plugin.getLastDHCP6LeaseInfo = async () => ({
         gw6: 'fe80::2',

@@ -156,6 +156,9 @@ describe('DHCPv6 Router Advertisement route updates', () => {
       ].join('\n');
     }).join('\n');
 
+    fs.writeFileSync(path.join(sandboxDir, 'redis-cli'),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >> "$EVENT_LOG"\n', { mode: 0o755 });
+
     fs.writeFileSync(
       runner,
       `#!/bin/sh
@@ -179,7 +182,7 @@ DELETE_FAILURES=${deleteFailures}
 DELETE_THEN_DISAPPEAR=${deleteThenDisappear}
 
 ip() {
-  printf '%s\\\\n' "$*" >> "$IP_LOG"
+  printf '%s\\n' "$*" >> "$IP_LOG"
 
   if [ "$1" = "-4" ] &&
      [ "$2" = "addr" ] &&
@@ -203,16 +206,16 @@ ip() {
       requested_gateway="$8"
     fi
 
-    printf '%s\\\\n' "$requested_table" >> "$QUERY_LOG"
+    printf '%s\\n' "$requested_table" >> "$QUERY_LOG"
 
     if grep -F -x "$requested_table" "$QUERY_FAILURES" >/dev/null 2>&1; then
       return 1
     fi
 
-    route_key="${requested_table}|${requested_gateway}"
+    route_key="\${requested_table}|\${requested_gateway}"
 
     if grep -F -x "$route_key" "$ROUTE_STATE" >/dev/null 2>&1; then
-      echo "default via ${requested_gateway} dev wan0"
+      echo "default via \${requested_gateway} dev wan0"
     fi
 
     return 0
@@ -227,12 +230,13 @@ ip() {
 
     if [ "$4" = "default" ] &&
        [ "$5" = "via" ] &&
-       [ "$7" = "table" ]; then
+       [ "$7" = "dev" ] &&
+       [ "$9" = "table" ]; then
       requested_gateway="$6"
-      requested_table="$8"
+      requested_table="\${10}"
     fi
 
-    route_key="${requested_table}|${requested_gateway}"
+    route_key="\${requested_table}|\${requested_gateway}"
 
     if grep -F -x "$route_key" "$DELETE_FAILURES" >/dev/null 2>&1; then
       if grep -F -x "$route_key" "$DELETE_THEN_DISAPPEAR" >/dev/null 2>&1; then
@@ -257,18 +261,19 @@ ip() {
 }
 
 sudo() {
-  printf '%s\\\\n' "$*" >> "$SUDO_LOG"
-  "\\$@"
+  printf '%s\\n' "$*" >> "$SUDO_LOG"
+  "$@"
 }
 
-redis-cli() {
-  printf '%s\\\\n' "$*" >> "$EVENT_LOG"
-}
+# Use an executable stub: POSIX shells reject hyphens in function names.
+export EVENT_LOG
+PATH=${sandboxDir}:$PATH
+export PATH
 
 . ${commonScript}
 
 log() {
-  printf '%s\\\\n' "$*" >> "$EVENT_LOG"
+  printf '%s\\n' "$*" >> "$EVENT_LOG"
 }
 
 # Execute the hooks in the same order as dhcpcd-run-hooks:
@@ -415,6 +420,9 @@ log() {
     fs.mkdirSync(
       stateDir
     );
+
+    // Isolate route notifications from first-observation address changes.
+    fs.writeFileSync(path.join(stateDir, 'dhcpcd.ip6.wan0'), ',\n');
 
     copyHookToSandbox(
       recordLeaseScript,
@@ -580,6 +588,28 @@ log() {
       );
     }
   );
+
+
+  for (const cacheContents of [null, '']) {
+    it(`does not manage routes for a zero-lifetime RA with ${cacheContents === null ? 'missing' : 'empty'} gateway cache`, () => {
+      const cachePath = path.join(stateDir, 'dhcpcd.gw6.wan0');
+      if (cacheContents === null) {
+        fs.unlinkSync(cachePath);
+      } else {
+        fs.writeFileSync(cachePath, cacheContents);
+      }
+      setRoutes([{ table: 'main', gateway: 'fe80::a' }]);
+
+      runHook({ gateway: 'fe80::a', lifetime: '0' });
+
+      expect(getCache()).to.equal(cacheContents);
+      expect(getSudoOutput()).to.not.include('ip -6 r');
+      expect(getQueryOutput()).to.deep.equal([]);
+      expect(readLines(routeState)).to.deep.equal(['main|fe80::a']);
+      expect(getEventOutput()).to.not.include('dhcpcd6.ip_change');
+      expect(getRAFile()).to.include('ra_router_lifetime=0');
+    });
+  }
 
 
   it(
@@ -1053,6 +1083,7 @@ log() {
         'main',
         '100',
         '100',
+        'main', // A retry rechecks even tables that were already cleaned.
         '100'
       ]);
     }
