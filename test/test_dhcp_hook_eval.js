@@ -22,27 +22,35 @@ const path = require('path');
 const {execFileSync} = require('child_process');
 
 describe('DHCP command execution helper', function() {
-  it('passes arguments without evaluating shell metacharacters', function() {
-    const script = path.resolve(__dirname, '../scripts/firerouter_dhcpcd_common');
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dhcp-hook-'));
-    const marker = path.join(tempDir, 'unexpected');
+  const scripts = [
+    'firerouter_dhcpcd_common',
+    'firerouter_dhclient_update_rt',
+  ];
 
-    try {
-      const shellCode = [
-        '. "$1"',
-        'execute_and_log /bin/printf "%s" "$2"',
-      ].join('\n');
+  for (const scriptName of scripts) {
+    it(`passes arguments without evaluating shell metacharacters in ${scriptName}`, function() {
+      const script = path.resolve(__dirname, `../scripts/${scriptName}`);
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firerouter-dhcp-hook-'));
+      const marker = path.join(tempDir, 'unexpected');
 
-      const output = execFileSync(
-        '/bin/bash',
-        ['-c', shellCode, 'test', script, `safe; touch "${marker}"`],
-        {encoding: 'utf8'}
-      );
+      try {
+        const shellCode = [
+          'log() { :; }',
+          '. <(sed -n \'/^execute_and_log() {/,/^}/p\' "$1")',
+          'execute_and_log printf "%s" "$2"',
+        ].join('\n');
 
-      assert.strictEqual(output, `safe; touch "${marker}"`);
-      assert.strictEqual(fs.existsSync(marker), false);
-    } finally {
-      fs.rmSync(tempDir, {recursive: true, force: true});
-    }
-  });
+        const output = execFileSync(
+          '/bin/bash',
+          ['-c', shellCode, 'test', script, `safe; touch "${marker}"`],
+          {encoding: 'utf8'}
+        );
+
+        assert.strictEqual(output, `safe; touch "${marker}"`);
+        assert.strictEqual(fs.existsSync(marker), false);
+      } finally {
+        fs.rmSync(tempDir, {recursive: true, force: true});
+      }
+    });
+  }
 });
