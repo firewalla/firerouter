@@ -73,6 +73,10 @@ class GoldPlus2Platform extends Platform {
     return null;
   }
 
+  getNtpServiceName() {
+    return "chrony";
+  }
+
   shouldBringWLANInterfaceUp(wlanIntfPlugin) {
     if (wlanIntfPlugin.networkConfig.enabled === false) {
       return false;
