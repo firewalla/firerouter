@@ -127,6 +127,11 @@ case $reason in
     RECORD_LEASE_ND_ID="$nd_id"
 
     if [ -n "$gw6" ]; then
+      # Router Lifetime from the selected Router Advertisement.
+      # This is distinct from Prefix Information valid lifetime (vltime).
+      router_lifetime_name="nd${nd_id}_lifetime"
+      eval "router_lifetime=\$$router_lifetime_name"
+
       vltime_name="nd${nd_id}_prefix_information1_vltime"
       eval "vltime=\$$vltime_name"
 
@@ -156,7 +161,7 @@ case $reason in
         pi_id=$((pi_id + 1))
       done
 
-      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)\nprefix=$slaac_prefix\n" > /dev/shm/dhcpcd.ra.$interface
+      echo "ip6=$new_addrs\ngw6=$gw6\nra_router_lifetime=$router_lifetime\nra_vltime=$vltime\nra_ts=$(date +%s)\nprefix=$slaac_prefix\n" > /dev/shm/dhcpcd.ra.$interface
     fi
     ;;
   BOUND6|REBOOT6|RENEW6|REBIND6)

@@ -2021,6 +2021,11 @@ class InterfaceBasePlugin extends Plugin {
               info.ra_ts = Number(value);
               break;
             }
+            case "ra_router_lifetime": {
+              if (/^\d+$/.test(value))
+                info.ra_router_lifetime = Number(value);
+              break;
+            }
             case "ra_vltime": {
               if (!isNaN(value))
                 info.ra_lifetime = Number(value);
@@ -2071,7 +2076,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs, dhcp6Lease] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -2092,8 +2097,12 @@ class InterfaceBasePlugin extends Plugin {
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
       this.isInterfacePresent(),
-      this.getSubIntfs()
+      this.getSubIntfs(),
+      this.networkConfig && this.networkConfig.dhcp6
+        ? this.getLastDHCP6LeaseInfo()
+        : null
     ]);
+
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     let wanConnState = null;
     let wanTestResult = null;
@@ -2101,7 +2110,18 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
+
+    const leaseGateway6 = dhcp6Lease && dhcp6Lease.gw6
+      ? new Address6(dhcp6Lease.gw6) : null;
+    const activeGateway6 = gateway6 ? new Address6(gateway6) : null;
+    const raRouterLifetime = leaseGateway6 && leaseGateway6.isValid()
+      && activeGateway6 && activeGateway6.isValid()
+      && leaseGateway6.correctForm() === activeGateway6.correctForm()
+      && Number.isInteger(dhcp6Lease.ra_router_lifetime)
+      ? dhcp6Lease.ra_router_lifetime
+      : null;
+
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, ra_router_lifetime: raRouterLifetime, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
   }
 
   onEvent(e) {
