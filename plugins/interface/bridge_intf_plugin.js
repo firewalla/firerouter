@@ -294,12 +294,25 @@ class BridgePortStateSync {
 
   _handleLine(line) {
     const masterMatch = line.match(/master\s+(\S+)/);
-    if (!masterMatch || masterMatch[1] !== this._bridgeName) return;
+    if (!masterMatch) return;
     // some iproute2 builds (e.g. iproute2-ss180129 on gold) insert an extra "state <ADMIN-STATE>"
     // token between the ifname and the trailing colon, e.g. "4: eth2 state UP : <flags> ...".
     const intfMatch = line.match(/^\s*\d+:\s+(\S+?)(?:\s+state\s+\S+)?(?:@\S+)?\s*:/);
     if (!intfMatch) return;
-    const physicalIntf = intfMatch[1];
+    const ifName = intfMatch[1];
+    if (masterMatch[1] !== this._bridgeName) {
+      // correct vlan port state if it drifts.
+      const vlanMatch = ifName.match(/^(.+)\.\d+$/);
+      if (!vlanMatch) return;
+      const physicalIntf = vlanMatch[1];
+      const proc = this._monitorProcess;
+      BridgePortStateSync.getNativeBridgePortState(physicalIntf).then(state => {
+        if (this._monitorProcess !== proc) return;
+        if (state !== undefined && state !== null) this._scheduleApply(physicalIntf, state);
+      });
+      return;
+    }
+    const physicalIntf = ifName;
     // look for the STP port state only after "master <bridge>" — the ifname may carry its own
     // unrelated "state <ADMIN-STATE>" token earlier in the line (see intfMatch above).
     const afterMaster = line.slice(masterMatch.index + masterMatch[0].length);
@@ -357,9 +370,15 @@ class BridgePortStateSync {
   // the VLAN bridge has STP off, so only forwarding/disabled have defined kernel semantics there.
   static async applyVlanPortStates(physicalIntf, stpState, log) {
     const targetState = stpState === 3 ? 'forwarding' : 'disabled';
+    const targetNum = stpState === 3 ? 3 : 0;
     const allIntfs = await fsp.readdir('/sys/class/net/').catch(() => []);
     const vlanIntfs = allIntfs.filter(i => i.startsWith(`${physicalIntf}.`));
     for (const vlanIntf of vlanIntfs) {
+      const vlanMaster = await fsp.readlink(`/sys/class/net/${vlanIntf}/master`).then(p => p.split('/').pop()).catch(() => null);
+      const current = vlanMaster
+        ? await fsp.readFile(`/sys/class/net/${vlanMaster}/brif/${vlanIntf}/state`, 'utf8').then(s => parseInt(s.trim(), 10)).catch(() => undefined)
+        : undefined;
+      if (current === targetNum) continue;
       await exec(`sudo bridge link set dev ${vlanIntf} state ${targetState}`)
         .catch(err => { if (log) log.warn(`applyVlanPortStates: bridge link set dev ${vlanIntf} state ${targetState} failed`, err.message); });
     }
