@@ -23,6 +23,15 @@ const {Address4, Address6} = require('ip-address');
 
 class DockerInterfacePlugin extends InterfaceBasePlugin {
 
+  /*
+   * Docker bridge interfaces are virtual interfaces managed by Docker.
+   * FireRouter must not attempt physical-interface hardware-address
+   * management on them.
+   */
+  hasHardwareAddress() {
+    return false;
+  }
+
   static async preparePlugin() {
     const hasContainer = await exec(`sudo ls /var/lib/docker/containers -1 | wc -l`).then((result) => result.stdout.trim() !== "0").catch((err) => false);
     if (hasContainer)

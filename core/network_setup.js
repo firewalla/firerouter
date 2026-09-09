@@ -22,6 +22,7 @@ const routing = require('../util/routing.js');
 const r = require('../util/firerouter.js');
 const fsp = require('fs').promises;
 const util = require('../util/util.js');
+const ntpViaDHCP = require('../plugins/dhcp/ntp_via_dhcp.js');
 
 const exec = require('child-process-promise').exec;
 
@@ -89,6 +90,8 @@ class NetworkSetup {
 
   async setup(config, dryRun = false) {
     const errors = await pl.reapply(config, dryRun);
+    if (!dryRun)
+      await ntpViaDHCP.reconcile(config);
     await this.post_setup(dryRun);
     // no need to await
     this.booting_finish();

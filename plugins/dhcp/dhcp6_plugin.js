@@ -38,7 +38,7 @@ class DHCP6Plugin extends DHCPPlugin {
     this._restartService();
   }
 
-  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200) {
+  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200, raLifetime) {
     tags = tags || [];
     nameservers = nameservers || [];
     let extraTags = "";
@@ -46,6 +46,15 @@ class DHCP6Plugin extends DHCPPlugin {
     if (tags.length > 0) {
       extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
     }
+
+    if (raLifetime === undefined) {
+      raLifetime = Math.max(3600, raInterval);
+    }
+
+    if (!Number.isInteger(raLifetime) || raLifetime < 0 || raLifetime > 65535 || (raLifetime !== 0 && raLifetime < raInterval)) {
+      this.fatal(`raLifetime for dhcp6 of ${this.name} should be 0 or an integer between raInterval and 65535`);
+    }
+
     const content = [];
 
     if (nameservers.length > 0){
@@ -59,7 +68,7 @@ class DHCP6Plugin extends DHCPPlugin {
         // simply use slaac to configure client IPv6 address
         content.push(`dhcp-range=tag:${iface},${extraTags}::,constructor:${this.name},slaac,${leaseTime}`);
         content.push('enable-ra');
-        content.push(`ra-param=${iface},${raInterval},3600`);
+        content.push(`ra-param=${iface},${raInterval},${raLifetime}`);
         break;
       }
       case "stateful": {
@@ -69,7 +78,7 @@ class DHCP6Plugin extends DHCPPlugin {
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be at least 64`);
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
-        content.push(`ra-param=${iface},${raInterval},3600`);
+        content.push(`ra-param=${iface},${raInterval},${raLifetime}`);
         break;
       }
       default:
@@ -94,7 +103,7 @@ class DHCP6Plugin extends DHCPPlugin {
       return;
     }
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,
-      this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval);
+      this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval, this.networkConfig.raLifetime);
     this._restartService();
   }
 }
