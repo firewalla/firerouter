@@ -184,6 +184,12 @@ class Platform {
   async installWLANTools() {
   }
 
+  // Returns true if a WLAN kernel module reload was actually performed, so that
+  // callers know a full reapply of WLAN interfaces is needed.
+  async prepareWLANRegDomainChange(country) {
+    return false;
+  }
+
   async installKernelModule(module_name) {
     const installed = await this.isKernelModuleInstalled(module_name);
     if (installed) return;
@@ -204,6 +210,19 @@ class Platform {
         log.error(`Failed to install ${module_name}.ko`, err.message);
       });
     }
+  }
+
+  async modprobeKernelModule(module_name) {
+    await exec(`sudo modprobe ${module_name}`).catch((err) => {
+      log.error(`Failed to modprobe ${module_name}`, err.message);
+    });
+  }
+
+  async rmmodKernelModule(module_name) {
+    return await exec(`sudo rmmod ${module_name}`).then(() => true).catch((err) => {
+      log.error(`Failed to unload ${module_name} before reload`, err.message);
+      return false;
+    });
   }
 
   async isKernelModuleInstalled(module_name) {
