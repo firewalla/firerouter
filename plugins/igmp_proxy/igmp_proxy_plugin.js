@@ -14,7 +14,7 @@
  */
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 const r = require('../../util/firerouter.js');
@@ -27,11 +27,11 @@ Promise.promisifyAll(fs);
 
 class IGMPProxyPlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/igmp_proxy`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/igmp_proxy`]);
   }
 
   async flush() {
-    await exec("sudo systemctl stop igmpproxy").catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", "igmpproxy"]).catch((err) => {});
     await exec(util.wrapIptables(`sudo iptables -w -F FR_IGMP`)).catch((err) => {});
   }
 
@@ -69,7 +69,7 @@ class IGMPProxyPlugin extends Plugin {
     }
     lines.push(''); // add empty line at the end of the file;
     await fs.writeFileAsync(`${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, lines.join('\n'), {encoding: 'utf8'});
-    await exec(`sudo cp ${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf /etc/igmpproxy.conf`);
+    await execFile("sudo", ["cp", `${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, "/etc/igmpproxy.conf"]);
   }
 
   async updateIptables() {
@@ -105,9 +105,9 @@ class IGMPProxyPlugin extends Plugin {
 
     await this.generateConfFile();
     await this.updateIptables();
-    await exec(`sudo systemctl stop igmpproxy`).then(() => {
+    await execFile("sudo", ["systemctl", "stop", "igmpproxy"]).then(() => {
       if (Object.keys(this.networkConfig.downstream).filter(intf => this.networkConfig.downstream[intf]).length > 0)
-        return exec(`sudo systemctl start igmpproxy`);
+        return execFile("sudo", ["systemctl", "start", "igmpproxy"]);
     }).catch((err) => {
       this.log.error("Failed to start igmpproxy", err.message);
     });
