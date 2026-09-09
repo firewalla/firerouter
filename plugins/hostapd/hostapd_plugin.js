@@ -282,14 +282,14 @@ class HostapdPlugin extends Plugin {
           }
         }
         if (iwPhy && !hasExclusiveSibling)
-          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
+          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, ['set', 'autoscan', 'exponential:2:300']).catch((err) => {
             this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
           });
       }
     } else {
       if (!platform.isWLANManagedByAPC()) {
         if (iwPhy && !hasExclusiveSibling)
-          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
+          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, ['set', 'autoscan', 'periodic:10']).catch((err) => {
             this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
           });
       }

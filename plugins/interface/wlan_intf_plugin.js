@@ -98,16 +98,18 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return wpa
   }
 
-  static async simpleWpaCommand(iwPhy,  paramString) {
-    if (!_.isString(paramString) || !paramString.trim().length)
+  // args is the wpa_cli command as argv, one element per argument. it is not a command line: a
+  // value is passed through as it stands, so an SSID or a passphrase holding a space stays one
+  // argument rather than being split on whitespace the way a shell would
+  static async simpleWpaCommand(iwPhy, args) {
+    if (!_.isArray(args) || !args.length || !args.every(a => _.isString(a) && a.length))
       throw new Error('Empty command')
 
     const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
       const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
-      // paramString is a whole wpa_cli command line, split it the way the shell used to
-      return execFile("sudo", [wpaCliPath, "-p", ctlSocket, "-i", instance.name].concat(paramString.trim().split(/\s+/)))
+      return execFile("sudo", [wpaCliPath, "-p", ctlSocket, "-i", instance.name].concat(args))
     }
   }
 
