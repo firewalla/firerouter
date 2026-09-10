@@ -46,14 +46,22 @@ function evict(resolvedPaths) {
 // in the test files
 function load(resolvedPath) {
   const origExec = cpp.exec;
+  const origExecFile = cpp.execFile;
   cpp.exec = (cmd) => {
     calls.push(cmd);
+    return Promise.resolve({stdout: "", stderr: ""});
+  };
+  // execFile takes argv rather than a command line, record it joined so the assertions, which are
+  // about the command a plugin builds, read the same either way
+  cpp.execFile = (file, args) => {
+    calls.push([file].concat(args || []).join(" "));
     return Promise.resolve({stdout: "", stderr: ""});
   };
   const shared = SHARED.map(p => require.resolve(p));
   evict([resolvedPath, ...shared]);
   const mod = require(resolvedPath);
   cpp.exec = origExec;
+  cpp.execFile = origExecFile;
   evict(shared);
   return mod;
 }

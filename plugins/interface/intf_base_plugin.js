@@ -111,38 +111,38 @@ class InterfaceBasePlugin extends Plugin {
 
   async flushIP(af = null) {
     if (!af || af == 4) {
-      await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
+      await execFile("sudo", ["ip", "-4", "addr", "flush", "dev", this.name]).catch((err) => {
         // interface may not exist, ignore error here
       });
       // make sure to stop dhclient no matter if dhcp is enabled
       if (this.networkConfig.dhcp) {
-        await exec(`sudo systemctl stop firerouter_dhclient@${this.name}`).catch((err) => {});
+        await execFile("sudo", ["systemctl", "stop", `firerouter_dhclient@${this.name}`]).catch((err) => {});
       }
     }
     if (!af || af == 6) {
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
       if (this.networkConfig.dhcp6) {
-        await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+        await execFile("sudo", ["systemctl", "stop", `firerouter_dhcpcd6@${this.name}`]).catch((err) => {});
       }
       if (this.isWAN() || this.isLAN()) {
-        await exec(`sudo ip -6 addr flush dev ${this.name}`).catch((err) => {});
+        await execFile("sudo", ["ip", "-6", "addr", "flush", "dev", this.name]).catch((err) => {});
         // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
         const lease6Filename = await this._getDHCPCDLease6Filename();
         if (lease6Filename)
-          await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
-  
-        await exec(`sudo rm -f ${this._getDeprecatedDhcpcdFilePath()}`).catch((err) => { }); // remove deprecated dhcpcd file
-        await exec(`sudo rm -f ${this._getDhcpcdFilePath()}`).catch((err) => { });
-        await exec(`sudo rm -f ${this._getDhcpcdRaFilePath()}`).catch((err) => { });
+          await execFile("sudo", ["rm", "-f", lease6Filename]).catch((err) => {});
+
+        await execFile("sudo", ["rm", "-f", this._getDeprecatedDhcpcdFilePath()]).catch((err) => { }); // remove deprecated dhcpcd file
+        await execFile("sudo", ["rm", "-f", this._getDhcpcdFilePath()]).catch((err) => { });
+        await execFile("sudo", ["rm", "-f", this._getDhcpcdRaFilePath()]).catch((err) => { });
       }
       if (this.networkConfig.ipv6DelegateFrom) {
         const fromIface = this.networkConfig.ipv6DelegateFrom;
         await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
       }
       // regenerate ipv6 link local address based on EUI64
-      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`).catch((err) => {});
-      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`).catch((err) => {});
-      await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`).catch((err) => {});
+      await execFile("sudo", ["sysctl", "-w", `net.ipv6.conf.${this.getEscapedNameForSysctl()}.addr_gen_mode=0`]).catch((err) => {});
+      await execFile("sudo", ["sysctl", "-w", `net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=1`]).catch((err) => {});
+      await execFile("sudo", ["sysctl", "-w", `net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=0`]).catch((err) => {});
     }
   }
 
@@ -182,7 +182,7 @@ class InterfaceBasePlugin extends Plugin {
           routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001).catch((err) => {}),
           routing.removePolicyRoutingRule("all", this.name, routing.RT_WAN_ROUTABLE, 5001, null, 6).catch((err) => {}),
           // restore reverse path filtering settings
-          exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`).catch((err) => {})
+          execFile("sudo", ["sysctl", "-w", `net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=1`]).catch((err) => {})
         ]);
         // remove fwmark defautl route ip rule
         const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
@@ -239,7 +239,7 @@ class InterfaceBasePlugin extends Plugin {
         await fs.unlinkAsync(`${r.getInterfacePDCacheDirectory(fromIface)}/${this.name}`).catch((err) =>{});
       }
       if (this.networkConfig.ipv6PassthroughFrom) {
-        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
+        await execFile("sudo", ["systemctl", "stop", `firerouter_ndppd@${this.name}`]).catch((err) => { });
         await fs.unlinkAsync(`${ndppdConfDir}/${this.name}.conf`).catch((err) => { });
       }
       if (this.networkConfig.dhcp6) {
@@ -382,9 +382,9 @@ class InterfaceBasePlugin extends Plugin {
 
   async interfaceUpDown() {
     if (this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} up`);
+      await execFile("sudo", ["ip", "link", "set", this.name, "up"]);
     } else {
-      await exec(`sudo ip link set ${this.name} down`);
+      await execFile("sudo", ["ip", "link", "set", this.name, "down"]);
     }
   }
 
@@ -437,7 +437,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async prepareEnvironment() {
     // create runtime directory
-    await exec(`mkdir -p ${r.getInterfacePDCacheDirectory(this.name)}`).catch((err) => {});
+    await execFile("mkdir", ["-p", r.getInterfacePDCacheDirectory(this.name)]).catch((err) => {});
     // create routing tables and add rules for interface
     if (this.isWAN() || this.isLAN()) {
       await routing.initializeInterfaceRoutingTables(this.name);
@@ -451,7 +451,7 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.isWAN()) {
       // loosen reverse path filtering settings, this is necessary for dual WAN
-      await exec(`sudo sysctl -w net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`).catch((err) => {});
+      await execFile("sudo", ["sysctl", "-w", `net.ipv4.conf.${this.getEscapedNameForSysctl()}.rp_filter=2`]).catch((err) => {});
       // create fwmark default route ip rule for WAN interface. Application should add this fwmark to packets to implement customized default route
       const rtid = await routing.createCustomizedRoutingTable(`${this.name}_default`);
       await Promise.all(
@@ -492,7 +492,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async applyIpv6Settings() {
     const disabled = this.isIPv6Enabled() ? 0 : 1;
-    await exec(`sudo sysctl -w net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=${disabled}`)
+    await execFile("sudo", ["sysctl", "-w", `net.ipv6.conf.${this.getEscapedNameForSysctl()}.disable_ipv6=${disabled}`])
       .catch((err) => {
         this.log.error("Failed to set accept_ra, err", err)
       });
@@ -543,7 +543,7 @@ class InterfaceBasePlugin extends Plugin {
       }
       
       // start dhcpcd for SLAAC and stateful DHCPv6 if necessary
-      await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).catch((err) => {
+      await execFile("sudo", ["systemctl", "restart", `firerouter_dhcpcd6@${this.name}`]).catch((err) => {
         this.fatal(`Failed to enable dhcpv6 client on interface ${this.name}: ${err.message}`);
       });
     } else {
@@ -553,7 +553,7 @@ class InterfaceBasePlugin extends Plugin {
         await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
         const ipv6Addrs = _.isString(this.networkConfig.ipv6) ? [this.networkConfig.ipv6] : this.networkConfig.ipv6;
         for (const addr6 of ipv6Addrs) {
-          await exec(`sudo ip -6 addr add ${addr6} dev ${this.name}`).catch((err) => {
+          await execFile("sudo", ["ip", "-6", "addr", "add", addr6, "dev", this.name]).catch((err) => {
             this.log.debug(`Failed to set ipv6 addr ${addr6} for interface ${this.name}`, err.message);
           });
         }
@@ -593,7 +593,7 @@ class InterfaceBasePlugin extends Plugin {
                 this.log.error(`Invalid sub-prefix ${subPrefix.correctForm()} for ${this.name}`);
               } else {
                 // the suffix of the delegated interface is always 1
-                await exec(`sudo ip -6 addr add ${addr.correctForm()}1/${addr.subnetMask} dev ${this.name}`).catch((err) => {
+                await execFile("sudo", ["ip", "-6", "addr", "add", `${addr.correctForm()}1/${addr.subnetMask}`, "dev", this.name]).catch((err) => {
                   this.log.debug(`Failed to set ipv6 addr ${subPrefix} for interface ${this.name}`, err.message);
                 });
                 ipChanged = true;
@@ -638,7 +638,7 @@ class InterfaceBasePlugin extends Plugin {
           }
 
           this.log.debug(`Adding IPv6 address ${addrObj.correctForm()} to ${this.name}`);
-          await exec(`sudo ip -6 addr add ${addrObj.correctForm()}/64 dev ${this.name}`).catch((err) => {
+          await execFile("sudo", ["ip", "-6", "addr", "add", `${addrObj.correctForm()}/64`, "dev", this.name]).catch((err) => {
             this.log.warn(`Failed to add IPv6 addr ${addrObj.correctForm()} to ${this.name}`, err.message);
           });
 
@@ -647,12 +647,12 @@ class InterfaceBasePlugin extends Plugin {
           await this._writeNdppdConfigFile(fromWANPlugin.name, this.name, prefix);
 
           // start ndppd
-          await exec(`sudo systemctl restart firerouter_ndppd@${this.name}`).catch((err) => {
+          await execFile("sudo", ["systemctl", "restart", `firerouter_ndppd@${this.name}`]).catch((err) => {
             this.log.error(`Failed to start ndppd service for ${this.name}`, err.message);
           });
         } while(0);
       } else {
-        await exec(`sudo systemctl stop firerouter_ndppd@${this.name}`).catch((err) => { });
+        await execFile("sudo", ["systemctl", "stop", `firerouter_ndppd@${this.name}`]).catch((err) => { });
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
@@ -792,7 +792,7 @@ class InterfaceBasePlugin extends Plugin {
   async _resetDuid() {
     this.log.debug("Resetting DUID");
     let duidType = 'DUID-UUID';
-    const arch = await exec("uname -m", {encoding: 'utf8'}).then(result => result.stdout.trim()).catch((err) => {
+    const arch = await execFile("uname", ["-m"], {encoding: 'utf8'}).then(result => result.stdout.trim()).catch((err) => {
       this.log.error(`Failed to get architecture`, err.message);
       return null;
     });
@@ -934,7 +934,7 @@ class InterfaceBasePlugin extends Plugin {
       dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
       await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
       await fs.writeFileAsync(this._getDHClientEnvPath(), this._getDHClientEnvContent());
-      await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).catch((err) => {
+      await execFile("sudo", ["systemctl", "restart", `firerouter_dhclient@${this.name}`]).catch((err) => {
         this.fatal(`Failed to enable dhclient on interface ${this.name}: ${err.message}`);
       });
     } else {
@@ -946,7 +946,7 @@ class InterfaceBasePlugin extends Plugin {
           Array.prototype.push.apply(ipv4Addrs, this.networkConfig.ipv4s);
         ipv4Addrs = ipv4Addrs.filter((v, i, a) => a.indexOf(v) === i);
         for (const addr4 of ipv4Addrs) {
-          await exec(`sudo ip addr add ${addr4} dev ${this.name}`).catch((err) => {
+          await execFile("sudo", ["ip", "addr", "add", addr4, "dev", this.name]).catch((err) => {
             this.log.debug(`Failed to set ipv4 ${addr4} for interface ${this.name}: ${err.message}`);
           });
         }
@@ -1132,8 +1132,8 @@ class InterfaceBasePlugin extends Plugin {
 
   async resetConnmark() {
     // reset first bit of connmark to make packets of established connections go through iptables filter again
-    await exec(`sudo conntrack -U -m 0x00000000/0x80000000`).catch((err) => {});
-    await exec(`sudo conntrack -U -f ipv6 -m 0x00000000/0x80000000`).catch((err) => {});
+    await execFile("sudo", ["conntrack", "-U", "-m", "0x00000000/0x80000000"]).catch((err) => {});
+    await execFile("sudo", ["conntrack", "-U", "-f", "ipv6", "-m", "0x00000000/0x80000000"]).catch((err) => {});
   }
 
   async updateRouteForDNS() {
@@ -1427,7 +1427,7 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     // there may be link-local ipv6 on interface, which is not available in static ipv6 config,
     // always try to get ipv6 addresses from ip addr output
-    let ip6s = await exec(`ip addr show dev ${this.name}`, {encoding: "utf8"})
+    let ip6s = await execFile("ip", ["addr", "show", "dev", this.name], {encoding: "utf8"})
       .then(result => result.stdout.trim() || null).catch(err => null);
     if (!ip6s) return null;
 
@@ -1459,12 +1459,12 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async getHardwareAddress() {
-    const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => null);
+    const addr = await execFile("cat", [`/sys/class/net/${this.name}/address`]).then((result) => result.stdout.trim() || null).catch((err) => null);
     return addr;
   }
 
   async getLinkAddress() {
-    const addr = await exec(`cat /sys/class/net/${this.name}/address`).then((result) => result.stdout.trim() || null).catch((err) => {
+    const addr = await execFile("cat", [`/sys/class/net/${this.name}/address`]).then((result) => result.stdout.trim() || null).catch((err) => {
       this.log.error(`Failed to get hardware address of ${this.name}`, err.message);
     });
     return addr;
@@ -1887,9 +1887,9 @@ class InterfaceBasePlugin extends Plugin {
 
   // use throw error for Promise.any
   async _getDNSResult(dnsTestDomain, srcIP, nameserver, sendEvent = false, af = 4) {
-    const cmd = `dig -${af} -b ${srcIP} +time=3 +short +tries=2 @${nameserver} ${dnsTestDomain}`;
-    this.log.debug("dig dns command:", cmd);
-    const result = await exec(cmd).catch((err) => null);
+    const args = [`-${af}`, "-b", srcIP, "+time=3", "+short", "+tries=2", `@${nameserver}`, dnsTestDomain];
+    this.log.debug("dig dns command:", "dig", args.join(" "));
+    const result = await execFile("dig", args).catch((err) => null);
 
     let dnsResult = null;
 
@@ -1968,7 +1968,7 @@ class InterfaceBasePlugin extends Plugin {
 
   async renewDHCPLease() {
     const ts = Math.floor(Date.now() / 1000);
-    const execSuccess = await exec(`sudo systemctl restart firerouter_dhclient@${this.name}`).then(() => true).catch((err) => false);
+    const execSuccess = await execFile("sudo", ["systemctl", "restart", `firerouter_dhclient@${this.name}`]).then(() => true).catch((err) => false);
     if (!execSuccess)
       return null;
     while (true) {
@@ -1988,7 +1988,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async renewDHCP6Lease() {
-    const execSuccess = await exec(`sudo systemctl restart firerouter_dhcpcd6@${this.name}`).then(() => true).catch((err) => false);
+    const execSuccess = await execFile("sudo", ["systemctl", "restart", `firerouter_dhcpcd6@${this.name}`]).then(() => true).catch((err) => false);
     if (!execSuccess)
       return null;
     await util.delay(5000);

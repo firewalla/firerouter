@@ -30,7 +30,7 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 const DHCLIENT_EXIT_HOOKS_DIR = "/etc/dhcp/dhclient-exit-hooks.d";
 // hooks that feed the NTP servers announced by the DHCP server to a local time daemon, only the
@@ -70,10 +70,10 @@ async function installHook() {
     log.error(`No dhclient exit hook available for NTP service ${serviceName}, NTP via DHCP will not take effect`);
     return;
   }
-  await exec(`sudo rm -f ${NTP_DHCLIENT_HOOKS.filter(name => name !== serviceName).map(name => `${DHCLIENT_EXIT_HOOKS_DIR}/${name}`).join(" ")}`).catch((err) => {
+  await execFile("sudo", ["rm", "-f"].concat(NTP_DHCLIENT_HOOKS.filter(name => name !== serviceName).map(name => `${DHCLIENT_EXIT_HOOKS_DIR}/${name}`))).catch((err) => {
     log.error("Failed to remove unused NTP dhclient exit hooks", err.message);
   });
-  await exec(`sudo cp ${srcPath} ${DHCLIENT_EXIT_HOOKS_DIR}/${serviceName}`).catch((err) => {
+  await execFile("sudo", ["cp", srcPath, `${DHCLIENT_EXIT_HOOKS_DIR}/${serviceName}`]).catch((err) => {
     log.error(`Failed to copy dhclient exit hook for NTP service ${serviceName}`, err.message);
   });
 }
@@ -99,7 +99,7 @@ async function reconcile(config) {
     log.info(`Revoking NTP servers learnt via DHCP from ${stale.join(", ")}`);
     // drop them all at once and refresh the time daemon a single time, sourcing the hook once per
     // interface the way a lease event does would restart the daemon once per interface
-    await exec(`sudo rm -f ${stale.map(intf => `${sourceDir}/${intf}${SOURCES_SUFFIX}`).join(" ")}`).catch((err) => {
+    await execFile("sudo", ["rm", "-f"].concat(stale.map(intf => `${sourceDir}/${intf}${SOURCES_SUFFIX}`))).catch((err) => {
       log.error(`Failed to drop stale NTP servers of ${stale.join(", ")}`, err.message);
     });
     // with no interface in the environment - sudo scrubs it - sourcing the hook only defines its
