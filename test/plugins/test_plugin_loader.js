@@ -138,6 +138,10 @@ describe('plugin_loader', function() {
         stdout: '',
         stderr: '',
       }),
+      execFile: async () => ({
+        stdout: '',
+        stderr: '',
+      }),
     });
 
     delete require.cache[pluginLoaderPath];
