@@ -882,7 +882,7 @@ class NetworkConfigManager {
       throw new Error(`dhcp is not enabled on interface ${intf}`);
     }
     const info = await plugin.renewDHCP6Lease().catch((err) => {
-      log.error(`Failed to renew DHCP6 lease on ${intf}`, err.message);
+      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
       return null;
     });
     return info;
