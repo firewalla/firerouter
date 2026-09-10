@@ -27,6 +27,163 @@ const routing = require('../../util/routing.js');
 
 let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js');
 
+describe('Test ipv6 prefix renumbering', function(){
+    const pdRecord = '/dev/shm/dhcpcd.pd_deprecated.eth9';
+    const raRecord = '/dev/shm/dhcpcd.ra_deprecated.eth9';
+
+    beforeEach(() => {
+      this.plugin = new InterfaceBasePlugin("eth9");
+      // an upstream /56 with 3000s left, plus an entry for an unrelated prefix
+      fs.writeFileSync(pdRecord, '2001:db8:1::/56@3000,2001:db8:ff::/56@1200,');
+      fs.writeFileSync(raRecord, '2001:db8:5::/64@900,');
+    });
+
+    afterEach(() => {
+      for (const f of [pdRecord, raRecord])
+        try { fs.unlinkSync(f); } catch (err) {}
+    });
+
+    it('should reduce an address to its prefix', async() => {
+      expect(this.plugin._getIPv6PrefixCidr('2001:db8:1:2::1/64')).to.be.equal('2001:db8:1:2::/64');
+      expect(this.plugin._getIPv6PrefixCidr('not an address')).to.be.equal(null);
+    });
+
+    it('should parse ip addr show output', async() => {
+      const stdout = [
+        '5: br0    inet6 2001:db8:aa::1/64 scope global \\       valid_lft forever preferred_lft forever',
+        '5: br0    inet6 2001:db8:bb::1/64 scope global deprecated \\       valid_lft 7195sec preferred_lft 0sec',
+        ''
+      ].join('\n');
+
+      expect(this.plugin._parseIPv6AddrShow(stdout)).to.be.eql([
+        {addr: '2001:db8:aa::1/64', validLft: null},
+        {addr: '2001:db8:bb::1/64', validLft: 7195}
+      ]);
+      expect(this.plugin._parseIPv6AddrShow('')).to.be.eql([]);
+    });
+
+    it('should pick the prefix that just went away', async() => {
+      const live = new Set(['2001:db8:9:1::/64']);
+      const picked = this.plugin._selectPrefixesToDeprecate(
+        [{addr: '2001:db8:7:1::1/64'}, {addr: '2001:db8:9:1::1/64'}], [], live);
+      expect(picked.map(p => p.prefix)).to.be.eql(['2001:db8:7:1::/64']);
+      // lifetime is left for the caller to resolve from the upstream lease
+      expect(picked[0].expiresAt).to.be.equal(undefined);
+    });
+
+    it('should carry an already deprecated prefix over a reapply that is not a renumbering', async() => {
+      const live = new Set(['2001:db8:9:1::/64']);
+      const picked = this.plugin._selectPrefixesToDeprecate(
+        [{addr: '2001:db8:9:1::1/64'}],                       // nothing went away
+        [{addr: '2001:db8:7:1::1/64', expiresAt: 2400}], live);
+      expect(picked).to.be.eql([{addr: '2001:db8:7:1::1/64', prefix: '2001:db8:7:1::/64', expiresAt: 2400}]);
+    });
+
+    it('should keep the carried-over prefix alongside a new renumbering', async() => {
+      const live = new Set(['2001:db8:a:1::/64']);
+      const picked = this.plugin._selectPrefixesToDeprecate(
+        [{addr: '2001:db8:9:1::1/64'}],                       // 9 just went away
+        [{addr: '2001:db8:7:1::1/64', expiresAt: 2400}], live);  // 7 was already deprecated
+      expect(picked).to.be.eql([
+        {addr: '2001:db8:9:1::1/64', prefix: '2001:db8:9:1::/64'},
+        {addr: '2001:db8:7:1::1/64', prefix: '2001:db8:7:1::/64', expiresAt: 2400}
+      ]);
+    });
+
+    it('should drop a carried-over prefix that is live again', async() => {
+      const live = new Set(['2001:db8:7:1::/64']);
+      const picked = this.plugin._selectPrefixesToDeprecate(
+        [{addr: '2001:db8:7:1::1/64'}], [{addr: '2001:db8:7:1::1/64', expiresAt: 2400}], live);
+      expect(picked).to.be.eql([]);
+    });
+
+    it('should pick nothing when there is nothing to deprecate', async() => {
+      expect(this.plugin._selectPrefixesToDeprecate([], [], new Set())).to.be.eql([]);
+      expect(this.plugin._selectPrefixesToDeprecate(null, null, new Set())).to.be.eql([]);
+    });
+
+    it('should give a statically configured prefix the full ceiling', async() => {
+      this.plugin.configure({ipv6: '2001:db8:1:2::1/64'});
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(7200);
+    });
+
+    it('should use what is left of the upstream lease', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(3000);
+    });
+
+    it('should cap the upstream lease at the 2 hour ceiling', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      fs.writeFileSync(pdRecord, '2001:db8:1::/56@99999,');
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(7200);
+    });
+
+    it('should report zero when the upstream prefix is already gone', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      fs.writeFileSync(pdRecord, '2001:db8:1::/56@0,');
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(0);
+    });
+
+    it('should treat an unparseable record as unknown, not as expired', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      fs.writeFileSync(pdRecord, '2001:db8:1::/56@notanumber,');
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(7200);
+    });
+
+    it('should treat an empty lifetime as unknown, not as expired', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      // Number("") is 0, which would read as "the upstream prefix is already gone"
+      fs.writeFileSync(pdRecord, '2001:db8:1::/56@,');
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(7200);
+    });
+
+    it('should ignore records for other prefixes', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:99:1::/64')).to.be.equal(7200);
+    });
+
+    it('should fall back to the ceiling when there is no record at all', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      fs.unlinkSync(pdRecord);
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(7200);
+    });
+
+    it('should read the RA record for a passthrough network', async() => {
+      this.plugin.configure({ipv6PassthroughFrom: 'eth9'});
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:5::/64')).to.be.equal(900);
+    });
+
+    it('should still advertise a withdrawal when the upstream lease is already expired', async() => {
+      expect(this.plugin._clampDeprecationLifetime(0)).to.be.equal(120);
+      expect(this.plugin._clampDeprecationLifetime(-5)).to.be.equal(120);
+      expect(this.plugin._clampDeprecationLifetime(undefined)).to.be.equal(120);
+    });
+
+    it('should also floor a lifetime too short to survive dnsmasq conf regen + restart', async() => {
+      expect(this.plugin._clampDeprecationLifetime(2)).to.be.equal(120);
+      expect(this.plugin._clampDeprecationLifetime(119)).to.be.equal(120);
+    });
+
+    it('should leave a real remaining lifetime untouched', async() => {
+      expect(this.plugin._clampDeprecationLifetime(900)).to.be.equal(900);
+      expect(this.plugin._clampDeprecationLifetime(120)).to.be.equal(120);
+    });
+
+    it('should age a deprecation record by how long it has sat unread', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      const writtenAt = new Date((Date.now() / 1000 - 400) * 1000);
+      fs.utimesSync(pdRecord, writtenAt, writtenAt);   // record was written 400s ago, not now
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(2600); // 3000 - 400
+    });
+
+    it('should never age a deprecation record below zero', async() => {
+      this.plugin.configure({ipv6DelegateFrom: 'eth9'});
+      const writtenAt = new Date((Date.now() / 1000 - 9999) * 1000);
+      fs.utimesSync(pdRecord, writtenAt, writtenAt);
+      expect(await this.plugin._getDeprecationLifetime('2001:db8:1:2::/64')).to.be.equal(0);
+    });
+});
+
 describe('Test interface base dhcp6', function(){
     this.timeout(30000);
 

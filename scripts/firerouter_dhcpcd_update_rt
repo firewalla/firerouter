@@ -33,9 +33,6 @@ case $reason in
         ra_file="/dev/shm/dhcpcd.ra.$interface"
         prefix=$(grep -oP '^prefix=\K.+' "$ra_file" 2>/dev/null || true)
         log "Get prefix $prefix from $ra_file"
-        if [ -z "$prefix" ]; then
-          unset ipv6_passthrough
-        fi
       else
         # only contain 1 address in current logic
         new_addrs=""
@@ -56,7 +53,7 @@ case $reason in
         done
       fi
 
-      if [ -n "$ipv6_passthrough" ]; then
+      if [ -n "$ipv6_passthrough" ] && [ -n "$prefix" ]; then
         # Compute the SLAAC address manually:
         # combine the /64 prefix upper bits with the EUI-64 derived from the interface MAC.
         # prefix format is "2001:db8:0:1::" (no /64 suffix), strip trailing :: to get upper bits.
@@ -85,7 +82,40 @@ case $reason in
 
           slaac_addr="${prefix_upper}:${b1}${b2}:${b3}ff:fe${b4}:${b5}${b6}"
           log "prefix=$prefix slaac_addr=$slaac_addr"
-          execute_and_log "sudo ip -6 addr add ${slaac_addr}/128 dev $interface"
+          # Mirror the WAN's real RA lifetimes onto this address so it ages out per RFC 4862 even if
+          # the RA just stops (not only on a new prefix). RECORD_LEASE_RA_VLTIME/_PLTIME come
+          # pre-validated from firerouter_dhcpcd_record_lease; empty means no usable lifetime seen.
+          effective_vltime="$RECORD_LEASE_RA_VLTIME"
+          if [ -n "$RECORD_LEASE_RA_VLTIME" ]; then
+            existing=$(ip -6 -o addr show dev "$interface" 2>/dev/null | grep -F "${slaac_addr}/128" | head -n1)
+            if [ -n "$existing" ]; then
+              case "$existing" in
+                *"valid_lft forever"*) cur=999999999 ;;
+                *) cur=$(echo "$existing" | grep -oP 'valid_lft \K[0-9]+') ;;
+              esac
+              if [ -n "$cur" ] && [ "$cur" -gt 7200 ] && [ "$RECORD_LEASE_RA_VLTIME" -le 7200 ] \
+                 && [ "$RECORD_LEASE_RA_VLTIME" -le "$cur" ]; then
+                effective_vltime=7200
+                log "RFC4862 5.5.3(e): refusing to drop $slaac_addr valid_lft from ${cur}s to advertised ${RECORD_LEASE_RA_VLTIME}s in one step, clamping to 7200s instead"
+              fi
+            fi
+          fi
+          if [ -n "$effective_vltime" ] && [ "$effective_vltime" -le 0 ]; then
+            # iproute2 rejects valid_lft 0 on add/replace, which would otherwise silently leave
+            # the previous, now-stale address and lifetime untouched - remove it outright instead.
+            if execute_and_log "sudo ip -6 addr del ${slaac_addr}/128 dev $interface"; then
+              log "removed expired slaac address $slaac_addr on $interface"
+            else
+              log "no expired slaac address $slaac_addr to remove on $interface"
+            fi
+            slaac_addr=""
+          else
+            lifetime_opts=""
+            if [ -n "$effective_vltime" ]; then
+              lifetime_opts=" valid_lft $effective_vltime preferred_lft $RECORD_LEASE_RA_PLTIME"
+            fi
+            execute_and_log "sudo ip -6 addr replace ${slaac_addr}/128 dev $interface$lifetime_opts"
+          fi
         fi
       fi
 
@@ -115,17 +145,29 @@ case $reason in
       fi
     fi
 
-    old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
-    if [ "$new_addrs," != "$old_addrs" ]; then
-      old_addrs="${old_addrs%,}"
-      if [ -n "$old_addrs" ]; then
-        for rt_table in $rt_tables; do
-          execute_and_log "sudo ip -6 r del $old_addrs dev $interface table $rt_table"
-        done
+    if [ -n "$ipv6_passthrough" ] && [ -z "$prefix" ]; then
+      log "ROUTERADVERT: no usable prefix on $interface, keeping current ip6 addr and record"
+    else
+      if [ -n "$slaac_addr" ]; then
+        new_addrs="${slaac_addr}/128"
       fi
-      echo "$new_addrs," > /dev/shm/dhcpcd.ip6.$interface
-      log "ip_changed: ip6 addrs changed from $old_addrs to $new_addrs on $interface"
-      ip_changed="1"
+      old_addrs=`cat /dev/shm/dhcpcd.ip6.$interface 2>/dev/null || echo ""`
+      if [ "$new_addrs," != "$old_addrs" ]; then
+        old_addrs="${old_addrs%,}"
+        if [ -n "$old_addrs" ]; then
+          for rt_table in $rt_tables; do
+            execute_and_log "sudo ip -6 r del $old_addrs dev $interface table $rt_table"
+          done
+          # the passthrough address is put on the interface by this hook, so removing the one it
+          # replaces is this hook's job too - otherwise the WAN keeps one stale /128 per renumbering.
+          if [ -n "$ipv6_passthrough" ]; then
+            execute_and_log "sudo ip -6 addr del $old_addrs dev $interface"
+          fi
+        fi
+        echo "$new_addrs," > /dev/shm/dhcpcd.ip6.$interface
+        log "ip_changed: ip6 addrs changed from $old_addrs to $new_addrs on $interface"
+        ip_changed="1"
+      fi
     fi
     ;;
   BOUND6|REBOOT6)
