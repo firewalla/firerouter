@@ -20,14 +20,20 @@ let expect = chai.expect;
 
 const childProcess = require('child-process-promise');
 const originalExec = childProcess.exec;
-let execImpl = originalExec;
+const originalExecFile = childProcess.execFile;
 
-// DNSPlugin captures exec when it is loaded. Install the wrapper only while
-// loading DNSPlugin, then restore childProcess.exec immediately so unrelated
-// tests see the original module export.
+let execImpl = originalExec;
+let execFileImpl = originalExecFile;
+
+// DNSPlugin captures these functions when it is loaded. Install wrappers only
+// while loading DNSPlugin, then restore the shared module exports immediately.
 childProcess.exec = (...args) => execImpl(...args);
+childProcess.execFile = (...args) => execFileImpl(...args);
+
 let DNSPlugin = require('../../plugins/dns/dns_plugin.js');
+
 childProcess.exec = originalExec;
+childProcess.execFile = originalExecFile;
 
 const exec = originalExec;
 
