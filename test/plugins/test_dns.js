@@ -83,11 +83,17 @@ describe('Test interface base dhcp6', function(){
             // - grep discovers the localhost upstream configuration
             // - the listener check fails because port 5353 is not listening
             execImpl = async (command) => {
-                if (command.includes("grep -rl 'server=127\\.0\\.0\\.1#'"))
-                    return {stdout: `${confPath}\n`};
                 if (command.includes('ss -lntu | grep -q'))
                     throw new Error('listener not available');
-                return {stdout: ''};
+
+                return {stdout: '', stderr: ''};
+            };
+
+            execFileImpl = async (file, args = []) => {
+                if (file === 'grep' && args.includes('server=127\\.0\\.0\\.1#'))
+                    return {stdout: `${confPath}\n`, stderr: ''};
+
+                return {stdout: '', stderr: ''};
             };
 
             // Keep the historical boot marker isolated to this test. This
@@ -110,6 +116,7 @@ describe('Test interface base dhcp6', function(){
             expect(fs.readFileSync(confPath, 'utf8')).to.equal('server=127.0.0.1#5353\n');
         } finally {
             execImpl = originalExec;
+            execFileImpl = originalExecFile;
             fs.accessAsync = originalAccessAsync;
             fs.writeFileAsync = originalWriteFileAsync;
             fireRouter.getFirewallaUserConfigFolder = originalGetFirewallaUserConfigFolder;
