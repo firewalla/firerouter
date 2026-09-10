@@ -788,30 +788,10 @@ class NetworkConfigManager {
     return errors;
   }
 
-    async convertIntegratedAPConfig(config, tempDir = "/dev/shm") {
+  async convertIntegratedAPConfig(config, tempDir = "/dev/shm") {
     if (!platform.isWLANManagedByAPC()) {
       return config;
     }
-
-    const fwapcExecPath = r.getFwapcExecPath();
-    const tempFile = path.join(tempDir, `fr_orig_config_${util.generateUUID()}.json`);
-    try {
-      await fsp.writeFile(tempFile, JSON.stringify(config));
-      // turn off log output on stdout to avoid interference with JSON parsing
-      const response = await execFile(fwapcExecPath, ["ciap", tempFile], {
-        env: Object.assign({}, process.env, {FW_LOG: "OFF"}),
-      });
-      const data = JSON.parse(response.stdout);
-      log.debug(`Converted effective config`, data);
-      return data;
-    } finally {
-      await fsp.unlink(tempFile).catch((err) => {
-        if (err.code !== "ENOENT") {
-          log.warn(`Failed to remove temporary config ${tempFile}`, err.message);
-        }
-      });
-    }
-  }
 
     const fwapcExecPath = r.getFwapcExecPath();
     const tempFile = path.join(tempDir, `fr_orig_config_${util.generateUUID()}.json`);
@@ -902,7 +882,7 @@ class NetworkConfigManager {
       throw new Error(`dhcp is not enabled on interface ${intf}`);
     }
     const info = await plugin.renewDHCP6Lease().catch((err) => {
-      log.error(`Failed to renew DHCP lease on ${intf}`, err.message);
+      log.error(`Failed to renew DHCP6 lease on ${intf}`, err.message);
       return null;
     });
     return info;
