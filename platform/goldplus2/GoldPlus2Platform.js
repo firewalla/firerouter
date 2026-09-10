@@ -16,7 +16,7 @@
 const Platform = require('../Platform.js');
 
 const firestatusBaseURL = "http://127.0.0.1:9966";
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const r = require('../../util/firerouter.js');
@@ -113,7 +113,7 @@ class GoldPlus2Platform extends Platform {
       if (i < 4)
         await util.delay(1000);
     }
-    await exec(`sudo systemctl restart firerouter_hostapd@${iface}`).catch((err) => { });
+    await execFile("sudo", ["systemctl", "restart", `firerouter_hostapd@${iface}`]).catch((err) => { });
   }
   
   getMiniupnpdNftPath() {
@@ -141,25 +141,25 @@ class GoldPlus2Platform extends Platform {
   }
 
   async ledNormalVisibleStart() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN normal visible");
     });
   }
 
   async ledNormalVisibleStop() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAllNetworkDown() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAnyNetworkUp() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
@@ -258,12 +258,12 @@ class GoldPlus2Platform extends Platform {
     await util.delay(1000);
 
     // force shutdown interfaces
-    await exec(`sudo ip link set ${iface} down`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "down"]).catch((err) => {
       log.error(`Failed to turn off interface ${iface}`, err.message);
     });
 
     // set mac address
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "address", hwAddr]).catch((err) => {
       log.error(`Failed to set MAC address of ${iface}`, err.message);
       errCounter++;
     });
@@ -284,9 +284,9 @@ class GoldPlus2Platform extends Platform {
       if (ifplug) {
         await ifplug.stopMonitoringInterface(iface);
       }
-      await exec(`sudo ip link set ${iface} down`);
+      await execFile("sudo", ["ip", "link", "set", iface, "down"]);
       await super.setMTU(iface, mtu);
-      await exec(`sudo ip link set ${iface} up`);
+      await execFile("sudo", ["ip", "link", "set", iface, "up"]);
       if (ifplug) {
         await ifplug.startMonitoringInterface(iface);
       }
@@ -298,7 +298,7 @@ class GoldPlus2Platform extends Platform {
   async getKoPath(module_name) {
     let koPath = await super.getKoPath(module_name);
 
-    const compiler = await exec("grep -o 'aarch64.*-linux-gnu-gcc' /proc/version").then(result => result.stdout.trim());
+    const compiler = await execFile("grep", ["-o", "aarch64.*-linux-gnu-gcc", "/proc/version"]).then(result => result.stdout.trim());
     if (compiler === "aarch64-none-linux-gnu-gcc") {
       const altKoPath = `${koPath}.aarch64-none-linux-gnu-gcc`;
       const altFileExists = await fsp.access(altKoPath, fs.constants.F_OK).then(() => true).catch(() => false);

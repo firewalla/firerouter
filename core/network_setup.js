@@ -24,7 +24,7 @@ const fsp = require('fs').promises;
 const util = require('../util/util.js');
 const ntpViaDHCP = require('../plugins/dhcp/ntp_via_dhcp.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 class NetworkSetup {
   constructor() {
@@ -37,28 +37,28 @@ class NetworkSetup {
 
   async prepareEnvironment() {
     // create dhclient runtime folder
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/dhclient`);
+    await execFile("mkdir", ["-p", `${r.getRuntimeFolder()}/dhclient`]);
     // create dhclient config folder
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/dhclient`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/dhclient`]);
     // create dhcpv6 client config folder
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/dhcpcd6`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/dhcpcd6`]);
     // create saved file folder
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/files`);
+    await execFile("mkdir", ["-p", `${r.getRuntimeFolder()}/files`]);
     // copy dhclient-script
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/dhclient-script /sbin/dhclient-script`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/dhclient-script`, "/sbin/dhclient-script"]);
     // copy rfc3442-classless-routes script
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/rfc3442-classless-routes /etc/dhcp/dhclient-exit-hooks.d/`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/rfc3442-classless-routes`, "/etc/dhcp/dhclient-exit-hooks.d/"]);
     // redirect dhcpcd log to specific log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhcpcd.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhcpcd.conf`, "/etc/rsyslog.d/"]);
     // redirect dhclient log to specific log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhclient.conf /etc/rsyslog.d/`)
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/12-dhclient.conf`, "/etc/rsyslog.d/"])
     pl.scheduleRestartRsyslog();
     // copy logrotate config for dhcpcd log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhcpcd /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/dhcpcd`, "/etc/logrotate.d/"]);
     // copy logrotate config for dhclient log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/dhclient /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/dhclient`, "/etc/logrotate.d/"]);
     // copy logrotate config for firerouter-dns log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/firerouter-dns /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/firerouter-dns`, "/etc/logrotate.d/"]);
     // cleanup legacy config files
     await exec(`rm -f ${r.getFireRouterHome()}/etc/dnsmasq.dns.*.conf`).catch((err) => {});
     await exec(`rm -f ${r.getUserConfigFolder()}/sshd/*`).catch((err) => {});
@@ -70,13 +70,13 @@ class NetworkSetup {
     await routing.createCustomizedRoutingTable(routing.RT_LAN_ROUTABLE);
     await routing.createCustomizedRoutingTable(routing.RT_STATIC);
     // prepare network environment
-    await exec(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`);
+    await execFile(`${r.getFireRouterHome()}/scripts/prepare_network_env.sh`, []);
   }
 
   async booting_finish() {
     if(!this.runOnce) {
       this.runOnce = true;
-      await exec(`${r.getFireRouterHome()}/scripts/booting_finish.sh`).catch(() => {});
+      await execFile(`${r.getFireRouterHome()}/scripts/booting_finish.sh`, []).catch(() => {});
     }
   }
 
@@ -84,7 +84,7 @@ class NetworkSetup {
     if (!dryRun && !this.postDone) {
       this.postDone = true;
       await exec(`${util.wrapIptables("sudo iptables -w -t nat -D POSTROUTING -j FR_SNAT_TMP")}`).catch((err) => {});
-      await exec(`sudo iptables -w -t nat -F FR_SNAT_TMP`).catch((err) => {});
+      await execFile("sudo", ["iptables", "-w", "-t", "nat", "-F", "FR_SNAT_TMP"]).catch((err) => {});
     }
   }
 

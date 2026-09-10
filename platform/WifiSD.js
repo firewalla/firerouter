@@ -17,7 +17,7 @@
 
 const log = require('../util/logger.js')(__filename);
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 const WIFI_DRV_NAME = '8821cu';
 
@@ -35,7 +35,7 @@ class WifiSD {
   }
 
   async installDriver() {
-    const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
+    const kernelVersion = await execFile('uname', ['-r']).then(result => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get kernel version`, err.message);
       return null
     });
@@ -50,14 +50,14 @@ class WifiSD {
     // load driver if exists Realtek USB WiFi dongle
     if (await this.existsUsbWifi() && !await this.platform.kernelModuleLoaded(WIFI_DRV_NAME)) {
       log.info('USB WiFi detected, loading kernel module');
-      await exec(`sudo modprobe ${WIFI_DRV_NAME}`).catch((err) => {
+      await execFile("sudo", ["modprobe", WIFI_DRV_NAME]).catch((err) => {
         log.error(`failed to load ${WIFI_DRV_NAME}`, err.message);
       });
     }
   }
 
   async reloadDriver() {
-    const kernelVersion = await exec('uname -r').then(result => result.stdout.trim()).catch((err) => {
+    const kernelVersion = await execFile('uname', ['-r']).then(result => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get kernel version`, err.message);
       return null
     });
