@@ -16,28 +16,28 @@
 'use strict';
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const _ = require('lodash');
 
 class BondInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await exec("sudo modprobe bonding");
+    await execFile("sudo", ["modprobe", "bonding"]);
   }
 
   async flush() {
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "down"]).catch((err) => {});
       if (!_.isEmpty(this.networkConfig.intf)) {
         // in rare cases, detachment will be deffered after bond is deleted, so explicitly detach slave interfaces here
-        await exec(`sudo ifenslave -d ${this.name} ${this.networkConfig.intf.join(" ")}`).catch((err) => {});
+        await execFile("sudo", ["ifenslave", "-d", this.name].concat(this.networkConfig.intf)).catch((err) => {});
       }
-      await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "delete", this.name]).catch((err) => {});
       // some newer linux kernel will bring down slave interfaces of a bond if the bond is deleted
       for (const intf of this.networkConfig.intf) {
-        await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+        await execFile("sudo", ["ip", "link", "set", intf, "up"]).catch((err) => {});
       }
     }
   }
@@ -45,7 +45,7 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
   async createInterface() {
     const presentInterfaces = [];
     for (const intf of this.networkConfig.intf) {
-      await exec(`sudo ip addr flush dev ${intf}`).catch((err) => {});
+      await execFile("sudo", ["ip", "addr", "flush", "dev", intf]).catch((err) => {});
       const intfPlugin = pl.getPluginInstance("interface", intf);
       if (intfPlugin) {
         this.subscribeChangeFrom(intfPlugin);
@@ -65,15 +65,15 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     const mode = supportedModes.includes(this.networkConfig.mode) ? this.networkConfig.mode : "balance-rr";
     if (this.networkConfig.mode && mode !== this.networkConfig.mode)
       this.log.error(`Unsupported bond mode for ${this.name}, using ${mode}`, this.networkConfig.mode);
-    await exec(`sudo ip link add ${this.name} type bond mode ${mode}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "add", this.name, "type", "bond", "mode", mode]).catch((err) => {
       this.log.debug(`Failed to create bond interface ${this.name} with mode ${mode}`, err.message);
     });
     if (presentInterfaces.length > 0) {
       // detach slave interfaces and add them back to ensure the MAC address of slave interfaces is updated after interface is re-added
-      await exec(`sudo ifenslave -d ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
+      await execFile("sudo", ["ifenslave", "-d", this.name].concat(presentInterfaces)).catch((err) => {
         this.log.debug(`Failed to detach interfaces from bond ${this.name}`, err.message);
       });
-      await exec(`sudo ifenslave ${this.name} ${presentInterfaces.join(" ")}`).catch((err) => {
+      await execFile("sudo", ["ifenslave", this.name].concat(presentInterfaces)).catch((err) => {
         this.log.error(`Failed to add interfaces to bond ${this.name}`, err.message);
       });
     }

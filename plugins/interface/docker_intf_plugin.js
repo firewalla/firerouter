@@ -17,7 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const _ = require('lodash');
 const {Address4, Address6} = require('ip-address');
 
@@ -35,27 +35,27 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
   static async preparePlugin() {
     const hasContainer = await exec(`sudo ls /var/lib/docker/containers -1 | wc -l`).then((result) => result.stdout.trim() !== "0").catch((err) => false);
     if (hasContainer)
-      await exec(`sudo systemctl start docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "start", "docker"]).catch((err) => {});
     else
-      await exec(`sudo systemctl stop docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", "docker"]).catch((err) => {});
   }
 
   async flush() {
     await super.flush();
     await this._testAndStartDocker();
-    await exec(`sudo docker network rm ${this.name}`).catch((err) => {
+    await execFile("sudo", ["docker", "network", "rm", this.name]).catch((err) => {
       this.log.error(`Failed to remove docker network ${this.name}: ${err.message}`);
     });
   }
 
   async _testAndStartDocker() {
-    const active = await exec(`sudo systemctl -q is-active docker`).then(() => true).catch((err) => false);
+    const active = await execFile("sudo", ["systemctl", "-q", "is-active", "docker"]).then(() => true).catch((err) => false);
     if (!active)
-      await exec(`sudo systemctl start docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "start", "docker"]).catch((err) => {});
   }
 
   async _checkNetworkExists() {
-    const result = await exec(`sudo docker network ls -f name=${this.name} -q`).then((result) => result.stdout.trim()).catch((err) => "");
+    const result = await execFile("sudo", ["docker", "network", "ls", "-f", `name=${this.name}`, "-q"]).then((result) => result.stdout.trim()).catch((err) => "");
     return result !== "";
   }
 
@@ -130,10 +130,11 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (driver === "bridge") {
-      driverOptsCopy.push(`"com.docker.network.bridge.name"="${intfName}"`);
+      // no quotes around the key/value: the shell used to strip them, execFile passes argv verbatim
+      driverOptsCopy.push(`com.docker.network.bridge.name=${intfName}`);
     }
-    const args = optsCopy.concat(driverOptsCopy.map(opt => `-o ${opt}`));
-    await exec(`sudo docker network create ${args.join(" ")} ${intfName}`).catch((err) => {
+    const args = optsCopy.concat(...driverOptsCopy.map(opt => ["-o", opt]));
+    await execFile("sudo", ["docker", "network", "create"].concat(args, [intfName])).catch((err) => {
       this.fatal(`Failed to create docker network ${this.name}`, err.message);
     });
     return true;
