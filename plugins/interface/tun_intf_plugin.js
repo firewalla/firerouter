@@ -17,7 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 const routing = require('../../util/routing.js');
 
@@ -25,8 +25,8 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
-    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "del", "dev", this.name]).catch((err) => {});
   }
 
   async prepareEnvironment() {
@@ -36,7 +36,7 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
     if ("rp_filter" in this.networkConfig) {
       const rpFilter = Number(this.networkConfig.rp_filter);
       if (Number.isInteger(rpFilter))
-        await exec(`sudo sysctl -w net.ipv4.conf.${this.name}.rp_filter=${rpFilter}`);
+        await execFile("sudo", ["sysctl", "-w", `net.ipv4.conf.${this.name}.rp_filter=${rpFilter}`]);
       else
         this.log.error(`Invalid rp_filter of ${this.name}, ignore`, this.networkConfig.rp_filter);
     }
@@ -44,7 +44,7 @@ class GenericTunInterfacePlugin extends InterfaceBasePlugin {
     if ("all_rp_filter" in this.networkConfig) {
       const allRpFilter = Number(this.networkConfig.all_rp_filter);
       if (Number.isInteger(allRpFilter))
-        await exec(`sudo sysctl -w net.ipv4.conf.all.rp_filter=${allRpFilter}`);
+        await execFile("sudo", ["sysctl", "-w", `net.ipv4.conf.all.rp_filter=${allRpFilter}`]);
       else
         this.log.error(`Invalid all_rp_filter of ${this.name}, ignore`, this.networkConfig.all_rp_filter);
     }
