@@ -21,6 +21,7 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const DHCPPlugin = require('./dhcp_plugin.js');
+const {Address6} = require('ip-address');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 
@@ -71,18 +72,62 @@ class DHCP6Plugin extends DHCPPlugin {
         content.push(`ra-param=${iface},${raInterval},${raLifetime}`);
         break;
       }
+
       case "stateful": {
-        if (!from || !to)
+        if (!from || !to) {
           this.fatal(`from/to is not specified for dhcp6 of ${this.name}`);
-        if (prefixLen < 64)
-          this.fatal(`prefixLen for dhcp6 of ${this.name} should be at least 64`);
+        }
+
+        let fromAddress;
+        let toAddress;
+
+        try {
+          fromAddress = new Address6(from);
+        } catch (err) {
+          this.fatal(`from is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        }
+
+        try {
+          toAddress = new Address6(to);
+        } catch (err) {
+          this.fatal(`to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        }
+
+        if (!fromAddress.isValid() ||
+            String(from).includes('/') ||
+            fromAddress.zone) {
+          this.fatal(`from is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        }
+
+        if (!toAddress.isValid() ||
+            String(to).includes('/') ||
+            toAddress.zone) {
+          this.fatal(`to is not a valid IPv6 address for dhcp6 of ${this.name}`);
+        }
+
+        if (!Number.isInteger(prefixLen) ||
+            prefixLen < 64 ||
+            prefixLen > 128) {
+          this.fatal(`prefixLen for dhcp6 of ${this.name} should be an integer between 64 and 128`);
+        }
+
+        if (fromAddress.bigInteger().compareTo(toAddress.bigInteger()) > 0) {
+          this.fatal(`from address must not be greater than to address for dhcp6 of ${this.name}`);
+        }
+
+        if (fromAddress.mask(prefixLen) !== toAddress.mask(prefixLen)) {
+          this.fatal(`from/to addresses must be in the same prefix for dhcp6 of ${this.name}`);
+        }
+
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
         content.push(`ra-param=${iface},${raInterval},${raLifetime}`);
         break;
       }
+
       default:
     }
+
     await fs.writeFileAsync(this._getConfFilePath(), content.join("\n"));
   }
 
@@ -92,16 +137,20 @@ class DHCP6Plugin extends DHCPPlugin {
       // virtual interface, need to strip suffix
       iface = this.name.substr(0, this.name.indexOf(":"));
     }
+
     const ifacePlugin = pl.getPluginInstance("interface", this.name);
     if (!ifacePlugin) {
       this.fatal(`Interface plugin ${this.name} is not found`);
     }
+
     // in case prefix delegation is used, address may be changed dynamically
     this.subscribeChangeFrom(ifacePlugin);
+
     if (await ifacePlugin.isInterfacePresent() === false) {
       this.log.warn(`Interface ${this.name} is not present yet`);
       return;
     }
+
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,
       this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval, this.networkConfig.raLifetime);
     this._restartService();
