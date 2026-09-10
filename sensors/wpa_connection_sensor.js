@@ -19,7 +19,7 @@ const r = require('../util/firerouter.js');
 const event = require('../core/event.js');
 const pl = require('../plugins/plugin_loader.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const platformLoader = require('../platform/PlatformLoader.js');
 const platform = platformLoader.getPlatform();
 const era = require('../event/EventRequestApi.js');
@@ -72,7 +72,7 @@ class WPAConnectionSensor extends Sensor {
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${iface}`;
           let ssid = null;
           if (!_.isEmpty(wpaId) && !isNaN(wpaId)) {
-            ssid = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${iface} get_network ${wpaId} ssid`)
+            ssid = await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", iface, "get_network", String(wpaId), "ssid"])
               .then(result => result.stdout.trim())
               .then(str => str.startsWith('\"') && str.endsWith('\"') ?
                 str.slice(1, -1) : util.parseHexString(str)

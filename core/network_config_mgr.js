@@ -161,13 +161,13 @@ class NetworkConfigManager {
           await platform.prepareSwitchWifi();
           // refresh interface link state to relinquish resources due to potential driver bug
           if (platform.needResetLinkBeforeSwitchWifi()) {
-            await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-            await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+            await execFile("sudo", ["ip", "link", "set", intf, "down"]).catch((err) => {});
+            await execFile("sudo", ["ip", "link", "set", intf, "up"]).catch((err) => {});
           }
           let selectedNetwork = networks.find(n => n.ssid === ssid || n.ssidHex === ssidHex); // in case of non-ascii characters, need to compare with hex string
           if (!selectedNetwork) {
             log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
-            const networkId = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} add_network`).then((result) => result.stdout.trim()).catch((err) => null);
+            const networkId = await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "add_network"]).then((result) => result.stdout.trim()).catch((err) => null);
             if (networkId === null) {
               done(null, [`Failed to add new network ${ssid}`]);
               return;
@@ -189,7 +189,7 @@ class NetworkConfigManager {
               return;
             }
           }
-          let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
+          let error = await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "select_network", String(selectedNetwork.id)]).then(() => null).catch((err) => err.message);
           if (error) {
             done(null, [error]);
             return;
@@ -205,33 +205,33 @@ class NetworkConfigManager {
                 for (const network of networks) {
                   // select_network will disable all other ssids, re-enable other ssid
                   if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
-                    await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
+                    await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "enable_network", String(network.id)]).catch((err) => { });
                 }
                 done(null, []);
                 return;
               }
             } else {
               t2 = Date.now() / 1000;
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} bssid_ignore clear`).catch((err) => { });
+              await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "bssid_ignore", "clear"]).catch((err) => { });
             }
             // if timeout exceeded or test only is set and connection is successful, switch back to previous setup
             if (t2 - t1 > 30 || state === true && testOnly) {
               clearInterval(checkTask);
               // refresh interface link state to relinquish resources due to potential driver bug
               if (platform.needResetLinkBeforeSwitchWifi()) {
-                await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-                await exec(`sudo ip link set ${intf} up`).catch((err) => {});
+                await execFile("sudo", ["ip", "link", "set", intf, "down"]).catch((err) => {});
+                await execFile("sudo", ["ip", "link", "set", intf, "up"]).catch((err) => {});
               }
               // restore config from configuration file
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} reconfigure`).catch((err) => { });
+              await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "reconfigure"]).catch((err) => { });
               if (currentNetwork) // switch back to previous ssid
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} select_network ${currentNetwork.id}`).catch((err) => { });
+                await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "select_network", String(currentNetwork.id)]).catch((err) => { });
               else // deselect ssid
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} disable_network ${selectedNetwork.id}`).catch((err) => { });
+                await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "disable_network", String(selectedNetwork.id)]).catch((err) => { });
               for (const network of networks) {
                 // select_network will disable all other ssids, re-enable other ssid
                 if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
-                  await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
+                  await execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, "enable_network", String(network.id)]).catch((err) => { });
               }
               if (state === true)
                 done(null, []);
@@ -795,7 +795,7 @@ class NetworkConfigManager {
     const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
     await fsp.writeFile(tempFile, JSON.stringify(config));
     // turn off log output on stdout to avoid inteference with JSON parsing
-    const response = await exec(`FW_LOG=OFF ${fwapcExecPath} ciap ${tempFile}`);
+    const response = await execFile(fwapcExecPath, ["ciap", tempFile], {env: Object.assign({}, process.env, {FW_LOG: "OFF"})});
     const data = JSON.parse(response.stdout);
     await fsp.unlink(tempFile).catch((err) => {});
     log.debug(`Converted effective config`, data);
@@ -831,7 +831,7 @@ class NetworkConfigManager {
     if (this.bgsaveTask)
       clearTimeout(this.bgsaveTask);
     this.bgsaveTask = setTimeout(() => {
-      rclient.bgsaveAsync().then(() => exec("sync")).catch((err) => {
+      rclient.bgsaveAsync().then(() => execFile("sync", [])).catch((err) => {
         log.error("Redis background save returns error", err.message);
       });
     }, 3000);

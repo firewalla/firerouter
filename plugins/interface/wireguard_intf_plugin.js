@@ -44,8 +44,8 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
   }
 
   static async preparePlugin() {
-    await exec(`sudo modprobe wireguard`);
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/wireguard`);
+    await execFile("sudo", ["modprobe", "wireguard"]);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/wireguard`]);
   }
 
   isFlushNeeded(newConfig) {
@@ -59,8 +59,8 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
   async flush() {
     await super.flush();
-    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "del", "dev", this.name]).catch((err) => {});
     await fs.unlinkAsync(this._getInterfaceConfPath()).catch((err) => {});
     const listenPort = this._getListenPort();
     if (listenPort !== null) {
@@ -120,7 +120,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
 
   async createInterface() {
-    await exec(`sudo ip link add dev ${this.name} type ${this.wireguardType}`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "add", "dev", this.name, "type", this.wireguardType]).catch((err) => {});
     if (!this.networkConfig.privateKey)
       this.fatal(`Private key is not specified for Wireguard interface ${this.name}`);
     // [Interface] section
@@ -176,7 +176,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
     // a special handling for wg_ap interface to avoid disrupting existing peer sessions
-    await exec(`sudo ${this.wgCmd} ${this.name === "wg_ap" ? "syncconf" : "setconf"} ${this.name} ${this._getInterfaceConfPath()}`);
+    await execFile("sudo", [this.wgCmd, this.name === "wg_ap" ? "syncconf" : "setconf", this.name, this._getInterfaceConfPath()]);
     return true;
   }
 
@@ -733,9 +733,9 @@ class WireguardMeshAutomata {
     let v6Supported = false;
     let bindIntf = this.config.bindIntf || this.bindIntf || null;
     if (bindIntf) {
-      v6Supported = await exec(`ip -6 r show default table ${bindIntf}_default`).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
+      v6Supported = await execFile("ip", ["-6", "r", "show", "default", "table", `${bindIntf}_default`]).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
     } else {
-      v6Supported = await exec(`ip -6 r show default table global_default`).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
+      v6Supported = await execFile("ip", ["-6", "r", "show", "default", "table", "global_default"]).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
     }
     const t0Peers = [];
     const t1Peers = [];

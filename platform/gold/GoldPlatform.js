@@ -14,7 +14,7 @@
  */
 
 const Platform = require('../Platform.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
@@ -180,12 +180,12 @@ class GoldPlatform extends Platform {
     await util.delay(1000);
 
     // force shutdown interfaces
-    await exec(`sudo ip link set ${iface} down`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "down"]).catch((err) => {
       log.error(`Failed to turn off interface ${iface}`, err.message);
     });
 
     // set mac address
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "address", hwAddr]).catch((err) => {
       log.error(`Failed to set MAC address of ${iface}`, err.message);
       errCounter++;
     });
@@ -223,11 +223,11 @@ class GoldPlatform extends Platform {
     }
     const iwtPathPrefix = this.getBinaryPath()+'/'+codeDir;
     log.info("  Installing iwconfig ...");
-    await exec(`sudo install -v -m 755 ${iwtPathPrefix}/iwconfig /sbin/`).catch((err)=>{
+    await execFile("sudo", ["install", "-v", "-m", "755", `${iwtPathPrefix}/iwconfig`, "/sbin/"]).catch((err)=>{
       log.error(`failed to copy iwconfig:`,err.message)
     });
     log.info("  Installing libiw.so.30 ...");
-    await exec(`sudo install -v -m 644 ${iwtPathPrefix}/libiw.so.30 /lib/x86_64-linux-gnu/`).catch((err)=>{
+    await execFile("sudo", ["install", "-v", "-m", "644", `${iwtPathPrefix}/libiw.so.30`, "/lib/x86_64-linux-gnu/"]).catch((err)=>{
       log.error(`failed to copy libiw.so.30:`,err.message)
     });
   }
