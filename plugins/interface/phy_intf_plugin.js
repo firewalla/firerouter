@@ -19,7 +19,7 @@ const InterfaceBasePlugin = require('./intf_base_plugin.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const ntpViaDHCP = require('../dhcp/ntp_via_dhcp.js');
@@ -36,23 +36,23 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
     await platform.configEthernet();
     // copy dhclient hook script
     await exec(`sudo rm -f /etc/dhcp/dhclient-exit-hooks.d/firerouter_*`).catch((err) => {});
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_update_rt /etc/dhcp/dhclient-exit-hooks.d/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient_ip_change /etc/dhcp/dhclient-exit-hooks.d/`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhclient_update_rt`, "/etc/dhcp/dhclient-exit-hooks.d/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhclient_ip_change`, "/etc/dhcp/dhclient-exit-hooks.d/"]);
     await ntpViaDHCP.installHook();
     // copy dhcpcd hook script
     if (!fs.existsSync('/lib/dhcpcd/dhcpcd-run-hooks')) {
-      await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_run_hooks /lib/dhcpcd/dhcpcd-run-hooks`);
+      await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_run_hooks`, "/lib/dhcpcd/dhcpcd-run-hooks"]);
     }
     await exec(`sudo rm -r /lib/dhcpcd/dhcpcd-hooks/firerouter_*`).catch((err) => {});
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_update_rt /lib/dhcpcd/dhcpcd-hooks/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_pd /lib/dhcpcd/dhcpcd-hooks/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_lease /lib/dhcpcd/dhcpcd-hooks/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_resolv_dns6 /lib/dhcpcd/dhcpcd-hooks/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_common /lib/dhcpcd/dhcpcd-hooks/`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_update_rt`, "/lib/dhcpcd/dhcpcd-hooks/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_pd`, "/lib/dhcpcd/dhcpcd-hooks/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_record_lease`, "/lib/dhcpcd/dhcpcd-hooks/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_resolv_dns6`, "/lib/dhcpcd/dhcpcd-hooks/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd_common`, "/lib/dhcpcd/dhcpcd-hooks/"]);
     // copy services
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhclient@.service /etc/systemd/system/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_dhcpcd6@.service /etc/systemd/system/`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ndppd@.service /etc/systemd/system/`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhclient@.service`, "/etc/systemd/system/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_dhcpcd6@.service`, "/etc/systemd/system/"]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_ndppd@.service`, "/etc/systemd/system/"]);
   }
 
   async prepareEnvironment() {
@@ -65,7 +65,7 @@ class PhyInterfacePlugin extends InterfaceBasePlugin {
       const txRingBuffer = util.toBoundedInt(this.networkConfig.txBuffer, 1) || util.toBoundedInt(maxTxRing, 1) || 4096;
       const rxRingBuffer = util.toBoundedInt(this.networkConfig.rxBuffer, 1) || util.toBoundedInt(maxRxRing, 1) || 4096;
       this.log.info(`Set TX ring to ${txRingBuffer}, RX ring to ${rxRingBuffer} on ${this.name}`);
-      await exec(`sudo ethtool -G ${this.name} tx ${txRingBuffer} rx ${rxRingBuffer}`).catch((err) => {});
+      await execFile("sudo", ["ethtool", "-G", this.name, "tx", String(txRingBuffer), "rx", String(rxRingBuffer)]).catch((err) => {});
     }
   }
 

@@ -29,7 +29,7 @@ const lock = new AsyncLock();
 const _ = require('lodash');
 const pclient = require('../../util/redis_manager.js').getPublishClient();
 const wrapIptables = require('../../util/util.js').wrapIptables;
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
 const WireguardInterfacePlugin = require('../interface/wireguard_intf_plugin.js');
@@ -39,8 +39,8 @@ class RoutingPlugin extends Plugin {
 
   static async preparePlugin() {
     // ensure ip forward is enabled
-    await exec(`sudo sysctl -w net.ipv4.ip_forward=1`).catch((err) => {});
-    await exec(`sudo sysctl -w net.ipv6.conf.all.forwarding=1`).catch((err) => {});
+    await execFile("sudo", ["sysctl", "-w", "net.ipv4.ip_forward=1"]).catch((err) => {});
+    await execFile("sudo", ["sysctl", "-w", "net.ipv6.conf.all.forwarding=1"]).catch((err) => {});
   }
    
   async flush(af = null) {
@@ -918,16 +918,16 @@ class RoutingPlugin extends Plugin {
                     const hashPolicy = settings.hashPolicy || "l3";
                     switch (hashPolicy) {
                       case "l4": {
-                        await exec(`sudo sysctl -w net.ipv4.fib_multipath_hash_policy=1`).catch((err) => { });
+                        await execFile("sudo", ["sysctl", "-w", "net.ipv4.fib_multipath_hash_policy=1"]).catch((err) => { });
                         // ipv6 multipath configuration is not supported yet in our image, but it will be supported in later kernel version
-                        await exec(`sudo sysctl -w net.ipv6.fib_multipath_hash_policy=1`).catch((err) => { });
+                        await execFile("sudo", ["sysctl", "-w", "net.ipv6.fib_multipath_hash_policy=1"]).catch((err) => { });
                         break;
                       }
                       case "l3":
                       default: {
-                        await exec(`sudo sysctl -w net.ipv4.fib_multipath_hash_policy=0`).catch((err) => { });
+                        await execFile("sudo", ["sysctl", "-w", "net.ipv4.fib_multipath_hash_policy=0"]).catch((err) => { });
                         // ipv6 multipath configuration is not supported yet in our image, but it will be supported in later kernel version
-                        await exec(`sudo sysctl -w net.ipv6.fib_multipath_hash_policy=0`).catch((err) => { });
+                        await execFile("sudo", ["sysctl", "-w", "net.ipv6.fib_multipath_hash_policy=0"]).catch((err) => { });
                       }
                     }
                     break;

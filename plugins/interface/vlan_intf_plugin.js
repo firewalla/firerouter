@@ -17,21 +17,21 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 
 class VLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await exec(`sudo modprobe 8021q`);
+    await execFile("sudo", ["modprobe", "8021q"]);
   }
   
   async flush() {
     await super.flush();
 
     if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-      await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "delete", this.name]).catch((err) => {});
     }
   }
 
@@ -41,7 +41,7 @@ class VLANInterfacePlugin extends InterfaceBasePlugin {
     const vid = Number(this.networkConfig.vid);
     if (!Number.isInteger(vid) || vid < 1 || vid > 4094)
       this.fatal(`Invalid vlan id for ${this.name} ${this.networkConfig.vid}`);
-    await exec(`sudo ip link add link ${intf} name ${this.name} type vlan id ${vid} protocol 802.1Q`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "add", "link", intf, "name", this.name, "type", "vlan", "id", String(vid), "protocol", "802.1Q"]).catch((err) => {
       this.log.debug(`Failed to create vlan interface ${this.name}`, err.message);
     });
     const intfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);
