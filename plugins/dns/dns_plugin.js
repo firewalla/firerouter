@@ -24,7 +24,7 @@ const event = require('../../core/event.js');
 const dnsServiceFileTemplate = __dirname + "/firerouter_dns.template.service";
 const dnsScriptTemplate = __dirname + "/dns.template.sh";
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 const r = require('../../util/firerouter');
 const fs = require('fs');
@@ -38,19 +38,19 @@ const dnsConfTemplate = r.getFireRouterHome() + "/etc/dnsmasq.dns.conf.template"
 class DNSPlugin extends Plugin {
 
   static async preparePlugin() {
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-dnsmasq.conf /etc/rsyslog.d/`);
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/16-firerouter-dns.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/13-dnsmasq.conf`, "/etc/rsyslog.d/"]);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/16-firerouter-dns.conf`, "/etc/rsyslog.d/"]);
     await this.createDirectories();
     await this.installDNSScript();
     await this.installSystemService();
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/dnsmasq`).catch((err) => {});
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/dnsmasq`).catch((err) => {});
-    await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq_local`).catch((err) => {});
-  } 
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/dnsmasq`]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getRuntimeFolder()}/dnsmasq`]).catch((err) => {});
+    await execFile("mkdir", ["-p", r.getTempFolder()]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/dnsmasq_local`]).catch((err) => {});
+  }
 
   static async installSystemService() {
     let content = await fs.readFileAsync(dnsServiceFileTemplate, {encoding: 'utf8'});
@@ -58,7 +58,7 @@ class DNSPlugin extends Plugin {
     content = content.replace(/%DNS_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_dns.service";
     await fs.writeFileAsync(targetFile, content);
-    await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+    await execFile("sudo", ["cp", targetFile, "/etc/systemd/system"]);
   }
 
   static async installDNSScript() {
@@ -85,7 +85,7 @@ class DNSPlugin extends Plugin {
   }
 
   async prepareEnvironment() {
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq/${this._intfUuid}`).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/dnsmasq/${this._intfUuid}`]).catch((err) => {});
   }
 
   async writeDNSConfFile() {
@@ -225,8 +225,8 @@ class DNSPlugin extends Plugin {
         }
       }
     }
-    await exec(`sudo rm -f /etc/resolv.conf`);
-    await exec(`sudo ln -s ${this._getResolvFilePath()} /etc/resolv.conf`);
+    await execFile("sudo", ["rm", "-f", "/etc/resolv.conf"]);
+    await execFile("sudo", ["ln", "-s", this._getResolvFilePath(), "/etc/resolv.conf"]);
   }
 
   _restartService() {

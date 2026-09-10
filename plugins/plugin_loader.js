@@ -29,7 +29,7 @@ let restartRsyslogTask = null;
 
 const _ = require('lodash');
 const AsyncLock = require('async-lock');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const fwpclient = require('../util/redis_manager.js').getPublishClient();
 const platform = require('../platform/PlatformLoader.js').getPlatform();
 const lock = new AsyncLock();
@@ -65,7 +65,7 @@ async function initPlugins() {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }
   }
-  await exec(`sudo systemctl daemon-reload`).catch((err) => {
+  await execFile("sudo", ["systemctl", "daemon-reload"]).catch((err) => {
     log.error(`Failed to reload systemctl daemon`, err.message);
   });
 
@@ -407,7 +407,7 @@ function scheduleRestartRsyslog() {
   if (restartRsyslogTask)
     clearTimeout(restartRsyslogTask);
   restartRsyslogTask = setTimeout(() => {
-    exec(`sudo systemctl restart rsyslog`).catch((err) => {
+    execFile("sudo", ["systemctl", "restart", "rsyslog"]).catch((err) => {
       log.error("Failed to restart rsyslog", err.message);
     });
   }, 5000);
