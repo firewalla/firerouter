@@ -251,13 +251,16 @@ async function reapply(config, dryRun = false) {
 
           if (value) {
             for (let name in value) {
-              const instance = createPluginInstance(
+              const createInstance = () => createPluginInstance(
                 pluginConf.category,
                 name,
                 pluginConf.c,
                 pluginConf.config,
                 workingPluginCategoryMap
               );
+              const instance = dryRun
+                ? pluginLookupContext.run(workingPluginCategoryMap, createInstance)
+                : createInstance();
               if (!instance)
                 continue;
 
