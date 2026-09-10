@@ -17,7 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -32,23 +32,23 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
   static async preparePlugin() {
     // copy pppd hook script
     await exec(`sudo rm /etc/ppp/ip-up.d/firerouter_*`).catch((err) => {});
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ppp_ip_up /etc/ppp/ip-up.d/`).catch((err) => {});
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_ppp_ipv6_up /etc/ppp/ipv6-up.d/`).catch((err) => {});
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/pppoe`).catch((err) => {});
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_ppp_ip_up`, "/etc/ppp/ip-up.d/"]).catch((err) => {});
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_ppp_ipv6_up`, "/etc/ppp/ipv6-up.d/"]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/pppoe`]).catch((err) => {});
     // copy firerouter_pppd.service
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_pppd@.service /etc/systemd/system/`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_pppd@.service`, "/etc/systemd/system/"]);
   }
 
   async flushIP(af = null) {
     if (!af) {
-      await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
-      await exec(`rm -f ${this._getConfFilePath()}`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", `firerouter_pppd@${this.name}`]).catch((err) => {});
+      await execFile("rm", ["-f", this._getConfFilePath()]).catch((err) => {});
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
-      await exec(`sudo systemctl stop firerouter_dhcpcd6@${this.name}`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", `firerouter_dhcpcd6@${this.name}`]).catch((err) => {});
       // remove dhcpcd lease file to ensure it will trigger PD_CHANGE event when it is re-applied
       const lease6Filename = await this._getDHCPCDLease6Filename();
       if (lease6Filename)
-        await exec(`sudo rm -f ${lease6Filename}`).catch((err) => {});
+        await execFile("sudo", ["rm", "-f", lease6Filename]).catch((err) => {});
     } else
       await super.flushIP(af);
   }
@@ -70,7 +70,7 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async getLinkAddress() {
-    const addr = await exec(`cat /sys/class/net/${this.networkConfig.intf}/address`).then((result) => result.stdout.trim() || null).catch((err) => {
+    const addr = await execFile("cat", [`/sys/class/net/${this.networkConfig.intf}/address`]).then((result) => result.stdout.trim() || null).catch((err) => {
       this.log.error(`Failed to get hardware address of ${this.networkConfig.intf}`, err.message);
     });
     return addr;
@@ -111,11 +111,11 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
 
   async interfaceUpDown() {
     if (this.networkConfig.enabled) {
-      await exec(`sudo systemctl restart firerouter_pppd@${this.name}`).catch((err) => {
+      await execFile("sudo", ["systemctl", "restart", `firerouter_pppd@${this.name}`]).catch((err) => {
         this.log.error(`Failed to enable pppd on interface ${this.name}: ${err.message}`);
       });
     } else {
-      await exec(`sudo systemctl stop firerouter_pppd@${this.name}`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", `firerouter_pppd@${this.name}`]).catch((err) => {});
     }
   }
 
