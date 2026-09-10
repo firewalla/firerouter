@@ -67,6 +67,10 @@ const PING_RESULT_SUCCESS = 'success';
 const PING_RESULT_FAILED = 'failed';
 const PING_RESULT_ALL_FAILED = 'all_failed';
 
+// Longest a withdrawn prefix is kept as a deprecated address. A host will not honour more than
+// 2 hours anyway (RFC 4862 5.5.3(e)), which is also dnsmasq's own ceiling.
+const MAX_DEPRECATED_PREFIX_LIFETIME = 7200;
+
 const IP6_NUM_DISCARD_DEPRECATED = 100;
 const IP6_NUM_MAX = 1000;
 
@@ -122,6 +126,12 @@ class InterfaceBasePlugin extends Plugin {
       }
     }
     if (!af || af == 6) {
+      // Snapshot before the flush below wipes it, see _deprecateObsoleteIPv6Prefixes: a prefix that
+      // does not come back is a renumbering, and already deprecated ones have to be carried over.
+      if (this.isLAN()) {
+        this._previousIP6s = await this._getGlobalIPv6Addresses(false);
+        this._previousDeprecatedIP6s = await this._getGlobalIPv6Addresses(true);
+      }
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
       if (this.networkConfig.dhcp6) {
         await execFile("sudo", ["systemctl", "stop", `firerouter_dhcpcd6@${this.name}`]).catch((err) => {});
@@ -163,7 +173,9 @@ class InterfaceBasePlugin extends Plugin {
 
       // remove cached router-advertisement ipv6 address file
       if (this.networkConfig.dhcp6) {
-        await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+        // *_deprecated is spared: it states how long an already withdrawn upstream prefix stays
+        // valid, which a reapply here does not change.
+        await exec(`sudo find /dev/shm -maxdepth 1 -name 'dhcpcd.*.${this.name}' ! -name 'dhcpcd.*_deprecated.${this.name}' -delete`).catch((err) => {});
       }
         
       if (this.isWAN() || this.isLAN()) {
@@ -502,6 +514,7 @@ class InterfaceBasePlugin extends Plugin {
       });
 
     if(disabled) {
+      this._previousIP6s = null;
       return;
     }
 
@@ -520,11 +533,13 @@ class InterfaceBasePlugin extends Plugin {
       const rapidCommitOpts = this.networkConfig.dhcp6.rapidCommit === false ? "#option rapid_commit" : "option rapid_commit";
       const ianaOpts = this.networkConfig.dhcp6.iana === false ? "" : "ia_na"; // by default ia_na will be specified unless explicitly disabled
       const pdOpts = [];
-      for (let i = 1; i <= numOfPDs; i++) {
-        if (i <= pdHints.length)
-          pdOpts.push(`ia_pd ${i}/${pdHints[i - 1]} not_exist/1`);
-        else
-          pdOpts.push(`ia_pd ${i}${pdSize ? `/::/${pdSize}` : ""} not_exist/1`);
+      if (!this.networkConfig.dhcp6.ipv6Passthrough) {
+        for (let i = 1; i <= numOfPDs; i++) {
+          if (i <= pdHints.length)
+            pdOpts.push(`ia_pd ${i}/${pdHints[i - 1]} not_exist/1`);
+          else
+            pdOpts.push(`ia_pd ${i}${pdSize ? `/::/${pdSize}` : ""} not_exist/1`);
+        }
       }
       content = content.replace(/%RAPID_COMMIT_OPTS%/g, rapidCommitOpts);
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
@@ -670,6 +685,10 @@ class InterfaceBasePlugin extends Plugin {
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+    // the new addresses are in place now, so this can tell which prefixes are really gone
+    await this._deprecateObsoleteIPv6Prefixes(this._previousIP6s, this._previousDeprecatedIP6s);
+    this._previousIP6s = null;
+    this._previousDeprecatedIP6s = null;
   }
 
   async reapplyIpv6Settings() {
@@ -684,6 +703,118 @@ class InterfaceBasePlugin extends Plugin {
         this.log.error(`Failed to reapply IPv6 settings on ${this.name}`, err.message);
       });
     });
+  }
+
+  _getIPv6PrefixCidr(ip6) {
+    const addr = new Address6(ip6);
+    if (!addr.isValid())
+      return null;
+    return `${addr.startAddress().correctForm()}/${addr.subnetMask}`;
+  }
+
+  async _getGlobalIPv6Addresses(deprecated) {
+    return exec(`ip -6 -o addr show dev ${this.name} scope global ${deprecated ? "deprecated" : "-deprecated"}`, {encoding: "utf8"})
+      .then((result) => this._parseIPv6AddrShow(result.stdout))
+      .catch((err) => {
+        this.log.debug(`Failed to list ipv6 addresses of ${this.name}`, err.message);
+        return [];
+      });
+  }
+
+  _parseIPv6AddrShow(stdout) {
+    return (stdout || "").trim().split("\n").filter(line => line.length > 0).map((line) => {
+      const validLft = line.match(/valid_lft (\d+)sec/);
+      return {addr: line.trim().split(/\s+/)[3], validLft: validLft && Number(validLft[1])};
+    }).filter(a => a.addr && a.addr.includes("/"));
+  }
+
+  async getDeprecatedIPv6Prefixes() {
+    const deprecated = await this._getGlobalIPv6Addresses(true);
+    if (_.isEmpty(deprecated))
+      return [];
+    const livePrefixes = new Set((await this._getGlobalIPv6Addresses(false)).map(a => this._getIPv6PrefixCidr(a.addr)).filter(Boolean));
+    const prefixes = [];
+    for (const {addr, validLft} of deprecated) {
+      const prefix = this._getIPv6PrefixCidr(addr);
+      // a prefix that is live again is not being renumbered away from after all
+      if (!prefix || !validLft || validLft <= 0 || livePrefixes.has(prefix) || prefixes.some(p => p.prefix === prefix))
+        continue;
+      prefixes.push({prefix, validLft});
+    }
+    return prefixes;
+  }
+
+  async _flushDeprecatedIPv6Addresses() {
+    for (const {addr} of await this._getGlobalIPv6Addresses(true)) {
+      await exec(`sudo ip -6 addr del ${addr} dev ${this.name}`).catch((err) => {
+        this.log.debug(`Failed to remove deprecated ipv6 addr ${addr} from ${this.name}`, err.message);
+      });
+    }
+  }
+
+  _selectPrefixesToDeprecate(previousIP6s, previousDeprecatedIP6s, currentPrefixes) {
+    const obsolete = [];
+    for (const {addr} of previousIP6s || []) {
+      const prefix = this._getIPv6PrefixCidr(addr);
+      if (!prefix || currentPrefixes.has(prefix) || obsolete.some(o => o.prefix === prefix))
+        continue;
+      obsolete.push({addr, prefix});
+    }
+    if (!_.isEmpty(obsolete))
+      return obsolete;
+    return (previousDeprecatedIP6s || []).map(({addr, validLft}) => ({addr, prefix: this._getIPv6PrefixCidr(addr), validLft}))
+      .filter(e => e.prefix && !currentPrefixes.has(e.prefix));
+  }
+
+  async _deprecateObsoleteIPv6Prefixes(previousIP6s, previousDeprecatedIP6s) {
+    if (!this.isLAN() || !this.isIPv6Enabled() || (_.isEmpty(previousIP6s) && _.isEmpty(previousDeprecatedIP6s)))
+      return;
+    await this._flushDeprecatedIPv6Addresses();
+    const currentPrefixes = new Set((await this._getGlobalIPv6Addresses(false)).map(a => this._getIPv6PrefixCidr(a.addr)).filter(Boolean));
+    const toDeprecate = this._selectPrefixesToDeprecate(previousIP6s, previousDeprecatedIP6s, currentPrefixes);
+
+    for (const {addr, prefix, validLft} of toDeprecate) {
+      // isNumber, not !== undefined: _parseIPv6AddrShow reports null for "valid_lft forever", which
+      // is an unknown lifetime rather than a known one of null.
+      const lifetime = _.isNumber(validLft) ? validLft : await this._getDeprecationLifetime(prefix);
+      if (!lifetime || lifetime <= 0) {
+        this.log.info(`Prefix ${prefix} of ${this.name} has no validity left, not deprecating it`);
+        continue;
+      }
+      this.log.info(`Deprecating previous ipv6 prefix ${prefix} on ${this.name} for ${lifetime} seconds`);
+      await exec(`sudo ip -6 addr add ${addr} dev ${this.name} preferred_lft 0 valid_lft ${lifetime}`).catch((err) => {
+        this.log.warn(`Failed to deprecate ipv6 addr ${addr} on ${this.name}`, err.message);
+      });
+    }
+  }
+
+  // Time left to advertise a withdrawn prefix: what's left of the upstream lease (from the
+  // firerouter_dhcpcd_record_lease hook), capped at MAX_DEPRECATED_PREFIX_LIFETIME, 0 if already
+  // gone. A static prefix has no upstream lease and gets the full ceiling.
+  async _getDeprecationLifetime(prefix) {
+    const fromIface = this.networkConfig.ipv6DelegateFrom || this.networkConfig.ipv6PassthroughFrom;
+    if (!fromIface)
+      return MAX_DEPRECATED_PREFIX_LIFETIME;
+    const path = this.networkConfig.ipv6DelegateFrom
+      ? `/dev/shm/dhcpcd.pd_deprecated.${fromIface}`
+      : `/dev/shm/dhcpcd.ra_deprecated.${fromIface}`;
+    const content = await fs.readFileAsync(path, {encoding: "utf8"}).catch((err) => null);
+    const addr = new Address6(prefix);
+    if (!content || !addr.isValid())
+      return MAX_DEPRECATED_PREFIX_LIFETIME;
+    for (const entry of content.trim().split(",").filter(e => e.length > 0)) {
+      const [upstreamPrefix, remaining] = entry.split("@", 2);
+      const upstream = new Address6(upstreamPrefix);
+      // entries for other, or no longer relevant, prefixes are simply skipped
+      if (!upstream.isValid() || !addr.isInSubnet(upstream))
+        continue;
+      // empty is unknown, not expired - Number("") is 0, which would read as "already gone"
+      const left = remaining && remaining.length > 0 ? Number(remaining) : NaN;
+      if (!Number.isInteger(left))
+        return MAX_DEPRECATED_PREFIX_LIFETIME;
+      return Math.min(left, MAX_DEPRECATED_PREFIX_LIFETIME);
+    }
+    return MAX_DEPRECATED_PREFIX_LIFETIME;
   }
 
   // return e.g."2001:0db8:0000:0001"

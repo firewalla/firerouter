@@ -4,6 +4,23 @@
 # sources before this script (alphabetical order: common < record_lease).
 # Do NOT rename firerouter_dhcpcd_common in a way that breaks that ordering.
 
+# Seconds left on a prefix granted $1 seconds at timestamp $2, capped at the 2 hour ceiling a host
+# honours anyway (RFC 4862 5.5.3(e)). Prints nothing if the input is unusable or nothing is left.
+remaining_lifetime() {
+  granted=$1
+  granted_ts=$2
+  case "$granted" in ''|*[!0-9]*) return 0;; esac
+  case "$granted_ts" in ''|*[!0-9]*) return 0;; esac
+  left=$((granted - ($(date +%s) - granted_ts)))
+  if [ $left -gt 7200 ]; then
+    left=7200
+  fi
+  if [ $left -le 0 ]; then
+    return 0
+  fi
+  echo $left
+}
+
 check_is_private_address() {
   if [ -z "$interface" ]; then
     log "check_is_private_addr: interface is empty"
@@ -44,6 +61,14 @@ check_is_private_address() {
 case $reason in
   ROUTERADVERT)
     log "ROUTERADVERT interface=$interface ra_dump:\n$(env | grep -E '^nd[0-9]+_' | sort)"
+
+    # Read the previous record before it is overwritten below - a changed prefix is a renumbering,
+    # and the LAN side keeps advertising the old one at zero preferred lifetime (RFC 4861 sect 12).
+    prev_ra=$(cat /dev/shm/dhcpcd.ra.$interface 2>/dev/null)
+    prev_prefix=$(echo "$prev_ra" | sed -n 's/^prefix=//p')
+    prev_ra_vltime=$(echo "$prev_ra" | sed -n 's/^ra_vltime=//p')
+    prev_ra_pltime=$(echo "$prev_ra" | sed -n 's/^ra_pltime=//p')
+    prev_ra_ts=$(echo "$prev_ra" | sed -n 's/^ra_ts=//p')
 
     # If the IPv6 address of the upstream router changes, 
     # we may recieve sevaral groups of nd_* variables, take the last complete ND option set.
@@ -127,9 +152,6 @@ case $reason in
     RECORD_LEASE_ND_ID="$nd_id"
 
     if [ -n "$gw6" ]; then
-      vltime_name="nd${nd_id}_prefix_information1_vltime"
-      eval "vltime=\$$vltime_name"
-
       new_addrs=""
       addr_id=10
       while [ $addr_id -gt 0 ]; do
@@ -142,8 +164,10 @@ case $reason in
         addr_id=$((addr_id - 1))
       done
 
-      # Find first SLAAC-capable (/A flag) prefix from the selected ND group
+      # Find first SLAAC-capable (/A flag) prefix from the selected ND group.
       slaac_prefix=""
+      vltime=""
+      pltime=""
       pi_id=1
       while true; do
         eval "pi_prefix=\$nd${nd_id}_prefix_information${pi_id}_prefix"
@@ -151,17 +175,65 @@ case $reason in
         eval "pi_flags=\$nd${nd_id}_prefix_information${pi_id}_flags"
         if echo "$pi_flags" | grep -qi 'a'; then
           slaac_prefix="$pi_prefix"
+          eval "vltime=\$nd${nd_id}_prefix_information${pi_id}_vltime"
+          eval "pltime=\$nd${nd_id}_prefix_information${pi_id}_pltime"
           break
         fi
         pi_id=$((pi_id + 1))
       done
+      # No A-flag prefix here, but ra_vltime/ra_pltime are also read on their own, so keep the old source.
+      if [ -z "$vltime" ]; then
+        eval "vltime=\$nd${nd_id}_prefix_information1_vltime"
+      fi
+      if [ -z "$pltime" ]; then
+        eval "pltime=\$nd${nd_id}_prefix_information1_pltime"
+      fi
 
-      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_ts=$(date +%s)\nprefix=$slaac_prefix\n" > /dev/shm/dhcpcd.ra.$interface
+      # An RA need not carry a prefix option (router-lifetime refresh, second router on the link).
+      # That is no information, not a withdrawal, so carry the last known values forward.
+      ra_ts=$(date +%s)
+      if [ -z "$slaac_prefix" ] && [ -n "$prev_prefix" ]; then
+        slaac_prefix="$prev_prefix"
+        vltime="$prev_ra_vltime"
+        pltime="$prev_ra_pltime"
+        ra_ts="${prev_ra_ts:-$ra_ts}"
+      fi
+
+      # Sanitize before exporting: unparsable becomes empty (callers then leave the address
+      # permanent, today's behavior), and pltime may never exceed vltime (RFC 4862 5.5.3(e)).
+      case "$vltime" in ''|*[!0-9]*) vltime="";; esac
+      case "$pltime" in ''|*[!0-9]*) pltime="";; esac
+      if [ -z "$vltime" ] || [ "$vltime" -le 0 ]; then
+        vltime=""
+        pltime=""
+      elif [ -z "$pltime" ] || [ "$pltime" -gt "$vltime" ]; then
+        pltime="$vltime"
+      fi
+      # firerouter_dhcpcd_update_rt uses these to give the WAN self-address real lifetimes too.
+      RECORD_LEASE_RA_VLTIME="$vltime"
+      RECORD_LEASE_RA_PLTIME="$pltime"
+
+      # After the carry-forward above slaac_prefix is empty only if no prefix was ever seen.
+      if [ -n "$prev_prefix" ] && [ -n "$slaac_prefix" ] && [ "$prev_prefix" != "$slaac_prefix" ]; then
+        left=$(remaining_lifetime "$prev_ra_vltime" "$prev_ra_ts")
+        if [ -n "$left" ]; then
+          echo "${prev_prefix}/64@$left," > /dev/shm/dhcpcd.ra_deprecated.$interface
+        fi
+      fi
+
+      echo "ip6=$new_addrs\ngw6=$gw6\nra_vltime=$vltime\nra_pltime=$pltime\nra_ts=$ra_ts\nprefix=$slaac_prefix\n" > /dev/shm/dhcpcd.ra.$interface
     fi
     ;;
   BOUND6|REBOOT6|RENEW6|REBIND6)
+    # Read the previous lease before it is overwritten below, see the ROUTERADVERT branch above -
+    # a prefix that disappears from it is a renumbering, and its remaining lifetime bounds the RA.
+    prev_lease=$(cat /dev/shm/dhcpcd.lease6.${interface} 2>/dev/null)
+    prev_pd_vltimes=$(echo "$prev_lease" | sed -n 's/^ia_pd_vltimes=//p')
+    prev_ts=$(echo "$prev_lease" | sed -n 's/^ts=//p')
+
     pd_id=1
     ia_pd_vltimes=""
+    new_pds=""
     while [ $pd_id -lt 10 ]; do
       new_prefix_name="new_dhcp6_ia_pd1_prefix${pd_id}"
       eval "new_prefix=\$$new_prefix_name"
@@ -172,10 +244,37 @@ case $reason in
       eval "new_prefix_vltime=\$$new_prefix_vltime_name"
       if [ $new_prefix_val != "/" ]; then
         ia_pd_vltimes="$ia_pd_vltimes$new_prefix_val@$new_prefix_vltime,"
+        new_pds="$new_pds $new_prefix_val"
       fi
       pd_id=$((pd_id + 1))
     done
     echo $ia_pd_vltimes > /dev/shm/dhcpcd.ia_pd_vltime.${interface}
+
+    deprecated_pds=""
+    # /dev/shm is world writable, so this record is untrusted: set -f stops a * in it from globbing,
+    # and = keeps it from acting as a pattern. Restored after - later hooks share this shell.
+    set -f
+    for prev_entry in $(echo "$prev_pd_vltimes" | tr ',' ' '); do
+      prev_pd=${prev_entry%@*}
+      [ -n "$prev_pd" ] || continue
+      still_leased=""
+      for new_pd in $new_pds; do
+        if [ "$new_pd" = "$prev_pd" ]; then
+          still_leased=1
+          break
+        fi
+      done
+      [ -z "$still_leased" ] || continue
+      left=$(remaining_lifetime "${prev_entry#*@}" "$prev_ts")
+      [ -n "$left" ] || continue
+      deprecated_pds="$deprecated_pds$prev_pd@$left,"
+    done
+    set +f
+    # Never cleared: a renew must not wipe a record the LAN side has not consumed. Stale entries
+    # no longer match any prefix and are skipped by the reader.
+    if [ -n "$deprecated_pds" ]; then
+      echo "$deprecated_pds" > /dev/shm/dhcpcd.pd_deprecated.${interface}
+    fi
 
     addr_id=1
     ia_na_vltimes=""
