@@ -39,6 +39,98 @@ is_valid_router_lifetime() {
 }
 
 #
+# Canonicalize an IPv6 address for identity comparison without relying on the
+# textual form supplied by dhcpcd or persisted in the gateway cache.
+#
+# Router Advertisement sources are IPv6 addresses, so embedded IPv4 forms are
+# intentionally not accepted here. A zone identifier, if present, is ignored
+# because the calling path already scopes the router to $interface.
+#
+normalize_ipv6_address() {
+    printf '%s\n' "${1%%%*}" | awk '
+      function normalize_hextet(value) {
+        value = tolower(value)
+        if (value !~ /^[0-9a-f]+$/ || length(value) > 4) {
+          return ""
+        }
+        sub(/^0+/, "", value)
+        return value == "" ? "0" : value
+      }
+      {
+        address = $0
+        separator = index(address, "::")
+
+        if (separator > 0) {
+          left = substr(address, 1, separator - 1)
+          right = substr(address, separator + 2)
+          if (index(right, "::") > 0) {
+            exit 1
+          }
+        } else {
+          left = address
+          right = ""
+        }
+
+        left_count = left == "" ? 0 : split(left, left_parts, ":")
+        right_count = right == "" ? 0 : split(right, right_parts, ":")
+
+        if ((separator == 0 && left_count != 8) ||
+            (separator > 0 && left_count + right_count >= 8)) {
+          exit 1
+        }
+
+        output_count = 0
+        for (i = 1; i <= left_count; i++) {
+          part = normalize_hextet(left_parts[i])
+          if (part == "") {
+            exit 1
+          }
+          output[++output_count] = part
+        }
+
+        if (separator > 0) {
+          zero_count = 8 - left_count - right_count
+          for (i = 0; i < zero_count; i++) {
+            output[++output_count] = "0"
+          }
+        }
+
+        for (i = 1; i <= right_count; i++) {
+          part = normalize_hextet(right_parts[i])
+          if (part == "") {
+            exit 1
+          }
+          output[++output_count] = part
+        }
+
+        if (output_count != 8) {
+          exit 1
+        }
+
+        printf "%s", output[1]
+        for (i = 2; i <= output_count; i++) {
+          printf ":%s", output[i]
+        }
+        printf "\n"
+      }
+    '
+}
+
+ipv6_addresses_equal() {
+    if [ "$1" = "$2" ]; then
+        return 0
+    fi
+
+    local first_normalized
+    local second_normalized
+
+    first_normalized=$(normalize_ipv6_address "$1") || return 1
+    second_normalized=$(normalize_ipv6_address "$2") || return 1
+
+    [ -n "$first_normalized" ] && [ "$first_normalized" = "$second_normalized" ]
+}
+
+#
 # Remove the currently managed IPv6 default route from every configured
 # routing table after a Router Advertisement explicitly withdraws default
 # router status with a Router Lifetime of zero.
@@ -217,7 +309,7 @@ case $reason in
            *) true ;;
          esac
       then
-        if [ "$nd_from" != "$old_gw" ]; then
+        if ! ipv6_addresses_equal "$nd_from" "$old_gw"; then
           log "ROUTERADVERT: router lifetime is 0 for non-managed router $nd_from on $interface; keeping managed route via $old_gw"
         else
           log "ROUTERADVERT: router lifetime is 0 for managed router $nd_from on $interface, removing IPv6 default route"
