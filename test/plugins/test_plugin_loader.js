@@ -49,9 +49,16 @@ describe('plugin_loader', function() {
         this.networkConfig = null;
         this._nextConfig = null;
         this._reapplyNeeded = false;
+        this.changeSubscribers = [];
+        this.changePublishers = [];
+        if (FakePlugin.constructorObserver)
+          FakePlugin.constructorObserver(this);
       }
 
-      init() {}
+      init() {
+        if (FakePlugin.initObserver)
+          FakePlugin.initObserver(this);
+      }
 
       getConfigChangeType() {
         return FakePlugin.CHANGE_FULL;
@@ -61,7 +68,30 @@ describe('plugin_loader', function() {
         this._reapplyNeeded = changeType !== FakePlugin.CHANGE_NONE;
       }
 
-      unsubscribeAllChanges() {}
+      _publishChangeTo(instance) {
+        if (instance && !this.changeSubscribers.includes(instance))
+          this.changeSubscribers.push(instance);
+      }
+
+      _unpublishChangeTo(instance) {
+        const index = this.changeSubscribers.indexOf(instance);
+        if (index !== -1)
+          this.changeSubscribers.splice(index, 1);
+      }
+
+      subscribeChangeFrom(instance) {
+        if (!instance)
+          return;
+        instance._publishChangeTo(this);
+        if (!this.changePublishers.includes(instance))
+          this.changePublishers.push(instance);
+      }
+
+      unsubscribeAllChanges() {
+        for (const publisher of this.changePublishers)
+          publisher._unpublishChangeTo(this);
+        this.changePublishers = [];
+      }
 
       isReapplyNeeded() {
         return this._reapplyNeeded;
@@ -86,6 +116,8 @@ describe('plugin_loader', function() {
       }
     };
     FakePlugin.applyOrder = [];
+    FakePlugin.constructorObserver = null;
+    FakePlugin.initObserver = null;
 
     const pluginLoaderPath = path.resolve(__dirname, '../../plugins/plugin_loader.js');
 
@@ -103,12 +135,14 @@ describe('plugin_loader', function() {
             file_path: './plugin.js',
             config_path: 'low',
             category: 'low',
+            config: { test: true },
             init_seq: 0,
           },
           {
             file_path: './plugin.js',
             config_path: 'high',
             category: 'high',
+            config: { test: true },
             init_seq: 1,
           },
         ],
@@ -152,6 +186,8 @@ describe('plugin_loader', function() {
   });
 
   after(function() {
+    FakePlugin.constructorObserver = null;
+    FakePlugin.initObserver = null;
     for (const resolvedPath of cachePaths)
       delete require.cache[resolvedPath];
   });
@@ -231,5 +267,66 @@ describe('plugin_loader', function() {
       ['lowInstance', 'highInstance'],
       'plugins must still apply in ascending init_seq order'
     );
+  });
+
+  it('resolves constructor and init lookups against dry-run candidate plugins', async function() {
+    assert.deepStrictEqual(
+      await pluginLoader.reapply({
+        low: { lowInstance: { revision: 10 } },
+        high: { highInstance: { revision: 10 } },
+      }),
+      [],
+      'live baseline apply should succeed'
+    );
+
+    const liveHigh = pluginLoader.getPluginInstance('high', 'highInstance');
+    assert(liveHigh, 'expected live high instance to exist');
+
+    const originalLiveSubscribers = liveHigh.changeSubscribers.slice();
+    const originalPublishChangeTo = liveHigh._publishChangeTo;
+    let liveSubscriptionAttempts = 0;
+    let constructorDependency;
+    let initDependency;
+
+    liveHigh._publishChangeTo = function(instance) {
+      liveSubscriptionAttempts += 1;
+      return originalPublishChangeTo.call(this, instance);
+    };
+
+    FakePlugin.constructorObserver = function(instance) {
+      if (instance.name === 'lowInstance')
+        constructorDependency = pluginLoader.getPluginInstance('high', 'highInstance');
+    };
+
+    FakePlugin.initObserver = function(instance) {
+      if (instance.name !== 'lowInstance')
+        return;
+      initDependency = pluginLoader.getPluginInstance('high', 'highInstance');
+      instance.subscribeChangeFrom(initDependency);
+    };
+
+    try {
+      assert.deepStrictEqual(
+        await pluginLoader.reapply({
+          low: { lowInstance: { revision: 11 } },
+          high: { highInstance: { revision: 11 } },
+        }, true),
+        [],
+        'dry-run should succeed'
+      );
+    } finally {
+      FakePlugin.constructorObserver = null;
+      FakePlugin.initObserver = null;
+      liveHigh._publishChangeTo = originalPublishChangeTo;
+    }
+
+    assert(constructorDependency, 'constructor should resolve a candidate dependency');
+    assert(initDependency, 'init should resolve a candidate dependency');
+    assert.notStrictEqual(constructorDependency, liveHigh);
+    assert.notStrictEqual(initDependency, liveHigh);
+    assert.strictEqual(constructorDependency, initDependency);
+    assert.strictEqual(liveSubscriptionAttempts, 0);
+    assert.deepStrictEqual(liveHigh.changeSubscribers, originalLiveSubscribers);
+    assert.strictEqual(pluginLoader.getPluginInstance('high', 'highInstance'), liveHigh);
   });
 });
