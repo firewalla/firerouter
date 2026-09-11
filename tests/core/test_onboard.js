@@ -61,7 +61,7 @@ describe('Test onboard network profile', function() {
       expect(_.get(config, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
       expect(_.get(config, ["interface", "bridge", "br0", "ipv4"])).to.equal("192.168.49.1/24");
       expect(_.get(config, ["routing", "global", "default", "viaIntf"])).to.equal("eth0");
-      expect(_.get(config, ["nat", "br0_eth0"])).to.eql({in: "br0", out: "eth0"});
+      expect(_.get(config, ["nat", "br0-eth0"])).to.eql({in: "br0", out: "eth0"});
       expect(_.get(config, ["dhcp", "br0", "range"])).to.eql({from: "192.168.49.10", to: "192.168.49.250"});
       expect(_.get(config, ["dhcp", "br0", "gateway"])).to.equal("192.168.49.1");
       // every lan member is declared as an enabled phy
@@ -119,8 +119,8 @@ describe('Test onboard network profile', function() {
       expect(ppp.username).to.equal("user@isp");
       expect(_.get(ppp, ["meta", "type"])).to.equal("wan");
       expect(_.get(config, ["routing", "global", "default", "viaIntf"])).to.equal("ppp0");
-      expect(_.get(config, ["nat", "br0_ppp0"])).to.eql({in: "br0", out: "ppp0"});
-      expect(_.get(config, ["nat", "br0_eth0"])).to.be.undefined;
+      expect(_.get(config, ["nat", "br0-ppp0"])).to.eql({in: "br0", out: "ppp0"});
+      expect(_.get(config, ["nat", "br0-eth0"])).to.be.undefined;
     });
 
     it('should keep sshd reachable on both wan and lan', () => {

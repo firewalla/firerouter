@@ -205,7 +205,7 @@ function expandProfile(network, phyNames) {
       [LAN_BRIDGE]: {useNameserversFromWAN: true}
     },
     nat: {
-      [`${LAN_BRIDGE}_${wanIntf}`]: {in: LAN_BRIDGE, out: wanIntf}
+      [`${LAN_BRIDGE}-${wanIntf}`]: {in: LAN_BRIDGE, out: wanIntf}
     },
     dhcp: {
       [LAN_BRIDGE]: {
