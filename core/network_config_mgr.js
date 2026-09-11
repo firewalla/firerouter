@@ -28,10 +28,12 @@ const uuid = require('uuid');
 const pl = require('../platform/PlatformLoader.js');
 const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
+const op = require('./onboard_profile.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 
 const fsp = require('fs').promises;
+const crypto = require('crypto');
 const util = require('../util/util.js');
 const pluginConfig = require('../util/config.js').getConfig();
 
@@ -661,7 +663,79 @@ class NetworkConfigManager {
     }
   }
 
+  // read onboard-config.json baked by the installer, returns {parsed, raw, path} or null
+  async readOnboardConfig() {
+    const onboardConfigFile = `${r.getFirewallaHiddenFolder()}/onboard-config.json`;
+    try {
+      const raw = await fsp.readFile(onboardConfigFile, {encoding: "utf8"});
+      const parsed = JSON.parse(raw);
+      // either a full network config, or the compact profile the cloud emits when it cannot know
+      // how many ports the box has
+      if (parsed && parsed.network && (parsed.network.interface || op.isProfileConfig(parsed.network)))
+        return {parsed, raw, path: onboardConfigFile};
+    } catch (err) {
+      if (err.code !== "ENOENT")
+        log.error(`Failed to load ${onboardConfigFile}`, err.message);
+    }
+    return null;
+  }
+
+  // turn the onboard network block into a full config: a compact profile is expanded against the
+  // ports this box actually has, a full config is taken as-is. Returns null if it cannot be built.
+  async resolveOnboardNetwork(network) {
+    if (!op.isProfileConfig(network))
+      return network;
+    try {
+      const phyNames = await this.getPhyInterfaceNames();
+      const config = op.expandProfile(network, phyNames);
+      log.info(`Expanded '${network.profile}' network profile over ports ${phyNames.join(", ")}`);
+      return config;
+    } catch (err) {
+      log.error("Failed to expand onboard network profile", err.message);
+      return null;
+    }
+  }
+
+  // one-shot per flashed config: expand the onboard network and persist it as the active config,
+  // overriding redis leftovers. The file itself is never rewritten — it is the record of intent.
+  async consumeOnboardConfig() {
+    if (!platform.isOnboardConfigSupported())
+      return false;
+    const data = await this.readOnboardConfig();
+    if (!data)
+      return false;
+    const hash = crypto.createHash('sha256').update(data.raw).digest('hex');
+    const consumedHash = await rclient.getAsync("sysdb:onboardConfigHash");
+    if (consumedHash === hash)
+      return false;
+    const config = await this.resolveOnboardNetwork(data.parsed.network);
+    if (!config)
+      return false;
+    const errors = await this.validateConfig(config);
+    if (!_.isEmpty(errors)) {
+      log.error("Invalid onboard network config, keep existing config", errors);
+      return false;
+    }
+    await this.saveConfig(config);
+    await rclient.setAsync("sysdb:onboardConfigHash", hash);
+    log.info("Onboard network config is set as active config");
+    return true;
+  }
+
   async getDefaultConfig() {
+    // use onboard-config.json when first apply network on crystal platform.
+    if (platform.isOnboardConfigSupported()) {
+      const data = await this.readOnboardConfig();
+      if (data) {
+        const config = await this.resolveOnboardNetwork(data.parsed.network);
+        const errors = config ? await this.validateConfig(config) : ["cannot resolve onboard network"];
+        if (_.isEmpty(errors)) {
+          log.info("Using provisioned network config from onboard-config");
+          return config;
+        }
+        log.error("Invalid onboard network config, fall back to default setup", errors);
+      }
+    }
     const defaultConfigJson = platform.getDefaultNetworkJsonFile();
     const config = require(defaultConfigJson);
     return config;
