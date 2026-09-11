@@ -84,3 +84,23 @@ function get_smcrouted_path {
     ;;
   esac
 }
+
+function map_target_branch {
+  case "$1" in
+  "release_6_0")
+    echo "release_15_0"
+    ;;
+  "beta_6_0")
+    echo "beta_24_0"
+    ;;
+  "beta_7_0")
+    echo "beta_25_0"
+    ;;
+  "master")
+    echo "master"
+    ;;
+  *)
+    echo $1
+    ;;
+  esac
+}
