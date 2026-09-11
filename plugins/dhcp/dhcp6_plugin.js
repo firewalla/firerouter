@@ -24,6 +24,7 @@ const DHCPPlugin = require('./dhcp_plugin.js');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 
+const MIN_LEASE_TIME = 129;
 
 class DHCP6Plugin extends DHCPPlugin {
 
@@ -45,6 +46,11 @@ class DHCP6Plugin extends DHCPPlugin {
     type = type || "stateless";
     if (tags.length > 0) {
       extraTags = tags.map(tag => `tag:${tag}`).join(",") + ",";
+    }
+
+    if (leaseTime < MIN_LEASE_TIME) {
+      this.log.warn(`leaseTime ${leaseTime} for dhcp6 of ${this.name} is too small and would confuse dnsmasq's dhcp-range parser, adjusted to ${MIN_LEASE_TIME}`);
+      leaseTime = MIN_LEASE_TIME;
     }
 
     if (raLifetime === undefined) {
