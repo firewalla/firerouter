@@ -155,4 +155,4 @@ sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
 sudo systemctl daemon-reload
 
 sync
-logger "FireRouter: SWITCH branch from $cur_branch to $branch"
+logger "FireRouter:switch_branch: from $cur_branch to $branch"
