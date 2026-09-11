@@ -53,13 +53,20 @@ switch_branch() {
     fi
     remote_branch=$(map_target_branch $tgt_branch)
     # firerouter repo
+    # the fetch refspec is given on the command line instead of being written
+    # to remote.origin.fetch first, so a rejected switch leaves the repo still
+    # tracking its current branch; the config is rewritten only once the
+    # checkout below has succeeded. exit inside a subshell ends only the
+    # subshell, so the result has to be turned into the function's own.
     ( cd $FIREROUTER_HOME
     if type -t uv_ensure_release_key &>/dev/null; then
       uv_ensure_release_key
       uv_update_version_floor
     fi
-    git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
-    $MGIT fetch origin $remote_branch
+    # a failed fetch must abort: refs/remotes/origin/$remote_branch may still hold
+    # a revision from an earlier switch, and verifying and checking that out would
+    # silently land on a stale revision while reporting success
+    $MGIT fetch origin "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch" || exit 1
     if type -t uv_gate &>/dev/null && ! uv_gate "origin/$remote_branch" "$tgt_branch"; then
       err "target branch $remote_branch failed release verification, abort"
       exit 1
@@ -67,8 +74,9 @@ switch_branch() {
     if ! git cat-file -e "origin/$remote_branch:scripts/bridge-stp.sh" 2>/dev/null; then
       cleanup_mstpd_stp_state
     fi
-    git checkout -f -B $tgt_branch origin/$remote_branch
-    )
+    git checkout -f -B $tgt_branch origin/$remote_branch || exit 1
+    git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
+    ) || return 1
 }
 
 cleanup_mstpd_stp_state() {
@@ -147,4 +155,4 @@ sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
 sudo systemctl daemon-reload
 
 sync
-logger "FireRouter: SWITCH branch from $cur_branch to $branch"
+logger "FireRouter:switch_branch: from $cur_branch to $branch"
