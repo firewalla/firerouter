@@ -229,6 +229,7 @@ class BridgePortStateSync {
     this._pendingStates = new Map();
     this._runningIntfs = new Set();
     this._runLoopPromises = new Map();
+    this._memberIntfs = new Set();
   }
 
   // Kill the bridge monitor link subprocess and wait for any in-flight apply to finish, so that
@@ -245,6 +246,7 @@ class BridgePortStateSync {
   // Watch `bridge monitor link` for port state changes, then sync current native bridge port states to VLAN ports.
   async startMonitor(memberIntfs) {
     await this.stopMonitor();
+    this._memberIntfs = new Set(memberIntfs);
     const proc = spawn('bridge', ['monitor', 'link'], { stdio: ['ignore', 'pipe', 'ignore'] });
     this._monitorProcess = proc;
     let buf = '';
@@ -305,6 +307,9 @@ class BridgePortStateSync {
       const vlanMatch = ifName.match(/^(.+)\.\d+$/);
       if (!vlanMatch) return;
       const physicalIntf = vlanMatch[1];
+      // bridge monitor link is global to the namespace. Only react to VLAN events
+      // whose lower physical interface belongs to this bridge's STP domain.
+      if (!this._memberIntfs.has(physicalIntf)) return;
       const proc = this._monitorProcess;
       BridgePortStateSync.getNativeBridgePortState(physicalIntf).then(state => {
         if (this._monitorProcess !== proc) return;
