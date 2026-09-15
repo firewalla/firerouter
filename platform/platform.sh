@@ -44,6 +44,10 @@ function get_ndppd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/ndppd"
 }
 
+function get_mcproxy_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mcproxy"
+}
+
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }

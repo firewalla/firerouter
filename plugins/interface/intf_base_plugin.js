@@ -96,12 +96,14 @@ function createAbortController() {
 }
 
 const ndppdConfDir = `${r.getUserConfigFolder()}/ndppd`;
+const mcproxyConfDir = `${r.getUserConfigFolder()}/mcproxy`;
 const dhcpcd6ConfDir = `${r.getUserConfigFolder()}/dhcpcd6`;
 
 class InterfaceBasePlugin extends Plugin {
 
   static async preparePlugin() {
     await fs.mkdirAsync(`${ndppdConfDir}`, { recursive: true }).catch((err) => { });
+    await fs.mkdirAsync(`${mcproxyConfDir}`, { recursive: true }).catch((err) => { });
     await fs.mkdirAsync(`${dhcpcd6ConfDir}`, { recursive: true }).catch((err) => { });
   }
 
@@ -241,6 +243,8 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.ipv6PassthroughFrom) {
         await execFile("sudo", ["systemctl", "stop", `firerouter_ndppd@${this.name}`]).catch((err) => { });
         await fs.unlinkAsync(`${ndppdConfDir}/${this.name}.conf`).catch((err) => { });
+        await execFile("sudo", ["systemctl", "stop", `firerouter_mcproxy@${this.name}`]).catch((err) => { });
+        await fs.unlinkAsync(`${mcproxyConfDir}/${this.name}.conf`).catch((err) => { });
       }
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
@@ -650,9 +654,19 @@ class InterfaceBasePlugin extends Plugin {
           await execFile("sudo", ["systemctl", "restart", `firerouter_ndppd@${this.name}`]).catch((err) => {
             this.log.error(`Failed to start ndppd service for ${this.name}`, err.message);
           });
+
+          // relay downstream MLD group membership to the WAN side, for gear that needs MLD snooping instead of NDP
+          const tableNum = this._mcproxyTableNumber();
+          if (tableNum !== null) {
+            await this._writeMcproxyConfigFile(fromWANPlugin.name, this.name, tableNum);
+            await execFile("sudo", ["systemctl", "restart", `firerouter_mcproxy@${this.name}`]).catch((err) => {
+              this.log.error(`Failed to start mcproxy service for ${this.name}`, err.message);
+            });
+          }
         } while(0);
       } else {
         await execFile("sudo", ["systemctl", "stop", `firerouter_ndppd@${this.name}`]).catch((err) => { });
+        await execFile("sudo", ["systemctl", "stop", `firerouter_mcproxy@${this.name}`]).catch((err) => { });
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
@@ -740,6 +754,48 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`Failed to write ndppd config ${confPath}`, err.message);
     });
     this.log.debug(`Written ndppd config to ${confPath}`);
+  }
+
+  // Each bridge's mcproxy needs its own MRT6 table (a single global slot per netns), or
+  // concurrent instances conflict. Table numbers are derived from the interface name so
+  // the id is stable across restarts with no persisted state. Bridges, VLANs on a bond
+  // (bondM.N), and plain bonds (bondM) each get their own disjoint offset band so none of
+  // these shapes can ever collide: brN -> N+1 (1-999ish); bondM.N -> 2000000+M*10000+N;
+  // bondM -> M+1000000.
+  //
+  // rely on current bridge naming convention.
+  _mcproxyTableNumber() {
+    let m = this.name.match(/^br(\d+)$/);
+    if (m) {
+      return parseInt(m[1], 10) + 1;
+    }
+    m = this.name.match(/^bond(\d+)\.(\d+)$/);
+    if (m) {
+      return parseInt(m[1], 10) * 10000 + parseInt(m[2], 10) + 2000000;
+    }
+    m = this.name.match(/^bond(\d+)$/);
+    if (m) {
+      return parseInt(m[1], 10) + 1000000;
+    }
+    this.log.error(`Cannot derive an mcproxy routing table number from interface name ${this.name}`);
+    return null;
+  }
+
+  // ndppd only proxies NDP; some WAN-side gear instead relies on MLD snooping to learn an
+  // address is reachable. mcproxy acts as a real MLD querier on the LAN side so those
+  // listeners report properly, and relays that membership onto the WAN interface.
+  async _writeMcproxyConfigFile(wanInterface, lanInterface, tableNum) {
+    const confPath = `${mcproxyConfDir}/${lanInterface}.conf`;
+    const content = [
+      `protocol MLDv2;`,
+      `pinstance "${lanInterface}"(${tableNum}): "${wanInterface}" ==> "${lanInterface}";`,
+      ``
+    ].join('\n');
+
+    await fs.writeFileAsync(confPath, content).catch((err) => {
+      this.log.error(`Failed to write mcproxy config ${confPath}`, err.message);
+    });
+    this.log.debug(`Written mcproxy config to ${confPath}`);
   }
 
   // just for readability
