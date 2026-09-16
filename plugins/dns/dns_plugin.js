@@ -31,6 +31,8 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
+const log = require('../../util/logger.js')('DNSPlugin');
+
 let _restartTask = null;
 
 const dnsConfTemplate = r.getFireRouterHome() + "/etc/dnsmasq.dns.conf.template";
@@ -46,6 +48,29 @@ class DNSPlugin extends Plugin {
     await this.cleanupLocalhostDnsConf();
   }
 
+  // Find a dead localhost upstream in a scanned conf's content, given whether its port is
+  // listening. Returns null when there's nothing to delete, otherwise the port and whether other
+  // directives ride along in the same file.
+  static _findDeadLocalhostUpstream(content, listening) {
+    const match = content.match(/server=127\.0\.0\.1#(\d+)/);
+    if (!match || listening) return null;
+    const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+    return { port: match[1], mixed: lines.length > 1 };
+  }
+
+  static _parseListeningPorts(ssOutput) {
+    const ports = new Set();
+    for (const line of ssOutput.split('\n')) {
+      for (const token of line.trim().split(/\s+/)) {
+        const matched = token.match(/:(\d+)$/);
+        if (!matched) continue;
+        ports.add(matched[1]);
+        break;
+      }
+    }
+    return ports;
+  }
+
   // Remove localhost-upstream confs whose port isn't listening yet (boot gap guard).
   // Only runs once per boot via a /dev/shm marker; skipped on plain firerouter restarts
   static async cleanupLocalhostDnsConf() {
@@ -56,14 +81,19 @@ class DNSPlugin extends Plugin {
     const confDir = `${r.getFirewallaUserConfigFolder()}/dnsmasq`;
     const { stdout } = await execFile("grep", ["-rl", "server=127\\.0\\.0\\.1#", confDir]).catch(() => ({ stdout: '' }));
     const confs = stdout.trim().split('\n').filter(Boolean);
+    const { stdout: ssOutput } = await exec("ss -lntu").catch(() => ({ stdout: '' }));
+    const listeningPorts = this._parseListeningPorts(ssOutput);
     for (const conf of confs) {
       const content = await fs.readFileAsync(conf, 'utf8').catch(() => '');
       const match = content.match(/server=127\.0\.0\.1#(\d+)/);
       if (!match) continue;
-      const port = match[1];
-      const listening = await exec(`ss -lntu | grep -q '127\\.0\\.0\\.1:${port} '`).then(() => true).catch(() => false);
-      if (!listening)
-        await fs.unlinkAsync(conf).catch(() => {});
+      const listening = listeningPorts.has(match[1]);
+      const decision = this._findDeadLocalhostUpstream(content, listening);
+      if (!decision) continue;
+      if (decision.mixed)
+        // deleting anyway per the dead-port rule, but flagged since other directives go with it.
+        log.warn(`${conf} has a dead localhost upstream (port ${decision.port}) mixed with other directives, deleting the whole file - please check manually`);
+      await fs.unlinkAsync(conf).catch(() => {});
     }
 
     await fs.writeFileAsync(marker, '').catch(() => {});
