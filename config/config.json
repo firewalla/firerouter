@@ -76,6 +76,12 @@
       "init_seq": 6
     },
     {
+      "file_path": "./interface/vxlan_intf_plugin.js",
+      "config_path": "interface.vxlan",
+      "category": "interface",
+      "init_seq": 6
+    },
+    {
       "file_path": "./nat/nat_plugin.js",
       "config_path": "nat",
       "category": "nat",
