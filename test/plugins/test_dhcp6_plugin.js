@@ -96,6 +96,47 @@ describe('Test DHCP6 configuration', function(){
     expect(contents).to.contain('ra-param=eth5,200,900');
   });
 
+  it('should advertise a renumbered-away prefix as an RA-only range', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5', [], 'stateless', undefined, undefined, [], undefined, 86400, 200, undefined,
+      [{prefix: '2001:db8:1::/64', validLft: 6800}]
+    );
+
+    const contents = await fs.readFileAsync(this.plugin._getConfFilePath(), {encoding: 'utf8'});
+    // the lease time bounds the valid lifetime, the keyword zeroes the preferred lifetime, and
+    // an explicit range needs both - see the comment in writeDHCPConfFile
+    // the unit suffix keeps dnsmasq from reading the number as a prefix length, which makes it
+    // refuse to start - see the comment on DEPRECATED_PREFIX_RA_LEASE
+    expect(contents).to.contain('dhcp-range=tag:eth5,2001:db8:1::,ra-only,120s');
+    expect(contents).to.contain('dhcp-range=tag:eth5,2001:db8:1::,ra-only,deprecated');
+    // the real remaining lifetime rides on the address's valid_lft and is never advertised as the
+    // lease - doing so refreshes the dying address on every RA (RFC 4862 5.5.3(e) rule 1)
+    expect(contents).to.not.contain('ra-only,6800');
+    // the live prefix is still advertised alongside it
+    expect(contents).to.contain('dhcp-range=tag:eth5,::,constructor:eth5,slaac,86400');
+  });
+
+  it('should scope the RA-only range with the same tags as the live range', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5', ['grp1'], 'stateless', undefined, undefined, [], undefined, 86400, 200, undefined,
+      [{prefix: '2001:db8:1::/64', validLft: 6800}]
+    );
+
+    const contents = await fs.readFileAsync(this.plugin._getConfFilePath(), {encoding: 'utf8'});
+    // a range carrying fewer tags than the live one would match a wider set of clients
+    expect(contents).to.contain('dhcp-range=tag:eth5,tag:grp1,2001:db8:1::,ra-only,120s');
+    expect(contents).to.contain('dhcp-range=tag:eth5,tag:grp1,2001:db8:1::,ra-only,deprecated');
+  });
+
+  it('should not write any RA-only range when no prefix was renumbered away', async () => {
+    await this.plugin.writeDHCPConfFile(
+      'eth5', [], 'stateless', undefined, undefined, [], undefined, 86400, 200
+    );
+
+    const contents = await fs.readFileAsync(this.plugin._getConfFilePath(), {encoding: 'utf8'});
+    expect(contents).to.not.contain('ra-only');
+  });
+
   it('should reject a nonzero Router Advertisement lifetime below the interval', async () => {
     let error = null;
     try {
