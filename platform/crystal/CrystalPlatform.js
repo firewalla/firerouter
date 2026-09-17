@@ -26,6 +26,10 @@ class CrystalPlatform extends Platform {
     return true;
   }
 
+  getModelName() {
+    return "Firewalla Crystal";
+  }
+
   getMiniupnpdNftPath() {
     return `${this.getFilesPath()}/miniupnpd.nft`;
   }
