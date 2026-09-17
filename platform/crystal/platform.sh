@@ -12,11 +12,11 @@
 #   2. binary selection: Crystal only ever ships on Ubuntu 26.04, so the helpers
 #      below pick one path unconditionally instead of branching on lsb_release
 #
-# Binaries themselves (dnsmasq/hostapd/wpa_*/smcrouted/...) are byte-identical
-# x86_64 builds, so platform/crystal/bin is a real directory whose entries are
-# per-file symlinks into gold's bin. Drop an entry Crystal does not need, or
-# replace a symlink with a real file the day Crystal needs its own build —
-# nothing here has to change.
+# Bundled binaries (dnsmasq/smcrouted/...) are byte-identical x86_64 builds, so
+# platform/crystal/bin is a real directory whose entries are per-file symlinks
+# into gold's bin, carrying only what Crystal actually uses. Drop an entry
+# Crystal stops needing, or replace a symlink with a real file the day Crystal
+# needs its own build — nothing here has to change.
 
 # Crystal has no status LEDs, so the firestatus LED daemon is not needed.
 NEED_FIRESTATUS=false
@@ -36,8 +36,9 @@ function led_report_network_up {
 
 # --- binary selection --------------------------------------------------------
 # Crystal only ships on Ubuntu 26.04, so unlike gold/goldpro there is no
-# lsb_release branching here: the focal/jammy arms never matched anyway, these
-# are the paths Crystal has always resolved to.
+# lsb_release branching here: every helper picks one path unconditionally.
+# The wpa_* tools come from the distro; hostapd does not ship natively on u26,
+# so it stays bundled.
 
 function get_dnsmasq_path {
   test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
@@ -50,11 +51,11 @@ function get_hostapd_path {
 }
 
 function get_wpa_supplicant_path {
-  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
+  echo "wpa_supplicant" # system native
 }
 
 function get_wpa_cli_path {
-  echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
+  echo "wpa_cli" # system native
 }
 
 function get_smcrouted_path {
