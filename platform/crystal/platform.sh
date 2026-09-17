@@ -13,9 +13,10 @@
 #      other x86_64 boards, needed for libc compatibility on jammy)
 #
 # Binaries themselves (dnsmasq/hostapd/wpa_*/smcrouted/...) are byte-identical
-# x86_64 builds, so platform/crystal/bin is a symlink to gold's bin. Replace that
-# symlink with real files the day Crystal needs its own binaries — nothing here
-# has to change.
+# x86_64 builds, so platform/crystal/bin is a real directory whose entries are
+# per-file symlinks into gold's bin. Drop an entry Crystal does not need, or
+# replace a symlink with a real file the day Crystal needs its own build —
+# nothing here has to change.
 
 # Crystal has no status LEDs, so the firestatus LED daemon is not needed.
 NEED_FIRESTATUS=false
