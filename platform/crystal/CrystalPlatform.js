@@ -30,6 +30,14 @@ class CrystalPlatform extends Platform {
     return "Firewalla Crystal";
   }
 
+  async getWpaCliBinPath() {
+    return `wpa_cli`;
+  }
+
+  async getWpaPassphraseBinPath() {
+    return `wpa_passphrase`;
+  }
+
   getMiniupnpdNftPath() {
     return `${this.getFilesPath()}/miniupnpd.nft`;
   }
