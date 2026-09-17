@@ -71,18 +71,7 @@ function get_wpa_cli_path {
 }
 
 function get_smcrouted_path {
-  code_name=$(lsb_release -cs)
-  case "$code_name" in
-  "jammy")
-    echo "${FW_PLATFORM_CUR_DIR}/bin/u22/smcrouted"
-    ;;
-  "focal")
-    echo "${FW_PLATFORM_CUR_DIR}/bin/u20/smcrouted"
-    ;;
-  *)
-    echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
-    ;;
-  esac
+  echo "${FW_PLATFORM_CUR_DIR}/bin/u22/smcrouted"
 }
 
 function map_target_branch {
