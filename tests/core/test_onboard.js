@@ -123,6 +123,32 @@ describe('Test onboard network profile', function() {
       expect(_.get(config, ["nat", "br0-eth0"])).to.be.undefined;
     });
 
+    it('should enable dhcpv6 on a dhcp wan and delegate the prefix to the lan', () => {
+      const config = op.expandProfile(adaptiveNetwork(), ports(4));
+      expect(_.get(config, ["interface", "phy", "eth0", "dhcp6"])).to.eql({});
+      expect(_.get(config, ["interface", "bridge", "br0", "ipv6DelegateFrom"])).to.equal("eth0");
+      expect(_.get(config, ["dhcp6", "br0"])).to.eql({type: "stateless", lease: 86400});
+    });
+
+    it('should enable dhcpv6 on ppp0 rather than on the port underneath it', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "pppoe", username: "u", password: "p"
+      }), ports(4));
+      expect(_.get(config, ["interface", "pppoe", "ppp0", "dhcp6"])).to.eql({});
+      expect(_.get(config, ["interface", "phy", "eth0"])).to.eql({enabled: true});
+      expect(_.get(config, ["interface", "bridge", "br0", "ipv6DelegateFrom"])).to.equal("ppp0");
+      expect(_.get(config, ["dhcp6", "br0"])).to.eql({type: "stateless", lease: 86400});
+    });
+
+    it('should keep a static wan on ipv4 only, it has no prefix to delegate', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "static", ip: "203.0.113.5", mask: "255.255.255.0", gateway: "203.0.113.1", dns: "1.1.1.1"
+      }), ports(4));
+      expect(_.get(config, ["interface", "phy", "eth0", "dhcp6"])).to.be.undefined;
+      expect(_.get(config, ["interface", "bridge", "br0", "ipv6DelegateFrom"])).to.be.undefined;
+      expect(config.dhcp6).to.be.undefined;
+    });
+
     it('should keep sshd reachable on both wan and lan', () => {
       const config = op.expandProfile(adaptiveNetwork(), ports(4));
       expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.true;
