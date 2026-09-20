@@ -24,6 +24,8 @@ const DHCPPlugin = require('./dhcp_plugin.js');
 
 const dhcpConfDir = r.getUserConfigFolder() + "/dhcp/conf";
 
+const DEPRECATED_PREFIX_RA_LEASE = "120s";
+
 
 class DHCP6Plugin extends DHCPPlugin {
 
@@ -38,7 +40,7 @@ class DHCP6Plugin extends DHCPPlugin {
     this._restartService();
   }
 
-  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200, raLifetime) {
+  async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200, raLifetime, deprecatedPrefixes = []) {
     tags = tags || [];
     nameservers = nameservers || [];
     let extraTags = "";
@@ -83,6 +85,18 @@ class DHCP6Plugin extends DHCPPlugin {
       }
       default:
     }
+
+    // A prefix upstream has renumbered away from (see _deprecateObsoleteIPv6Prefixes) needs an
+    // explicit range, since dnsmasq builds none for a deprecated address. Two ranges per prefix:
+    // one with the lease time (bounds valid lifetime), one "deprecated" (zeroes preferred lifetime).
+    if (type === "stateless" || type === "stateful") {
+      for (const {prefix} of deprecatedPrefixes) {
+        const prefixAddr = prefix.split("/")[0];
+        content.push(`dhcp-range=tag:${iface},${extraTags}${prefixAddr},ra-only,${DEPRECATED_PREFIX_RA_LEASE}`);
+        content.push(`dhcp-range=tag:${iface},${extraTags}${prefixAddr},ra-only,deprecated`);
+      }
+    }
+
     await fs.writeFileAsync(this._getConfFilePath(), content.join("\n"));
   }
 
@@ -102,8 +116,10 @@ class DHCP6Plugin extends DHCPPlugin {
       this.log.warn(`Interface ${this.name} is not present yet`);
       return;
     }
+    // the conf is fully regenerated, so an expired deprecated address just drops out of the file
+    const deprecatedPrefixes = await ifacePlugin.getDeprecatedIPv6Prefixes();
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,
-      this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval, this.networkConfig.raLifetime);
+      this.networkConfig.prefixLen, this.networkConfig.lease, this.networkConfig.raInterval, this.networkConfig.raLifetime, deprecatedPrefixes);
     this._restartService();
   }
 }
