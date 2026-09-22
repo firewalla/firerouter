@@ -78,7 +78,7 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   rm -f /dev/shm/firerouter.upgraded
   if systemctl is-active firereset &>/dev/null; then
     echo "Firereset is active, lazy-restarting FireReset with SIGINT..."
-    sudo pkill -SIGINT firereset
+    sudo pkill -x -SIGINT firereset
   else
     echo "Starting firereset..."
     sudo systemctl start firereset
@@ -108,7 +108,7 @@ if [[ $NETWORK_SETUP == "yes" ]]; then
   if [[ $firereset_restart_needed == "1" ]]; then
     if systemctl is-active firereset &>/dev/null; then
       echo "Firereset is active, lazy-restarting FireReset with SIGINT..."
-      sudo pkill -SIGINT firereset
+      sudo pkill -x -SIGINT firereset
     fi
   fi
 fi

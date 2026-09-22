@@ -4,9 +4,22 @@ set -e
 
 : ${FIREROUTER_HOME:=/home/pi/firerouter}
 : ${FIREROUTER_HIDDEN:=/home/pi/.router}
+: ${FIREWALLA_HOME:=/home/pi/firewalla}
 MGIT=$(PATH=/home/pi/scripts:$FIREROUTER_HOME/scripts; /usr/bin/which mgit||echo git)
 source ${FIREROUTER_HOME}/platform/platform.sh
 CMD=$(basename $0)
+
+# release verification, shared implementation maintained in the firewalla
+# repo (same release key and floor, firerouter-specific repo name)
+UV_OFFICIAL_REPO=firerouter
+UV_RELEASE_PUBKEY=$FIREROUTER_HOME/etc/keys/release_pub.gpg
+if [[ -s /home/pi/scripts/upgrade_verify.sh ]]; then
+  source /home/pi/scripts/upgrade_verify.sh
+elif [[ -s $FIREWALLA_HOME/scripts/upgrade_verify.sh ]]; then
+  source $FIREWALLA_HOME/scripts/upgrade_verify.sh
+else
+  /usr/bin/logger -t FWUPGRADE.VERIFY "upgrade_verify.sh not found, firerouter branch switch runs unverified"
+fi
 
 usage() {
     cat <<EOU
@@ -40,11 +53,51 @@ switch_branch() {
     fi
     remote_branch=$(map_target_branch $tgt_branch)
     # firerouter repo
+    # the fetch refspec is given on the command line instead of being written
+    # to remote.origin.fetch first, so a rejected switch leaves the repo still
+    # tracking its current branch; the config is rewritten only once the
+    # checkout below has succeeded. exit inside a subshell ends only the
+    # subshell, so the result has to be turned into the function's own.
     ( cd $FIREROUTER_HOME
+    if type -t uv_ensure_release_key &>/dev/null; then
+      uv_ensure_release_key
+      uv_update_version_floor
+    fi
+    # a failed fetch must abort: refs/remotes/origin/$remote_branch may still hold
+    # a revision from an earlier switch, and verifying and checking that out would
+    # silently land on a stale revision while reporting success
+    $MGIT fetch origin "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch" || exit 1
+    if type -t uv_gate &>/dev/null && ! uv_gate "origin/$remote_branch" "$tgt_branch"; then
+      err "target branch $remote_branch failed release verification, abort"
+      exit 1
+    fi
+    if ! git cat-file -e "origin/$remote_branch:scripts/bridge-stp.sh" 2>/dev/null; then
+      cleanup_mstpd_stp_state
+    fi
+    git checkout -f -B $tgt_branch origin/$remote_branch || exit 1
     git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
-    $MGIT fetch origin $remote_branch
-    git checkout -f -B $tgt_branch origin/$remote_branch
-    )
+    ) || return 1
+}
+
+cleanup_mstpd_stp_state() {
+  local mstpd_bridges=()
+  for br in $(ls /sys/class/net/ 2>/dev/null); do
+    [[ -f /sys/class/net/$br/bridge/stp_state ]] || continue
+    cur_state=$(cat /sys/class/net/$br/bridge/stp_state 2>/dev/null) || continue
+    if [[ "$cur_state" == "2" ]]; then
+      sudo brctl stp "$br" off || true
+      mstpd_bridges+=("$br")
+    fi
+  done
+
+  sudo systemctl stop firerouter_mstpd 2>/dev/null || true
+  sudo rm -f /sbin/bridge-stp
+  sudo rm -f /etc/systemd/system/firerouter_mstpd.service
+  sudo systemctl daemon-reload || true
+
+  for br in "${mstpd_bridges[@]}"; do
+    sudo brctl stp "$br" on || logger "WARN: cleanup_mstpd_stp_state: failed to restore STP on $br"
+  done
 }
 
 set_redis_flag() {
@@ -79,6 +132,7 @@ test $# -gt 0 || {
 
 branch=$1
 cur_branch=$(git rev-parse --abbrev-ref HEAD)
+
 switch_branch $cur_branch $branch || exit 1
 rm -f "$FIREROUTER_HIDDEN/config/.no_auto_upgrade"
 # remove prepared flag file to trigger prepare_env during next init_network_config
@@ -101,4 +155,4 @@ sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
 sudo systemctl daemon-reload
 
 sync
-logger "FireRouter: SWITCH branch from $cur_branch to $branch"
+logger "FireRouter:switch_branch: from $cur_branch to $branch"
