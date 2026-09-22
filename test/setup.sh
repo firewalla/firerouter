@@ -5,8 +5,8 @@
 #
 # Recover with:  git checkout -- node_modules
 
-mkdir -p ~/.node_modules.fr.test/node_modules
+mkdir -p /data/.node_modules.fr.test/node_modules
 cd "$(dirname "$0")/.."
 rm -f node_modules
-ln -sf ~/.node_modules.fr.test/node_modules node_modules
+ln -sf /data/.node_modules.fr.test/node_modules node_modules
 npm install

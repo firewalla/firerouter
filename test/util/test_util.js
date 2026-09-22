@@ -157,6 +157,76 @@ describe('Test util', function(){
     });
   });
 
+  describe('findControlChar', function(){
+    it('should find a line break in a value and report its path', async()=> {
+      expect(util.findControlChar({dhcp: {eth0: {extraOptions: {"15": "a\ndhcp-script=/tmp/pwn.sh"}}}}))
+        .to.be.equal("dhcp.eth0.extraOptions.15");
+      expect(util.findControlChar({interface: {pppoe: {ppp0: {mru: "1492\nplugin /tmp/pwn.so"}}}}))
+        .to.be.equal("interface.pppoe.ppp0.mru");
+    });
+
+    it('should find a line break in a key', async()=> {
+      // hostapd_plugin and wlan_intf_plugin both emit `key=value` lines from config keys
+      expect(util.findControlChar({hostapd: {wlan0: {params: {"channel\ndhcp-script=/tmp/pwn.sh": 6}}}}))
+        .to.be.equal("hostapd.wlan0.params.channel\\ndhcp-script=/tmp/pwn.sh");
+    });
+
+    it('should walk arrays and report the index', async()=> {
+      expect(util.findControlChar({interface: {phy: {eth0: {nameservers: ["1.1.1.1", "8.8.8.8\nserver=evil"]}}}}))
+        .to.be.equal("interface.phy.eth0.nameservers[1]");
+    });
+
+    it('should catch every control character, not only CR and LF', async()=> {
+      for (const ch of ["\x00", "\x07", "\x09", "\x0b", "\x1b", "\x1f", "\x7f"])
+        expect(util.findControlChar({a: {b: `x${ch}y`}}), `char ${JSON.stringify(ch)}`).to.be.equal("a.b");
+    });
+
+    it('should accept an ordinary config, including non ascii names', async()=> {
+      // real boxes carry CJK and emoji in the display name fields, those must keep working
+      expect(util.findControlChar({
+        interface: {phy: {eth0: {ipv4: "192.168.1.1/24", meta: {name: "办公室 🏢", type: "lan"}}}},
+        dhcp: {eth0: {range: {from: "192.168.1.100", to: "192.168.1.200"}, lease: 86400}},
+        apc: {assets: {"20:6D:31:AF:00:51": {sysConfig: {name: "二楼"}}}}
+      })).to.be.null;
+    });
+
+    it('should skip the ssid, the one field where an arbitrary byte is legal', async()=> {
+      // 802.11 makes the ssid an opaque octet string, and in client mode the box has to be able to
+      // join whatever the AP broadcasts
+      expect(util.findControlChar({hostapd: {wlan0: {params: {ssid: "a\nb"}}}})).to.be.null;
+      expect(util.findControlChar({interface: {wlan: {wlan0: {wpaSupplicant: {networks: [{ssid: "a\nb"}]}}}}})).to.be.null;
+    });
+
+    it('should reject a control character in every other wifi credential', async()=> {
+      // being hex encoded downstream makes these harmless, not meaningful: 802.11i bounds the
+      // ascii passphrase to characters 32 to 126, a psk is 64 hex digits, phase2 is directive syntax
+      for (const key of ["password", "psk", "wpa_passphrase", "sae_password", "wep_key0",
+                         "identity", "phase2", "anonymous_identity", "phase1", "private_key_passwd"])
+        expect(util.findControlChar({interface: {wlan: {wlan0: {wpaSupplicant: {networks: [{[key]: "a\nb"}]}}}}}),
+          `key ${key}`).to.be.equal(`interface.wlan.wlan0.wpaSupplicant.networks[0].${key}`);
+    });
+
+    it('should reject an apc wifi passphrase the same way as a hostapd one', async()=> {
+      // apc.profile.<uuid>.key is an AP passphrase; it must not be treated differently from
+      // hostapd.<intf>.params.wpa_passphrase just because it lives in another subtree
+      expect(util.findControlChar({apc: {profile: {"p1": {ssid: "net", key: "pass\nx"}}}}))
+        .to.be.equal("apc.profile.p1.key");
+      expect(util.findControlChar({hostapd: {wlan0: {params: {wpa_passphrase: "pass\nx"}}}}))
+        .to.be.equal("hostapd.wlan0.params.wpa_passphrase");
+    });
+
+    it('should not let an exempt key hide a subtree', async()=> {
+      // the exemption is on an encoded string, anything below such a key is still walked
+      expect(util.findControlChar({hostapd: {wlan0: {params: {ssid: {value: "a\nb"}}}}}))
+        .to.be.equal("hostapd.wlan0.params.ssid.value");
+    });
+
+    it('should tolerate non string leaves and empty input', async()=> {
+      for (const input of [null, undefined, {}, [], 42, true, {a: 1, b: null, c: [true, 2]}])
+        expect(util.findControlChar(input), `input ${JSON.stringify(input)}`).to.be.null;
+    });
+  });
+
   describe('lastLine', function(){
     it('should behave like tail -n 1', async()=> {
       expect(util.lastLine("2606:4700::1111\n1.1.1.1\n")).to.be.equal("1.1.1.1");

@@ -290,6 +290,67 @@ function toBoundedInt(value, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAF
   return n;
 }
 
+// Matches if a value holds any control character. Config values reach line-oriented files that a
+// root daemon reads (pppd options, dnsmasq conf, dhcpcd.conf, hostapd.conf, wpa_supplicant.conf)
+// and command lines, where a line break stops being data and starts a directive or a command.
+// Same character class as firewalla's Constants.REGEX_CONTROL_CHARS, so both repos reject the same
+// thing. firewalla also has a MULTILINE variant for its free text `notes` field; there is no
+// equivalent here - nothing in a network config is a text area.
+const REGEX_CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
+// The ssid is the one field where an arbitrary byte is legitimate input rather than a mistake.
+// 802.11 defines it as an opaque octet string of 0 to 32 bytes, and in client mode the box does not
+// choose it: to use someone else's wifi as a WAN it has to be configurable with whatever that AP
+// broadcasts. Refusing one would make such a network impossible to join at all.
+//
+// This is about what is legal, not about what is safe. Every wifi credential is hex encoded before
+// it is written - generateWpaSupplicantConfig above, and hostapd_plugin.js turning ssid into ssid2
+// and wpa_passphrase into wpa_psk - but that encoding happens downstream, at write time, from the
+// raw value the config carries. It makes a control character harmless; it does not make one
+// meaningful. So the passphrases are NOT exempt: 802.11i defines the ASCII passphrase as characters
+// 32 to 126, a psk is 64 hex digits, an EAP identity is a displayable string, and phase2 is
+// directive syntax such as auth=MSCHAPV2. A control character in any of those is a paste accident.
+const CONTROL_CHAR_EXEMPT_KEYS = new Set(["ssid"]);
+
+/**
+ * Walk a parsed config and find the first string holding a control character.
+ *
+ * Object keys are checked as well as values: hostapd_plugin and wlan_intf_plugin both emit
+ * `key=value` lines straight from config keys, so a line break in a key injects a directive the
+ * same way a line break in a value does.
+ *
+ * @param {*} obj - parsed config, or any subtree of one
+ * @param {string} [path] - path prefix, used to build the returned location
+ * @returns {string|null} path of the offending string, or null when there is none. The path is
+ *   safe to log: a key is escaped through JSON so a control character in one cannot break the
+ *   log line. The offending *value* is never returned - it can be a passphrase or a private key.
+ */
+function findControlChar(obj, path = "") {
+  if (_.isString(obj))
+    return REGEX_CONTROL_CHARS.test(obj) ? (path || "config") : null;
+  if (_.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const found = findControlChar(obj[i], `${path}[${i}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (_.isObject(obj)) {
+    for (const key of Object.keys(obj)) {
+      // JSON escaping turns a control character in the key into a printable two character form
+      const keyPath = path ? `${path}.${JSON.stringify(key).slice(1, -1)}` : JSON.stringify(key).slice(1, -1);
+      if (REGEX_CONTROL_CHARS.test(key))
+        return keyPath;
+      // the exemption is on the encoded value only, an object below one of these keys is walked
+      if (CONTROL_CHAR_EXEMPT_KEYS.has(key) && _.isString(obj[key]))
+        continue;
+      const found = findControlChar(obj[key], keyPath);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 module.exports = {
   extend: extend,
   delay: delay,
@@ -303,6 +364,8 @@ module.exports = {
   isValidUUID,
   isValidDNSName,
   toBoundedInt,
+  REGEX_CONTROL_CHARS,
+  findControlChar,
   parseEscapedString,
   parseHexString,
   lastLine,
