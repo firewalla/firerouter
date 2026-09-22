@@ -9,13 +9,14 @@
 # get_node_modules_dir, record/remap_eth_interfaces, before_firereset, ...) and
 # then sources this file, so we only override what is genuinely Crystal-specific:
 #   1. no status LEDs  -> LED / horse-light helpers are no-ops, firestatus off
-#   2. pick system-native vs bundled binaries by Ubuntu release (same rule as the
-#      other x86_64 boards, needed for libc compatibility on jammy)
+#   2. binary selection: Crystal only ever ships on Ubuntu 26.04, so the helpers
+#      below pick one path unconditionally instead of branching on lsb_release
 #
-# Binaries themselves (dnsmasq/hostapd/wpa_*/smcrouted/...) are byte-identical
-# x86_64 builds, so platform/crystal/bin is a symlink to gold's bin. Replace that
-# symlink with real files the day Crystal needs its own binaries — nothing here
-# has to change.
+# Bundled binaries (dnsmasq/smcrouted/...) are byte-identical x86_64 builds, so
+# platform/crystal/bin is a real directory whose entries are per-file symlinks
+# into gold's bin, carrying only what Crystal actually uses. Drop an entry
+# Crystal stops needing, or replace a symlink with a real file the day Crystal
+# needs its own build — nothing here has to change.
 
 # Crystal has no status LEDs, so the firestatus LED daemon is not needed.
 NEED_FIRESTATUS=false
@@ -33,56 +34,32 @@ function led_report_network_up {
   return
 }
 
-# --- binary selection: system-native on jammy, bundled otherwise --------------
+# --- binary selection --------------------------------------------------------
+# Crystal only ships on Ubuntu 26.04, so unlike gold/goldpro there is no
+# lsb_release branching here: every helper picks one path unconditionally.
+# The wpa_* tools come from the distro; hostapd does not ship natively on u26,
+# so it stays bundled.
+
 function get_dnsmasq_path {
   test -e /home/pi/.firewalla/run/dnsmasq && echo /home/pi/.firewalla/run/dnsmasq && return
 
-  if [[ $(lsb_release -cs) == "jammy" ]]; then
-    echo "${FW_PLATFORM_CUR_DIR}/bin/u22/dnsmasq"
-  else
-    echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
-  fi
+  echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
 }
 
 function get_hostapd_path {
-  if [[ $(lsb_release -cs) == "jammy" ]]; then
-    echo "hostapd" # system native
-  else
-    echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
-  fi
+  echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
 }
 
 function get_wpa_supplicant_path {
-  if [[ $(lsb_release -cs) == "jammy" ]]; then
-    echo "wpa_supplicant" # system native
-  else
-    echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_supplicant"
-  fi
+  echo "wpa_supplicant" # system native
 }
 
 function get_wpa_cli_path {
-  if [[ $(lsb_release -cs) == "focal" ]]; then
-    echo "${FW_PLATFORM_CUR_DIR}/bin/u20/wpa_cli"
-  elif [[ $(lsb_release -cs) == "jammy" ]]; then
-    echo "wpa_cli" # system native
-  else
-    echo "${FW_PLATFORM_CUR_DIR}/bin/wpa_cli"
-  fi
+  echo "wpa_cli" # system native
 }
 
 function get_smcrouted_path {
-  code_name=$(lsb_release -cs)
-  case "$code_name" in
-  "jammy")
-    echo "${FW_PLATFORM_CUR_DIR}/bin/u22/smcrouted"
-    ;;
-  "focal")
-    echo "${FW_PLATFORM_CUR_DIR}/bin/u20/smcrouted"
-    ;;
-  *)
-    echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
-    ;;
-  esac
+  echo "${FW_PLATFORM_CUR_DIR}/bin/u22/smcrouted"
 }
 
 function map_target_branch {
