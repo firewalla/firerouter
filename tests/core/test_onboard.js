@@ -149,10 +149,18 @@ describe('Test onboard network profile', function() {
       expect(config.dhcp6).to.be.undefined;
     });
 
-    it('should keep sshd reachable on both wan and lan', () => {
+    it('should keep sshd off on the wan and reachable on the lan', () => {
       const config = op.expandProfile(adaptiveNetwork(), ports(4));
-      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.true;
+      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.false;
       expect(_.get(config, ["sshd", "br0", "enabled"])).to.be.true;
+      // an interface missing from the sshd section gets no drop rule at all, so a pppoe wan has to
+      // be named by its ppp interface, which is where the packets from the internet show up
+      const pppoeConfig = op.expandProfile(adaptiveNetwork({
+        type: "pppoe", username: "user@isp", password: "secret"
+      }), ports(4));
+      expect(_.get(pppoeConfig, ["sshd", "ppp0", "enabled"])).to.be.false;
+      expect(_.get(pppoeConfig, ["sshd", "eth0", "enabled"])).to.be.false;
+      expect(_.get(pppoeConfig, ["sshd", "br0", "enabled"])).to.be.true;
     });
 
     it('should drop icmp echo on the wan and allow it on the lan bridge', () => {

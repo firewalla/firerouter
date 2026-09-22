@@ -229,6 +229,7 @@ function expandProfile(network, phyNames) {
     },
     sshd: {
       [WAN_PHY]: {enabled: false},
+      [wanIntf]: {enabled: false},
       [LAN_BRIDGE]: {enabled: true}
     },
     icmp: {
