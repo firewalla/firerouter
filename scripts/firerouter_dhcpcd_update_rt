@@ -27,7 +27,20 @@ case $reason in
     nd_id="$RECORD_LEASE_ND_ID"
 
     if [ -z "$nd_from" ]; then
-      log "ROUTERADVERT: no gw6 selected on $interface, skipping route update"
+      # RFC 4861 6.3.4: no candidate with a non-zero Router Lifetime means there is genuinely no
+      # default router right now - withdraw any route/record left over from a router that has
+      # since withdrawn, instead of leaving traffic pointed at it.
+      old_gw=`cat /dev/shm/dhcpcd.gw6.$interface 2>/dev/null || echo ""`
+      if [ -n "$old_gw" ]; then
+        for default_rt_table in $default_rt_tables; do
+          execute_and_log "sudo ip -6 r del default dev $interface table $default_rt_table"
+        done
+        rm -f /dev/shm/dhcpcd.gw6.$interface
+        log "ip_changed: gw6 withdrawn (was $old_gw) on $interface, no eligible default router"
+        ip_changed="1"
+      else
+        log "ROUTERADVERT: no gw6 selected on $interface, skipping route update"
+      fi
     else
       if [ -n "$ipv6_passthrough" ]; then
         ra_file="/dev/shm/dhcpcd.ra.$interface"
