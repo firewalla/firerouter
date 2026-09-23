@@ -15,11 +15,16 @@
 
 'use strict';
 
+const path = require('path');
 const r = require('./firerouter.js');
 const fsp = require('fs').promises;
 
 function getSavedFilePath(filename) {
-  return `${r.getRuntimeFolder()}/files/${filename}`;
+  const base = path.resolve(`${r.getRuntimeFolder()}/files`);
+  const full = path.resolve(base, filename);
+  if (full !== base && !full.startsWith(base + path.sep))
+    throw new Error('invalid filename');
+  return full;
 }
 
 async function listSavedFileNames() {
