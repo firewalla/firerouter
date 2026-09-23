@@ -746,6 +746,16 @@ class NetworkConfigManager {
       return ["config is not defined"];
     if (!config.interface)
       return ["interface is not defined"];
+    // Values from here reach line-oriented config files that root daemons read and command lines
+    // all over the plugins, so a control character in any of them can start a directive or a
+    // command of its own. Reject the whole config here rather than per sink: this runs before
+    // tryApplyConfig, so nothing that fails it ever reaches the network, and it covers the
+    // sections no plugin in this repo parses (apc, the wireguard `extra` tree) as well as the ones
+    // that do. The per sink guards stay as defence in depth. util.findControlChar exempts the ssid
+    // alone, and documents why. This matches what firewalla rejects on its side.
+    const ctrlCharPath = util.findControlChar(config);
+    if (ctrlCharPath)
+      return [`control character in ${ctrlCharPath}`];
     // plugin_loader creates an instance per key of every registered config_path, and those keys
     // are interpolated into shell commands and file paths in most plugins. config.interface is
     // checked separately below against the stricter kernel interface name rules.
