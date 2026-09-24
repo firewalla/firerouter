@@ -284,9 +284,13 @@ function reconcilePorts(network, phyNames) {
   const bondName = Object.keys(bonds)[0];
   if (extra.length > 0 && brName) {
     const br = bridges[brName];
-    // a vlan bridge of br is made of ethX.Y where every ethX is a member of br
-    const vlanBridges = Object.keys(bridges)
-        .filter(n => n !== brName && !_.isEmpty(bridges[n].intf) && bridges[n].intf.every(m => vlans[m] && br.intf.includes(vlans[m].intf)));
+    // a vlan bridge of br is made of ethX.Y with exactly one ethX.Y per member of br, a vlan that
+    // only covers some of the ports of br is left alone
+    const vlanBridges = Object.keys(bridges).filter(n => {
+      const parents = (bridges[n].intf || []).map(m => vlans[m] && vlans[m].intf);
+      return n !== brName && parents.length > 0 && parents.every(Boolean)
+        && _.isEqual(_.sortBy(parents), _.sortBy(br.intf));
+    });
     for (const port of extra) {
       source[port] = {enabled: true};
       br.intf.push(port);

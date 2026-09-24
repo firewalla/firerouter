@@ -228,6 +228,44 @@ describe('Test onboard network profile', function() {
       expect(config.interface.vlan["eth4.13"]).to.eql({enabled: true, intf: "eth4", vid: 13});
     });
 
+    it('should not add extra ports to vlan bridges that reuse a vid on separate ports', () => {
+      const network = {
+        interface: {
+          phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}},
+          bridge: {
+            br0: lan("LAN 1", "192.168.10.1/24", ["eth1", "eth2"]),
+            br1: lan("LAN 2", "192.168.11.1/24", ["eth1.100"]),
+            br2: lan("LAN 3", "192.168.12.1/24", ["eth2.100"])
+          },
+          vlan: {"eth1.100": vlan("eth1", 100), "eth2.100": vlan("eth2", 100)}
+        }
+      };
+      const config = op.reconcilePorts(network, ports(4));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.100"]);
+      expect(config.interface.bridge.br2.intf).to.eql(["eth2.100"]);
+      expect(config.interface.vlan["eth3.100"]).to.be.undefined;
+    });
+
+    it('should not add extra ports to a vlan bridge that only covers some ports of br0', () => {
+      const network = gse();
+      network.interface.bridge.br1.intf = ["eth1.12", "eth2.12"];
+      delete network.interface.vlan["eth3.12"];
+      const config = op.reconcilePorts(network, ports(5));
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.12", "eth2.12"]);
+      expect(config.interface.vlan["eth4.12"]).to.be.undefined;
+      expect(config.interface.bridge.br2.intf).to.eql(["eth1.13", "eth2.13", "eth3.13", "eth4.13"]);
+    });
+
+    it('should never put one interface into two bridges', () => {
+      for (const make of [goldse, gse, xcrystal]) {
+        for (const n of [2, 3, 6]) {
+          const members = _.flatMap(Object.values(op.reconcilePorts(make(), ports(n)).interface.bridge || {}), b => b.intf);
+          expect(members).to.eql(_.uniq(members));
+        }
+      }
+    });
+
     it('should add extra ports to the bond when there is no plain bridge, vlans on the bond follow it', () => {
       const network = xcrystal();
       const config = op.reconcilePorts(network, ports(6));
