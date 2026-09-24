@@ -37,6 +37,7 @@ const PPPOE_INTF = "ppp0";
 const LAN_BRIDGE = "br0";
 const ETH_NAME = /^eth\d+$/;     // wlan/usb interfaces are owned by other plugins, never bridged here
 const DHCP_LEASE = 86400;
+const WAN_DHCP6 = {};
 
 // WAN connectivity check, same shape the app writes for a normal box
 const WAN_EXTRA = {
@@ -119,7 +120,14 @@ function buildWan(wan) {
     case "dhcp":
       return {
         wanIntf: WAN_PHY,
-        phy: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true, extra: _.cloneDeep(WAN_EXTRA)}
+        ipv6: true,
+        phy: {
+          meta: {name: "WAN", type: "wan"},
+          enabled: true,
+          dhcp: true,
+          dhcp6: _.cloneDeep(WAN_DHCP6),
+          extra: _.cloneDeep(WAN_EXTRA)
+        }
       };
     case "static": {
       const nameservers = toNameservers(wan.dns);
@@ -129,6 +137,7 @@ function buildWan(wan) {
         throw new Error("wan dns is required for a static wan");
       return {
         wanIntf: WAN_PHY,
+        ipv6: false,
         phy: {
           meta: {name: "WAN", type: "wan"},
           enabled: true,
@@ -142,10 +151,9 @@ function buildWan(wan) {
     case "pppoe":
       if (!_.isString(wan.username) || !_.isString(wan.password) || !wan.username || !wan.password)
         throw new Error("wan username and password are required for pppoe");
-      // The WAN is the ppp interface riding on eth0, so eth0 itself stays a plain enabled port:
-      // it carries no address and must not be marked as the wan (see pppoe_intf_plugin.js).
       return {
         wanIntf: PPPOE_INTF,
+        ipv6: true,
         phy: {enabled: true},
         pppoe: {
           [PPPOE_INTF]: {
@@ -154,6 +162,7 @@ function buildWan(wan) {
             intf: WAN_PHY,
             username: wan.username,
             password: wan.password,
+            dhcp6: _.cloneDeep(WAN_DHCP6),
             extra: _.cloneDeep(WAN_EXTRA)
           }
         }
@@ -179,7 +188,7 @@ function expandProfile(network, phyNames) {
   const lan = _.get(network, "lan") || {};
   const lanCidr = toCidr(lan.ip, lan.mask, "lan");
   const lanPrefix = maskToPrefix(lan.mask);
-  const {wanIntf, phy, pppoe} = buildWan(_.get(network, "wan"));
+  const {wanIntf, phy, pppoe, ipv6} = buildWan(_.get(network, "wan"));
 
   // Every port that is not the wan is a LAN member — that is what "adaptive" means.
   const lanIntfs = eths.filter(n => n !== WAN_PHY);
@@ -195,6 +204,7 @@ function expandProfile(network, phyNames) {
           meta: {name: "LAN", type: "lan"},
           enabled: true,
           ipv4: lanCidr,
+          ...(ipv6 ? {ipv6DelegateFrom: wanIntf} : {}),
           intf: lanIntfs
         }
       }
@@ -219,6 +229,7 @@ function expandProfile(network, phyNames) {
     },
     sshd: {
       [WAN_PHY]: {enabled: false},
+      [wanIntf]: {enabled: false},
       [LAN_BRIDGE]: {enabled: true}
     },
     icmp: {
@@ -232,6 +243,8 @@ function expandProfile(network, phyNames) {
   };
   if (pppoe)
     config.interface.pppoe = pppoe;
+  if (ipv6)
+    config.dhcp6 = {[LAN_BRIDGE]: {type: "stateless", lease: DHCP_LEASE}};
   return config;
 }
 
