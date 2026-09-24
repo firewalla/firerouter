@@ -123,9 +123,9 @@ describe('Test onboard network profile', function() {
       expect(_.get(config, ["nat", "br0-eth0"])).to.be.undefined;
     });
 
-    it('should keep sshd reachable on both wan and lan', () => {
+    it('should disable sshd on the wan and keep it on the lan', () => {
       const config = op.expandProfile(adaptiveNetwork(), ports(4));
-      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.true;
+      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.false;
       expect(_.get(config, ["sshd", "br0", "enabled"])).to.be.true;
     });
 
@@ -162,6 +162,194 @@ describe('Test onboard network profile', function() {
       const tinyLan = adaptiveNetwork();
       tinyLan.lan.mask = "255.255.255.252";
       expect(() => op.expandProfile(tinyLan, ports(4))).to.throw(/too small/);
+    });
+  });
+
+  describe('reconcilePorts', () => {
+    const wan = () => ({meta: {name: "ISP 1", type: "wan"}, enabled: true, dhcp: true});
+    const lan = (name, ipv4, intf) => ({meta: {name, type: "lan"}, enabled: true, ipv4, intf});
+    const vlan = (intf, vid) => ({enabled: true, intf, vid});
+    const common = (lans) => ({
+      routing: {global: {default: {viaIntf: "eth0"}}},
+      nat: _.fromPairs(lans.map(n => [`${n}-eth0`, {in: n, out: "eth0"}])),
+      dhcp: _.fromPairs(lans.map(n => [n, {gateway: "10.0.0.1"}]))
+    });
+
+    // shaped like the GoldSE "me": a lag on eth1+eth3 with a vlan on it, eth2 alone with a vlan bridge
+    const goldse = () => _.merge({
+      interface: {
+        phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}, eth3: {enabled: true}},
+        bond: {bond0: _.merge(lan("LAN 1", "192.168.135.1/24", ["eth1", "eth3"]), {mode: "802.3ad"})},
+        bridge: {br0: lan("LAN 3", "192.168.74.1/24", ["eth2"]), br1: lan("LAN 4", "192.168.20.1/24", ["eth2.26"])},
+        vlan: {"bond0.25": _.merge(lan("LAN 2", "192.168.176.1/24"), {intf: "bond0", vid: 25}), "eth2.26": vlan("eth2", 26)}
+      },
+      app: {bond: [["eth1", "eth3"]]}
+    }, common(["bond0", "bond0.25", "br0", "br1"]));
+
+    // shaped like gse11: every port in br0, and a vlan bridge per vid over all of them
+    const gse = () => _.merge({
+      interface: {
+        phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}, eth3: {enabled: true}},
+        bridge: {
+          br0: lan("LAN 1", "192.168.77.1/24", ["eth1", "eth2", "eth3"]),
+          br1: lan("LAN 2", "192.168.135.1/24", ["eth1.12", "eth2.12", "eth3.12"]),
+          br2: lan("LAN 3", "192.168.124.1/24", ["eth1.13", "eth2.13", "eth3.13"])
+        },
+        vlan: _.fromPairs(_.flatMap([12, 13], vid => ["eth1", "eth2", "eth3"].map(p => [`${p}.${vid}`, vlan(p, vid)])))
+      },
+      app: {bond: []}
+    }, common(["br0", "br1", "br2"]));
+
+    // shaped like xcrystal: a lag on eth1+eth2 with vlans on it, eth3 declared but unused, no bridge
+    const xcrystal = () => _.merge({
+      interface: {
+        phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}, eth3: {enabled: true}},
+        bond: {bond0: _.merge(lan("Office", "192.168.203.1/22", ["eth1", "eth2"]), {mode: "802.3ad"})},
+        vlan: {"bond0.100": _.merge(lan("VLAN100", "192.168.188.1/24"), {intf: "bond0", vid: 100})}
+      },
+      app: {bond: [["eth1", "eth2"]]}
+    }, common(["bond0", "bond0.100"]));
+
+    it('should add extra ports to br0 and to its vlan bridges, not to the bond', () => {
+      const config = op.reconcilePorts(goldse(), ports(6));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth2", "eth4", "eth5"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth2.26", "eth4.26", "eth5.26"]);
+      expect(config.interface.vlan["eth4.26"]).to.eql({enabled: true, intf: "eth4", vid: 26});
+      expect(config.interface.phy.eth5).to.eql({enabled: true});
+      expect(config.interface.bond.bond0.intf).to.eql(["eth1", "eth3"]);
+      expect(config.app.bond).to.eql([["eth1", "eth3"]]);
+    });
+
+    it('should add extra ports to every vlan bridge of br0', () => {
+      const config = op.reconcilePorts(gse(), ports(5));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3", "eth4"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.12", "eth2.12", "eth3.12", "eth4.12"]);
+      expect(config.interface.bridge.br2.intf).to.eql(["eth1.13", "eth2.13", "eth3.13", "eth4.13"]);
+      expect(config.interface.vlan["eth4.13"]).to.eql({enabled: true, intf: "eth4", vid: 13});
+    });
+
+    it('should not add extra ports to vlan bridges that reuse a vid on separate ports', () => {
+      const network = {
+        interface: {
+          phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}},
+          bridge: {
+            br0: lan("LAN 1", "192.168.10.1/24", ["eth1", "eth2"]),
+            br1: lan("LAN 2", "192.168.11.1/24", ["eth1.100"]),
+            br2: lan("LAN 3", "192.168.12.1/24", ["eth2.100"])
+          },
+          vlan: {"eth1.100": vlan("eth1", 100), "eth2.100": vlan("eth2", 100)}
+        }
+      };
+      const config = op.reconcilePorts(network, ports(4));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.100"]);
+      expect(config.interface.bridge.br2.intf).to.eql(["eth2.100"]);
+      expect(config.interface.vlan["eth3.100"]).to.be.undefined;
+    });
+
+    it('should not add extra ports to vlan bridges that mix vids', () => {
+      const network = {
+        interface: {
+          phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}},
+          bridge: {
+            br0: lan("LAN 1", "192.168.10.1/24", ["eth1", "eth2"]),
+            br1: lan("LAN 2", "192.168.11.1/24", ["eth1.100", "eth2.200"]),
+            br2: lan("LAN 3", "192.168.12.1/24", ["eth2.100", "eth1.200"])
+          },
+          vlan: {"eth1.100": vlan("eth1", 100), "eth2.200": vlan("eth2", 200), "eth2.100": vlan("eth2", 100), "eth1.200": vlan("eth1", 200)}
+        }
+      };
+      const config = op.reconcilePorts(network, ports(4));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.100", "eth2.200"]);
+      expect(config.interface.bridge.br2.intf).to.eql(["eth2.100", "eth1.200"]);
+      expect(config.interface.vlan["eth3.100"]).to.be.undefined;
+    });
+
+    it('should not add extra ports to a vlan bridge that only covers some ports of br0', () => {
+      const network = gse();
+      network.interface.bridge.br1.intf = ["eth1.12", "eth2.12"];
+      delete network.interface.vlan["eth3.12"];
+      const config = op.reconcilePorts(network, ports(5));
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.12", "eth2.12"]);
+      expect(config.interface.vlan["eth4.12"]).to.be.undefined;
+      expect(config.interface.bridge.br2.intf).to.eql(["eth1.13", "eth2.13", "eth3.13", "eth4.13"]);
+    });
+
+    it('should never put one interface into two bridges', () => {
+      for (const make of [goldse, gse, xcrystal]) {
+        for (const n of [2, 3, 6]) {
+          const members = _.flatMap(Object.values(op.reconcilePorts(make(), ports(n)).interface.bridge || {}), b => b.intf);
+          expect(members).to.eql(_.uniq(members));
+        }
+      }
+    });
+
+    it('should add extra ports to the bond when there is no plain bridge, vlans on the bond follow it', () => {
+      const network = xcrystal();
+      const config = op.reconcilePorts(network, ports(6));
+      expect(config.interface.bond.bond0.intf).to.eql(["eth1", "eth2", "eth4", "eth5"]);
+      expect(config.app.bond).to.eql([["eth1", "eth2", "eth4", "eth5"]]);
+      expect(config.interface.vlan).to.eql(network.interface.vlan);
+    });
+
+    it('should remove missing ports from the bond, the bridges and drop the vlans on them', () => {
+      const config = op.reconcilePorts(goldse(), ports(2));
+      expect(Object.keys(config.interface.phy)).to.eql(["eth0", "eth1"]);
+      expect(config.interface.bond.bond0.intf).to.eql(["eth1"]);
+      expect(config.app.bond).to.eql([["eth1"]]);
+      expect(config.interface.bridge.br0.intf).to.eql([]);
+      expect(config.interface.bridge.br1.intf).to.eql([]);
+      expect(Object.keys(config.interface.vlan)).to.eql(["bond0.25"]);
+      expect(Object.keys(config.dhcp)).to.eql(["bond0", "bond0.25", "br0", "br1"]);
+    });
+
+    it('should remove a missing port from br0 and from every vlan bridge', () => {
+      const config = op.reconcilePorts(gse(), ports(3));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.12", "eth2.12"]);
+      expect(config.interface.bridge.br2.intf).to.eql(["eth1.13", "eth2.13"]);
+      expect(Object.keys(config.interface.vlan).filter(v => v.startsWith("eth3"))).to.eql([]);
+      expect(config.interface.phy.eth3).to.be.undefined;
+    });
+
+    it('should remove unused missing ports and shrink the bond', () => {
+      const config = op.reconcilePorts(xcrystal(), ports(2));
+      expect(Object.keys(config.interface.phy)).to.eql(["eth0", "eth1"]);
+      expect(config.interface.bond.bond0.intf).to.eql(["eth1"]);
+      expect(config.app.bond).to.eql([["eth1"]]);
+    });
+
+    it('should leave the config untouched when the ports match', () => {
+      for (const network of [goldse(), gse(), xcrystal()])
+        expect(op.reconcilePorts(network, ports(4))).to.eql(network);
+    });
+
+    it('should do nothing with extra ports when there is neither a plain bridge nor a bond', () => {
+      const network = {interface: {phy: {eth0: wan(), eth1: {enabled: true}}, bridge: {br1: lan("LAN", "10.1.0.1/24", ["eth1.10"])}, vlan: {"eth1.10": vlan("eth1", 10)}}};
+      expect(op.reconcilePorts(network, ports(4))).to.eql(network);
+    });
+
+    it('should never add eth0', () => {
+      const network = gse();
+      network.interface.phy.eth3 = network.interface.phy.eth0;
+      delete network.interface.phy.eth0;
+      network.routing.global.default.viaIntf = "eth3";
+      const config = op.reconcilePorts(network, ports(5));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3", "eth4"]);
+      expect(config.interface.phy.eth0).to.be.undefined;
+    });
+
+    it('should not modify the input and should produce configs that pass validateConfig', async () => {
+      for (const make of [goldse, gse, xcrystal]) {
+        for (const n of [2, 3, 6]) {
+          const network = make();
+          const before = _.cloneDeep(network);
+          const config = op.reconcilePorts(network, ports(n));
+          expect(network).to.eql(before);
+          expect(await ncm.validateConfig(config)).to.eql([]);
+        }
+      }
     });
   });
 });
@@ -266,7 +454,21 @@ describe('Test onboard config consumption', function() {
       });
       const consumed = await ncm.consumeOnboardConfig();
       expect(consumed).to.be.true;
-      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1"]);
+      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
+    });
+
+    it('should fit a full network config onto the ports of this box', async () => {
+      await writeOnboard({
+        interface: {
+          phy: {eth0: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true}, eth1: {enabled: true}, eth5: {enabled: true}},
+          bridge: {br0: {meta: {name: "LAN", type: "lan"}, ipv4: "10.10.0.1/24", intf: ["eth1", "eth5"], enabled: true}}
+        },
+        routing: {global: {default: {viaIntf: "eth0"}}}
+      });
+      const consumed = await ncm.consumeOnboardConfig();
+      expect(consumed).to.be.true;
+      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
+      expect(_.get(savedConfig, ["interface", "phy", "eth5"])).to.be.undefined;
     });
 
     it('should not consume when the profile cannot be expanded', async () => {
