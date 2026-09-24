@@ -30,6 +30,7 @@
 //     "lan": { "ip": "192.168.49.1", "mask": "255.255.255.0" } }
 
 const _ = require('lodash');
+const log = require('../util/logger.js')(__filename);
 
 const PROFILE_ADAPTIVE = "adaptive";
 const WAN_PHY = "eth0";          // crystal-ifmap guarantees this is the installer's WAN port
@@ -239,9 +240,89 @@ function isProfileConfig(network) {
   return _.isObject(network) && _.isString(network.profile);
 }
 
+// Fits a full network config taken from another box (migration) onto the ports this box has.
+// Ports only appear in interface.phy, bridge/bond intf and vlans on a port (ethX.Y), everything
+// else references the bridge/bond/vlan on top or eth0, so only those places are touched.
+function reconcilePorts(network, phyNames) {
+  const config = _.cloneDeep(network);
+  const actions = []; // log
+
+  const intf = config.interface || {};
+
+  const source = intf.phy || {}; // source `frcc` eth
+  const current = (phyNames || []).filter(n => ETH_NAME.test(n)).sort((a, b) => Number(a.slice(3)) - Number(b.slice(3))); // migrate target machine's eth
+  const bridges = intf.bridge || {};
+  const bonds = intf.bond || {};
+  const vlans = intf.vlan || {};
+  const appBonds = _.isArray(_.get(config, ["app", "bond"])) ? config.app.bond : [];
+  const without = (list, drop) => (list || []).filter(n => !drop.includes(n));
+
+  // 1. fewer ports, for each missing ethX:
+  //    - delete interface.phy.ethX and every vlan on it (interface.vlan.ethX.Y)
+  //    - remove ethX and ethX.Y from every bridge
+  //    - remove ethX from every bond and from app.bond
+  for (const port of Object.keys(source).filter(n => ETH_NAME.test(n) && !current.includes(n))) {
+    const subIntfs = Object.keys(vlans).filter(v => vlans[v].intf === port);
+    const gone = [port, ...subIntfs];
+    delete source[port];
+    for (const v of subIntfs)
+      delete vlans[v];
+    for (const conf of Object.values(bridges))
+      conf.intf = without(conf.intf, gone);
+    for (const conf of Object.values(bonds))
+      conf.intf = without(conf.intf, [port]);
+    for (let k = 0; k < appBonds.length; k++)
+      appBonds[k] = without(appBonds[k], [port]);
+    actions.push(`port ${port} is missing, remove ${gone.join(", ")}`);
+  }
+
+  // 2. more ports: add them to a plain bridge (br0 first) and to its vlan bridges,
+  //    or to the first bond if there is no plain bridge, otherwise leave them unused
+  const extra = current.filter(n => n !== WAN_PHY && !source[n]);
+  const isPlainBridge = (conf) => !_.isEmpty(_.get(conf, "intf")) && conf.intf.every(n => ETH_NAME.test(n));
+  const brName = isPlainBridge(bridges[LAN_BRIDGE]) ? LAN_BRIDGE : Object.keys(bridges).find(n => isPlainBridge(bridges[n]));
+  const bondName = Object.keys(bonds)[0];
+  if (extra.length > 0 && brName) {
+    const br = bridges[brName];
+    // a vlan bridge of br is made of ethX.Y where every ethX is a member of br
+    const vlanBridges = Object.keys(bridges)
+        .filter(n => n !== brName && !_.isEmpty(bridges[n].intf) && bridges[n].intf.every(m => vlans[m] && br.intf.includes(vlans[m].intf)));
+    for (const port of extra) {
+      source[port] = {enabled: true};
+      br.intf.push(port);
+      const added = [];
+      for (const vbName of vlanBridges) {
+        const vid = vlans[bridges[vbName].intf[0]].vid;
+        const subIntf = `${port}.${vid}`;
+        vlans[subIntf] = {enabled: true, intf: port, vid};
+        bridges[vbName].intf.push(subIntf);
+        added.push(`${subIntf} to ${vbName}`);
+      }
+      if (added.length > 0)
+        intf.vlan = vlans;
+      actions.push(`add port ${port} to ${brName}${added.length ? `, ${added.join(", ")}` : ""}`);
+    }
+  } else if (extra.length > 0 && bondName) {
+    const bond = bonds[bondName];
+    const appBond = appBonds.find(g => _.isEqual(_.sortBy(g), _.sortBy(bond.intf || [])));
+    for (const port of extra) {
+      source[port] = {enabled: true};
+      bond.intf = (bond.intf || []).concat(port);
+      if (appBond)
+        appBond.push(port);
+      actions.push(`add port ${port} to ${bondName}`);
+    }
+  }
+
+  for (const action of actions)
+    log.info(`Reconcile onboard network: ${action}`);
+  return config;
+}
+
 module.exports = {
   expandProfile,
   isProfileConfig,
+  reconcilePorts,
   maskToPrefix,
   PROFILE_ADAPTIVE,
   WAN_PHY
