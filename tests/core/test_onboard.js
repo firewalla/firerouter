@@ -123,9 +123,9 @@ describe('Test onboard network profile', function() {
       expect(_.get(config, ["nat", "br0-eth0"])).to.be.undefined;
     });
 
-    it('should keep sshd reachable on both wan and lan', () => {
+    it('should disable sshd on the wan and keep it on the lan', () => {
       const config = op.expandProfile(adaptiveNetwork(), ports(4));
-      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.true;
+      expect(_.get(config, ["sshd", "eth0", "enabled"])).to.be.false;
       expect(_.get(config, ["sshd", "br0", "enabled"])).to.be.true;
     });
 
