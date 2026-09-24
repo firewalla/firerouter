@@ -76,6 +76,14 @@ function get_smcrouted_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
 }
 
+function get_mstpd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mstpd"
+}
+
+function get_mstpctl_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mstpctl"
+}
+
 function record_eth_interfaces {
   return
 }
@@ -132,6 +140,10 @@ case "$UNAME" in
       orange)
         source $FW_PLATFORM_DIR/orange/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/orange
+        ;;
+      goldplus2)
+        source $FW_PLATFORM_DIR/goldplus2/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldplus2
         ;;
       *)
         unset FW_PLATFORM_CUR_DIR

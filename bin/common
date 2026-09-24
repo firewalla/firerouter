@@ -98,9 +98,11 @@ test_curl_http_code() {
 }
 
 test_any_wan_carrier_connected() {
-  count=$(curl -s -m10 localhost:8837/v1/config/wan/connectivity?live=true | jq '.wans | with_entries(select(.value.carrier == true)) | length')
-  test $? -ne 0 && return 1
-  test $count -gt 0 && return 0
+  # state.carrier is read from /sys/class/net/<intf>/carrier, "1" means link is up
+  count=$(curl -s -m10 'http://localhost:8837/v1/config/wans' | jq '[.[]? | objects | select(.state.carrier == "1")] | length')
+  # count is empty if curl timed out or the API returned an error, do not pass it to test unquoted
+  [[ "$count" =~ ^[0-9]+$ ]] || return 1
+  test "$count" -gt 0 && return 0
   return 2
 }
 
