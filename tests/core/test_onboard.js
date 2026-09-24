@@ -247,6 +247,25 @@ describe('Test onboard network profile', function() {
       expect(config.interface.vlan["eth3.100"]).to.be.undefined;
     });
 
+    it('should not add extra ports to vlan bridges that mix vids', () => {
+      const network = {
+        interface: {
+          phy: {eth0: wan(), eth1: {enabled: true}, eth2: {enabled: true}},
+          bridge: {
+            br0: lan("LAN 1", "192.168.10.1/24", ["eth1", "eth2"]),
+            br1: lan("LAN 2", "192.168.11.1/24", ["eth1.100", "eth2.200"]),
+            br2: lan("LAN 3", "192.168.12.1/24", ["eth2.100", "eth1.200"])
+          },
+          vlan: {"eth1.100": vlan("eth1", 100), "eth2.200": vlan("eth2", 200), "eth2.100": vlan("eth2", 100), "eth1.200": vlan("eth1", 200)}
+        }
+      };
+      const config = op.reconcilePorts(network, ports(4));
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3"]);
+      expect(config.interface.bridge.br1.intf).to.eql(["eth1.100", "eth2.200"]);
+      expect(config.interface.bridge.br2.intf).to.eql(["eth2.100", "eth1.200"]);
+      expect(config.interface.vlan["eth3.100"]).to.be.undefined;
+    });
+
     it('should not add extra ports to a vlan bridge that only covers some ports of br0', () => {
       const network = gse();
       network.interface.bridge.br1.intf = ["eth1.12", "eth2.12"];
