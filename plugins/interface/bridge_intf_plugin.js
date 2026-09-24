@@ -21,6 +21,7 @@ const { spawn } = require('child_process');
 const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -167,6 +168,49 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async state() {
+    const s = await super.state();
+    s.stpPorts = await this.getStpPortStatus();
+    return s;
+  }
+
+  // Live STP role/state per member port, e.g. { eth0: {role: "designated", state: "forwarding"} }.
+  // null for single-port bridges, VLAN sub-bridges, and bridges with stp explicitly disabled —
+  // none of those run mstpd, so there is no STP status to report.
+  async getStpPortStatus() {
+    const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
+    if (this.networkConfig.intf.length <= 1 || isVlanBridge || this.networkConfig.stp === false)
+      return null;
+    const mstpctl = `${platform.getBinaryPath()}/mstpctl`;
+    const result = await exec(`sudo ${mstpctl} showportdetail ${this.name}`).catch((err) => {
+      this.log.warn(`Failed to get mstp port status on ${this.name}`, err.message);
+      return null;
+    });
+    return result ? BridgeInterfacePlugin.parseStpPortDetail(result.stdout) : null;
+  }
+
+  // Parses `mstpctl showportdetail <bridge>` output into { <port>: {role, state} }.
+  // Each port's block starts with a "<bridge>:<port> CIST info" header line; role/state are
+  // always the last token on their respective line ("... role  Designated", "... state  forwarding").
+  static parseStpPortDetail(output) {
+    const result = {};
+    let currentPort = null;
+    for (const line of (output || '').split('\n')) {
+      const header = line.match(/^\S+:(\S+)\s+CIST info\s*$/);
+      if (header) {
+        currentPort = header[1];
+        result[currentPort] = {};
+        continue;
+      }
+      if (!currentPort) continue;
+      const roleMatch = line.match(/\brole\s+(\S+)\s*$/);
+      if (roleMatch) result[currentPort].role = roleMatch[1].toLowerCase();
+      const stateMatch = line.match(/\bstate\s+(\S+)\s*$/);
+      if (stateMatch) result[currentPort].state = stateMatch[1].toLowerCase();
+    }
+    return result;
+  }
+
   static async preparePlugin() {
     await super.preparePlugin();
     const r = require('../../util/firerouter.js');
@@ -250,12 +294,25 @@ class BridgePortStateSync {
 
   _handleLine(line) {
     const masterMatch = line.match(/master\s+(\S+)/);
-    if (!masterMatch || masterMatch[1] !== this._bridgeName) return;
+    if (!masterMatch) return;
     // some iproute2 builds (e.g. iproute2-ss180129 on gold) insert an extra "state <ADMIN-STATE>"
     // token between the ifname and the trailing colon, e.g. "4: eth2 state UP : <flags> ...".
     const intfMatch = line.match(/^\s*\d+:\s+(\S+?)(?:\s+state\s+\S+)?(?:@\S+)?\s*:/);
     if (!intfMatch) return;
-    const physicalIntf = intfMatch[1];
+    const ifName = intfMatch[1];
+    if (masterMatch[1] !== this._bridgeName) {
+      // correct vlan port state if it drifts.
+      const vlanMatch = ifName.match(/^(.+)\.\d+$/);
+      if (!vlanMatch) return;
+      const physicalIntf = vlanMatch[1];
+      const proc = this._monitorProcess;
+      BridgePortStateSync.getNativeBridgePortState(physicalIntf).then(state => {
+        if (this._monitorProcess !== proc) return;
+        if (state !== undefined && state !== null) this._scheduleApply(physicalIntf, state);
+      });
+      return;
+    }
+    const physicalIntf = ifName;
     // look for the STP port state only after "master <bridge>" — the ifname may carry its own
     // unrelated "state <ADMIN-STATE>" token earlier in the line (see intfMatch above).
     const afterMaster = line.slice(masterMatch.index + masterMatch[0].length);
@@ -313,9 +370,15 @@ class BridgePortStateSync {
   // the VLAN bridge has STP off, so only forwarding/disabled have defined kernel semantics there.
   static async applyVlanPortStates(physicalIntf, stpState, log) {
     const targetState = stpState === 3 ? 'forwarding' : 'disabled';
+    const targetNum = stpState === 3 ? 3 : 0;
     const allIntfs = await fsp.readdir('/sys/class/net/').catch(() => []);
     const vlanIntfs = allIntfs.filter(i => i.startsWith(`${physicalIntf}.`));
     for (const vlanIntf of vlanIntfs) {
+      const vlanMaster = await fsp.readlink(`/sys/class/net/${vlanIntf}/master`).then(p => p.split('/').pop()).catch(() => null);
+      const current = vlanMaster
+        ? await fsp.readFile(`/sys/class/net/${vlanMaster}/brif/${vlanIntf}/state`, 'utf8').then(s => parseInt(s.trim(), 10)).catch(() => undefined)
+        : undefined;
+      if (current === targetNum) continue;
       await exec(`sudo bridge link set dev ${vlanIntf} state ${targetState}`)
         .catch(err => { if (log) log.warn(`applyVlanPortStates: bridge link set dev ${vlanIntf} state ${targetState} failed`, err.message); });
     }
