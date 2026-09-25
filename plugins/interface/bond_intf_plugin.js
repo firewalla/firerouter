@@ -88,6 +88,13 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     return this.networkConfig.intf;
   }
 
+  async getActiveIntfs() {
+    if (!this.networkConfig || _.isEmpty(this.networkConfig.intf))
+      return [];
+    const states = await Promise.all(this.networkConfig.intf.map(intf => this._getSysFSClassNetValueOf(intf, "bonding_slave/state")));
+    return this.networkConfig.intf.filter((intf, i) => states[i] === "active");
+  }
+
   isEthernetBasedInterface() {
     return true;
   }
