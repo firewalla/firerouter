@@ -313,14 +313,20 @@ class Platform {
     });
   }
 
-  async resetHardwareAddress(iface) {
+  async getPermanentMac(iface) {
     const permAddr = await exec(`sudo ethtool -P ${iface} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get permanent address of ${iface}`, err.message);
       return null;
     });
 
-    // 00:00:00:00:00:00 is invalid as a device mac addr
-    if (util.isValidMacAddress(permAddr) && permAddr !== "00:00:00:00:00:00") {
+    if (util.isValidMacAddress(permAddr) && permAddr !== "00:00:00:00:00:00")
+      return permAddr;
+    return null;
+  }
+
+  async resetHardwareAddress(iface) {
+    const permAddr = await this.getPermanentMac(iface);
+    if (permAddr) {
       await execFile("sudo", ["ip", "link", "set", iface, "address", permAddr]).catch((err) => {
         log.error(`Failed to revert hardware address of ${iface} to ${permAddr}`, err.message);
       });

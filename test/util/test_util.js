@@ -157,6 +157,115 @@ describe('Test util', function(){
     });
   });
 
+  // Display names a box can legitimately carry. One sample per writing system, because a bug in
+  // byte handling shows up on a particular encoding shape rather than on "non ascii" as a class.
+  const NON_ASCII_NAMES = [
+    "测试",      // Chinese, 3 bytes per character in utf-8
+    "테스트",     // Korean, 3 bytes per character, composed hangul syllables
+    "اختبار",    // Arabic, 2 bytes per character, and right to left
+    "Büro",     // latin-1 supplement, a 2 byte character among 1 byte ones
+    "café 🏢"   // the same plus a 4 byte emoji, which is a surrogate pair in utf-16
+  ];
+
+  describe('findControlChar', function(){
+    it('should find a line break in a value and report its path', async()=> {
+      expect(util.findControlChar({dhcp: {eth0: {extraOptions: {"15": "a\ndhcp-script=/tmp/pwn.sh"}}}}))
+        .to.be.equal("dhcp.eth0.extraOptions.15");
+      expect(util.findControlChar({interface: {pppoe: {ppp0: {mru: "1492\nplugin /tmp/pwn.so"}}}}))
+        .to.be.equal("interface.pppoe.ppp0.mru");
+    });
+
+    it('should find a line break in a key', async()=> {
+      // hostapd_plugin and wlan_intf_plugin both emit `key=value` lines from config keys
+      expect(util.findControlChar({hostapd: {wlan0: {params: {"channel\ndhcp-script=/tmp/pwn.sh": 6}}}}))
+        .to.be.equal("hostapd.wlan0.params.channel\\ndhcp-script=/tmp/pwn.sh");
+    });
+
+    it('should walk arrays and report the index', async()=> {
+      expect(util.findControlChar({interface: {phy: {eth0: {nameservers: ["1.1.1.1", "8.8.8.8\nserver=evil"]}}}}))
+        .to.be.equal("interface.phy.eth0.nameservers[1]");
+    });
+
+    it('should catch every control character, not only CR and LF', async()=> {
+      for (const ch of ["\x00", "\x07", "\x09", "\x0b", "\x1b", "\x1f", "\x7f"])
+        expect(util.findControlChar({a: {b: `x${ch}y`}}), `char ${JSON.stringify(ch)}`).to.be.equal("a.b");
+    });
+
+    it('should accept an ordinary config, including non ascii names', async()=> {
+      // real boxes carry non ascii in the display name fields and those must keep working. one
+      // sample per writing system: an encoding bug shows up per script, not per "non ascii"
+      for (const name of NON_ASCII_NAMES) {
+        expect(util.findControlChar({
+          interface: {phy: {eth0: {ipv4: "192.168.1.1/24", meta: {name, type: "lan"}}}},
+          dhcp: {eth0: {range: {from: "192.168.1.100", to: "192.168.1.200"}, lease: 86400}},
+          apc: {assets: {"00:00:5E:00:53:01": {sysConfig: {name}}}}
+        }), `name ${JSON.stringify(name)}`).to.be.null;
+      }
+    });
+
+    it('should skip the ssid, the one field where an arbitrary byte is legal', async()=> {
+      // 802.11 makes the ssid an opaque octet string, and in client mode the box has to be able to
+      // join whatever the AP broadcasts
+      expect(util.findControlChar({hostapd: {wlan0: {params: {ssid: "a\nb"}}}})).to.be.null;
+      expect(util.findControlChar({interface: {wlan: {wlan0: {wpaSupplicant: {networks: [{ssid: "a\nb"}]}}}}})).to.be.null;
+    });
+
+    it('should reject a control character in every other wifi credential', async()=> {
+      // being hex encoded downstream makes these harmless, not meaningful: 802.11i bounds the
+      // ascii passphrase to characters 32 to 126, a psk is 64 hex digits, phase2 is directive syntax
+      for (const key of ["password", "psk", "wpa_passphrase", "sae_password", "wep_key0",
+                         "identity", "phase2", "anonymous_identity", "phase1", "private_key_passwd"])
+        expect(util.findControlChar({interface: {wlan: {wlan0: {wpaSupplicant: {networks: [{[key]: "a\nb"}]}}}}}),
+          `key ${key}`).to.be.equal(`interface.wlan.wlan0.wpaSupplicant.networks[0].${key}`);
+    });
+
+    it('should allow a line break in a port note, but nothing else', async()=> {
+      // the app edits these in a multi-line text view, so a line break is a normal value. all three
+      // places the app writes one, and no plugin in this repo reads any of them
+      const notes = [
+        {interface: {phy: {eth0: {extra: {notes: "10G to NAS\nsecond line"}}}}},
+        {apc: {assets: {"00:00:5E:00:53:01": {extra: {ports: {eth1: {notes: "a\r\nb"}}}}}}},
+        {apc: {assets: {"00:00:5E:00:53:01": {switchSysConfig: {portSettings: {"6": {app: {notes: "flaky\ncable"}}}}}}}}
+      ];
+      for (const config of notes)
+        expect(util.findControlChar(config), JSON.stringify(config).slice(0, 60)).to.be.null;
+
+      // every other control character is still rejected in a note
+      expect(util.findControlChar({interface: {phy: {eth0: {extra: {notes: "a\x00b"}}}}}))
+        .to.be.equal("interface.phy.eth0.extra.notes");
+      expect(util.findControlChar({interface: {phy: {eth0: {extra: {notes: "a\x1bb"}}}}}))
+        .to.be.equal("interface.phy.eth0.extra.notes");
+    });
+
+    it('should keep the single-line label fields on the strict class', async()=> {
+      // displayName and the switch app.name are FWEditData, not a text view
+      expect(util.findControlChar({interface: {phy: {eth0: {extra: {displayName: "a\nb"}}}}}))
+        .to.be.equal("interface.phy.eth0.extra.displayName");
+      expect(util.findControlChar({apc: {assets: {m: {switchSysConfig: {portSettings: {"6": {app: {name: "a\nb"}}}}}}}}))
+        .to.be.equal("apc.assets.m.switchSysConfig.portSettings.6.app.name");
+    });
+
+    it('should reject an apc wifi passphrase the same way as a hostapd one', async()=> {
+      // apc.profile.<uuid>.key is an AP passphrase; it must not be treated differently from
+      // hostapd.<intf>.params.wpa_passphrase just because it lives in another subtree
+      expect(util.findControlChar({apc: {profile: {"p1": {ssid: "net", key: "pass\nx"}}}}))
+        .to.be.equal("apc.profile.p1.key");
+      expect(util.findControlChar({hostapd: {wlan0: {params: {wpa_passphrase: "pass\nx"}}}}))
+        .to.be.equal("hostapd.wlan0.params.wpa_passphrase");
+    });
+
+    it('should not let an exempt key hide a subtree', async()=> {
+      // the exemption is on an encoded string, anything below such a key is still walked
+      expect(util.findControlChar({hostapd: {wlan0: {params: {ssid: {value: "a\nb"}}}}}))
+        .to.be.equal("hostapd.wlan0.params.ssid.value");
+    });
+
+    it('should tolerate non string leaves and empty input', async()=> {
+      for (const input of [null, undefined, {}, [], 42, true, {a: 1, b: null, c: [true, 2]}])
+        expect(util.findControlChar(input), `input ${JSON.stringify(input)}`).to.be.null;
+    });
+  });
+
   describe('lastLine', function(){
     it('should behave like tail -n 1', async()=> {
       expect(util.lastLine("2606:4700::1111\n1.1.1.1\n")).to.be.equal("1.1.1.1");

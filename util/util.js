@@ -20,6 +20,7 @@ const { exec } = require('child-process-promise');
 const log = require('../util/logger.js')('util');
 const uuid = require('uuid');
 const validator = require('validator');
+const crypto = require('crypto');
 
 const _ = require('lodash')
 
@@ -247,6 +248,18 @@ function isValidMacAddress(mac) {
   return /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac);
 }
 
+function generateDeterministicMacAddress(seed, prefix = "20:6D:31") {
+  const prefixPattern = /^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})$/;
+  if (!prefixPattern.test(prefix)) {
+    throw new Error('Invalid MAC prefix format. Expected format: XX:XX:XX');
+  }
+
+  const hash = crypto.createHash('sha256').update(String(seed)).digest();
+  const suffix = Array.from(hash.subarray(0, 3)).map(b => b.toString(16).padStart(2, '0'));
+
+  return `${prefix}:${suffix.join(':')}`.toUpperCase();
+}
+
 // a caller supplied uuid is used verbatim in shell commands and config file paths, so callers
 // need to reject a malformed one. validator throws on non-strings, hence the guard
 function isValidUUID(id) {
@@ -290,6 +303,91 @@ function toBoundedInt(value, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAF
   return n;
 }
 
+// Matches if a value holds any control character. Config values reach line-oriented files that a
+// root daemon reads (pppd options, dnsmasq conf, dhcpcd.conf, hostapd.conf, wpa_supplicant.conf)
+// and command lines, where a line break stops being data and starts a directive or a command.
+// Same character class as firewalla's Constants.REGEX_CONTROL_CHARS, so both repos reject the same
+// thing. firewalla also has a MULTILINE variant for its free text `notes` field; there is no
+// equivalent here - nothing in a network config is a text area.
+const REGEX_CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
+// The ssid is the one field where an arbitrary byte is legitimate input rather than a mistake.
+// 802.11 defines it as an opaque octet string of 0 to 32 bytes, and in client mode the box does not
+// choose it: to use someone else's wifi as a WAN it has to be configurable with whatever that AP
+// broadcasts. Refusing one would make such a network impossible to join at all.
+//
+// This is about what is legal, not about what is safe. Every wifi credential is hex encoded before
+// it is written - generateWpaSupplicantConfig above, and hostapd_plugin.js turning ssid into ssid2
+// and wpa_passphrase into wpa_psk - but that encoding happens downstream, at write time, from the
+// raw value the config carries. It makes a control character harmless; it does not make one
+// meaningful. So the passphrases are NOT exempt: 802.11i defines the ASCII passphrase as characters
+// 32 to 126, a psk is 64 hex digits, an EAP identity is a displayable string, and phase2 is
+// directive syntax such as auth=MSCHAPV2. A control character in any of those is a paste accident.
+const CONTROL_CHAR_EXEMPT_KEYS = new Set(["ssid"]);
+
+// Same class but tolerating CR and LF, for free text the user types into a multi-line editor.
+// Identical to firewalla's Constants.REGEX_CONTROL_CHARS_MULTILINE, which exists for the same
+// reason on its side (the `notes` field of a policy rule).
+const REGEX_CONTROL_CHARS_MULTILINE = /[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/;
+
+// `notes` is a port label the user types in the app, and its editor is a multi-line text view
+// (`FWTextViewData`, height 175, "same height as the device note editor" in
+// FWPortNameViewController.m), so a line break in one is a normal value, not an attack. The app
+// validates length only, and its normalizer trims the ends, so an interior newline is preserved.
+// It reaches three places in the config, all written by serializing the whole config and saving it:
+//   interface.phy.<eth>.extra.notes                          (FWNetworkPhy.m)
+//   apc.assets.<mac>.extra.ports.<eth>.notes                 (FWNetworkAsset.m)
+//   apc.assets.<mac>.switchSysConfig.portSettings.<n>.app.notes  (FWSwitchPortSettings.m)
+// No plugin in this repo reads any of them, so none is a sink here. The sibling `displayName` and
+// `app.name` are single-line editors (`FWEditData`) and stay on the strict class.
+const CONTROL_CHAR_MULTILINE_KEYS = new Set(["notes"]);
+
+/**
+ * Walk a parsed config and find the first string holding a control character.
+ *
+ * Object keys are checked as well as values: hostapd_plugin and wlan_intf_plugin both emit
+ * `key=value` lines straight from config keys, so a line break in a key injects a directive the
+ * same way a line break in a value does.
+ *
+ * @param {*} obj - parsed config, or any subtree of one
+ * @param {string} [path] - path prefix, used to build the returned location
+ * @returns {string|null} path of the offending string, or null when there is none. The path is
+ *   safe to log: a key is escaped through JSON so a control character in one cannot break the
+ *   log line. The offending *value* is never returned - it can be a passphrase or a private key.
+ */
+function findControlChar(obj, path = "") {
+  if (_.isString(obj))
+    return REGEX_CONTROL_CHARS.test(obj) ? (path || "config") : null;
+  if (_.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      const found = findControlChar(obj[i], `${path}[${i}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (_.isObject(obj)) {
+    for (const key of Object.keys(obj)) {
+      // JSON escaping turns a control character in the key into a printable two character form
+      const keyPath = path ? `${path}.${JSON.stringify(key).slice(1, -1)}` : JSON.stringify(key).slice(1, -1);
+      if (REGEX_CONTROL_CHARS.test(key))
+        return keyPath;
+      // both exemptions are on the value only, an object below such a key is still walked
+      if (_.isString(obj[key])) {
+        if (CONTROL_CHAR_EXEMPT_KEYS.has(key))
+          continue;
+        if (CONTROL_CHAR_MULTILINE_KEYS.has(key)) {
+          if (REGEX_CONTROL_CHARS_MULTILINE.test(obj[key]))
+            return keyPath;
+          continue;
+        }
+      }
+      const found = findControlChar(obj[key], keyPath);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 module.exports = {
   extend: extend,
   delay: delay,
@@ -299,10 +397,14 @@ module.exports = {
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
   generateUUID,
   generateRandomMacAddress,
+  generateDeterministicMacAddress,
   isValidMacAddress,
   isValidUUID,
   isValidDNSName,
   toBoundedInt,
+  REGEX_CONTROL_CHARS,
+  REGEX_CONTROL_CHARS_MULTILINE,
+  findControlChar,
   parseEscapedString,
   parseHexString,
   lastLine,

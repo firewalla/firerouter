@@ -1550,9 +1550,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const file = `/sys/class/net/${this.name}/${key}`;
+    return this._getSysFSClassNetValueOf(this.name, key);
+  }
+
+  async _getSysFSClassNetValueOf(intf, key) {
+    const file = `/sys/class/net/${intf}/${key}`;
     return fs.readFileAsync(file, "utf8").then(content => content.trim()).catch((err) => {
-      this.log.debug(`Failed to get ${key} of ${this.name}`, err.message);
+      this.log.debug(`Failed to get ${key} of ${intf}`, err.message);
       return null;
     });
   }
@@ -2272,6 +2276,10 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async getActiveIntfs() {
+    return null;
+  }
+
   async _getRtId() {
     if (!this.isWAN())
       return null;
@@ -2282,7 +2290,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs, activeIntfs] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -2303,7 +2311,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
       this.isInterfacePresent(),
-      this.getSubIntfs()
+      this.getSubIntfs(),
+      this.getActiveIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     let wanConnState = null;
@@ -2312,7 +2321,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs, activeIntfs};
   }
 
   onEvent(e) {

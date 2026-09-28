@@ -21,7 +21,10 @@ const { spawn } = require('child_process');
 const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
+const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+
+const SEED_INTF = 'eth0';
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -166,6 +169,35 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isEthernetBasedInterface() {
     return true;
+  }
+
+  async resetHardwareAddress() {
+    const members = await fsp.readdir(`/sys/class/net/${this.name}/brif`).catch(() => null);
+    if (members === null)
+      return;
+
+    if (members.length > 0) {
+      const memberMacs = [];
+      for (const member of members) {
+        const mac = await fsp.readFile(`/sys/class/net/${member}/address`, 'utf8')
+          .then(s => s.trim().toUpperCase()).catch(() => null);
+        if (mac)
+          memberMacs.push(mac);
+      }
+      if (memberMacs.length === 0)
+        return;
+      memberMacs.sort();
+      await platform.setHardwareAddress(this.name, memberMacs[0]);
+      return;
+    }
+
+    const seedMac = await platform.getPermanentMac(SEED_INTF);
+    if (!seedMac) {
+      this.log.warn(`Failed to get permanent MAC of ${SEED_INTF}, cannot derive a deterministic MAC for empty bridge ${this.name}`);
+      return;
+    }
+    const mac = util.generateDeterministicMacAddress(`${seedMac}:${this.name}`);
+    await platform.setHardwareAddress(this.name, mac);
   }
 
   async state() {
