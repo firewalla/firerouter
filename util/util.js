@@ -20,6 +20,7 @@ const { exec } = require('child-process-promise');
 const log = require('../util/logger.js')('util');
 const uuid = require('uuid');
 const validator = require('validator');
+const crypto = require('crypto');
 
 const _ = require('lodash')
 
@@ -247,6 +248,18 @@ function isValidMacAddress(mac) {
   return /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac);
 }
 
+function generateDeterministicMacAddress(seed, prefix = "20:6D:31") {
+  const prefixPattern = /^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})$/;
+  if (!prefixPattern.test(prefix)) {
+    throw new Error('Invalid MAC prefix format. Expected format: XX:XX:XX');
+  }
+
+  const hash = crypto.createHash('sha256').update(String(seed)).digest();
+  const suffix = Array.from(hash.subarray(0, 3)).map(b => b.toString(16).padStart(2, '0'));
+
+  return `${prefix}:${suffix.join(':')}`.toUpperCase();
+}
+
 // a caller supplied uuid is used verbatim in shell commands and config file paths, so callers
 // need to reject a malformed one. validator throws on non-strings, hence the guard
 function isValidUUID(id) {
@@ -360,6 +373,7 @@ module.exports = {
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
   generateUUID,
   generateRandomMacAddress,
+  generateDeterministicMacAddress,
   isValidMacAddress,
   isValidUUID,
   isValidDNSName,
