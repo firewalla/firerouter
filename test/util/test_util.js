@@ -157,6 +157,16 @@ describe('Test util', function(){
     });
   });
 
+  // Display names a box can legitimately carry. One sample per writing system, because a bug in
+  // byte handling shows up on a particular encoding shape rather than on "non ascii" as a class.
+  const NON_ASCII_NAMES = [
+    "测试",      // Chinese, 3 bytes per character in utf-8
+    "테스트",     // Korean, 3 bytes per character, composed hangul syllables
+    "اختبار",    // Arabic, 2 bytes per character, and right to left
+    "Büro",     // latin-1 supplement, a 2 byte character among 1 byte ones
+    "café 🏢"   // the same plus a 4 byte emoji, which is a surrogate pair in utf-16
+  ];
+
   describe('findControlChar', function(){
     it('should find a line break in a value and report its path', async()=> {
       expect(util.findControlChar({dhcp: {eth0: {extraOptions: {"15": "a\ndhcp-script=/tmp/pwn.sh"}}}}))
@@ -182,12 +192,15 @@ describe('Test util', function(){
     });
 
     it('should accept an ordinary config, including non ascii names', async()=> {
-      // real boxes carry CJK and emoji in the display name fields, those must keep working
-      expect(util.findControlChar({
-        interface: {phy: {eth0: {ipv4: "192.168.1.1/24", meta: {name: "办公室 🏢", type: "lan"}}}},
-        dhcp: {eth0: {range: {from: "192.168.1.100", to: "192.168.1.200"}, lease: 86400}},
-        apc: {assets: {"20:6D:31:AF:00:51": {sysConfig: {name: "二楼"}}}}
-      })).to.be.null;
+      // real boxes carry non ascii in the display name fields and those must keep working. one
+      // sample per writing system: an encoding bug shows up per script, not per "non ascii"
+      for (const name of NON_ASCII_NAMES) {
+        expect(util.findControlChar({
+          interface: {phy: {eth0: {ipv4: "192.168.1.1/24", meta: {name, type: "lan"}}}},
+          dhcp: {eth0: {range: {from: "192.168.1.100", to: "192.168.1.200"}, lease: 86400}},
+          apc: {assets: {"00:00:5E:00:53:01": {sysConfig: {name}}}}
+        }), `name ${JSON.stringify(name)}`).to.be.null;
+      }
     });
 
     it('should skip the ssid, the one field where an arbitrary byte is legal', async()=> {
@@ -204,6 +217,32 @@ describe('Test util', function(){
                          "identity", "phase2", "anonymous_identity", "phase1", "private_key_passwd"])
         expect(util.findControlChar({interface: {wlan: {wlan0: {wpaSupplicant: {networks: [{[key]: "a\nb"}]}}}}}),
           `key ${key}`).to.be.equal(`interface.wlan.wlan0.wpaSupplicant.networks[0].${key}`);
+    });
+
+    it('should allow a line break in a port note, but nothing else', async()=> {
+      // the app edits these in a multi-line text view, so a line break is a normal value. all three
+      // places the app writes one, and no plugin in this repo reads any of them
+      const notes = [
+        {interface: {phy: {eth0: {extra: {notes: "10G to NAS\nsecond line"}}}}},
+        {apc: {assets: {"00:00:5E:00:53:01": {extra: {ports: {eth1: {notes: "a\r\nb"}}}}}}},
+        {apc: {assets: {"00:00:5E:00:53:01": {switchSysConfig: {portSettings: {"6": {app: {notes: "flaky\ncable"}}}}}}}}
+      ];
+      for (const config of notes)
+        expect(util.findControlChar(config), JSON.stringify(config).slice(0, 60)).to.be.null;
+
+      // every other control character is still rejected in a note
+      expect(util.findControlChar({interface: {phy: {eth0: {extra: {notes: "a\x00b"}}}}}))
+        .to.be.equal("interface.phy.eth0.extra.notes");
+      expect(util.findControlChar({interface: {phy: {eth0: {extra: {notes: "a\x1bb"}}}}}))
+        .to.be.equal("interface.phy.eth0.extra.notes");
+    });
+
+    it('should keep the single-line label fields on the strict class', async()=> {
+      // displayName and the switch app.name are FWEditData, not a text view
+      expect(util.findControlChar({interface: {phy: {eth0: {extra: {displayName: "a\nb"}}}}}))
+        .to.be.equal("interface.phy.eth0.extra.displayName");
+      expect(util.findControlChar({apc: {assets: {m: {switchSysConfig: {portSettings: {"6": {app: {name: "a\nb"}}}}}}}}))
+        .to.be.equal("apc.assets.m.switchSysConfig.portSettings.6.app.name");
     });
 
     it('should reject an apc wifi passphrase the same way as a hostapd one', async()=> {
