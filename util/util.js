@@ -325,6 +325,23 @@ const REGEX_CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 // directive syntax such as auth=MSCHAPV2. A control character in any of those is a paste accident.
 const CONTROL_CHAR_EXEMPT_KEYS = new Set(["ssid"]);
 
+// Same class but tolerating CR and LF, for free text the user types into a multi-line editor.
+// Identical to firewalla's Constants.REGEX_CONTROL_CHARS_MULTILINE, which exists for the same
+// reason on its side (the `notes` field of a policy rule).
+const REGEX_CONTROL_CHARS_MULTILINE = /[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/;
+
+// `notes` is a port label the user types in the app, and its editor is a multi-line text view
+// (`FWTextViewData`, height 175, "same height as the device note editor" in
+// FWPortNameViewController.m), so a line break in one is a normal value, not an attack. The app
+// validates length only, and its normalizer trims the ends, so an interior newline is preserved.
+// It reaches three places in the config, all written by serializing the whole config and saving it:
+//   interface.phy.<eth>.extra.notes                          (FWNetworkPhy.m)
+//   apc.assets.<mac>.extra.ports.<eth>.notes                 (FWNetworkAsset.m)
+//   apc.assets.<mac>.switchSysConfig.portSettings.<n>.app.notes  (FWSwitchPortSettings.m)
+// No plugin in this repo reads any of them, so none is a sink here. The sibling `displayName` and
+// `app.name` are single-line editors (`FWEditData`) and stay on the strict class.
+const CONTROL_CHAR_MULTILINE_KEYS = new Set(["notes"]);
+
 /**
  * Walk a parsed config and find the first string holding a control character.
  *
@@ -354,9 +371,16 @@ function findControlChar(obj, path = "") {
       const keyPath = path ? `${path}.${JSON.stringify(key).slice(1, -1)}` : JSON.stringify(key).slice(1, -1);
       if (REGEX_CONTROL_CHARS.test(key))
         return keyPath;
-      // the exemption is on the encoded value only, an object below one of these keys is walked
-      if (CONTROL_CHAR_EXEMPT_KEYS.has(key) && _.isString(obj[key]))
-        continue;
+      // both exemptions are on the value only, an object below such a key is still walked
+      if (_.isString(obj[key])) {
+        if (CONTROL_CHAR_EXEMPT_KEYS.has(key))
+          continue;
+        if (CONTROL_CHAR_MULTILINE_KEYS.has(key)) {
+          if (REGEX_CONTROL_CHARS_MULTILINE.test(obj[key]))
+            return keyPath;
+          continue;
+        }
+      }
       const found = findControlChar(obj[key], keyPath);
       if (found) return found;
     }
@@ -379,6 +403,7 @@ module.exports = {
   isValidDNSName,
   toBoundedInt,
   REGEX_CONTROL_CHARS,
+  REGEX_CONTROL_CHARS_MULTILINE,
   findControlChar,
   parseEscapedString,
   parseHexString,
