@@ -23,7 +23,7 @@ echo $$ > $LOCK_FILE
 
 FRFLAG="/home/pi/.router/config/.no_upgrade_check"
 if [[ -e $FRFLAG ]]; then
-  $FIRELOG -t debug -m "FIREROUTER.UPGRADE.CHECK NO UPGRADE"
+  $FIRELOG -t debug -m "FIREROUTER.UPGRADE.CHECK NO AUTO UPGRADE"
   echo "======= SKIP UPGRADING CHECK BECAUSE OF FLAG $FRFLAG ======="
   exit 0
 fi

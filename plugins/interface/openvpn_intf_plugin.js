@@ -61,16 +61,17 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
         const subnet = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.subnet`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read .subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.verbose(`No subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
         const peer = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.gateway`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read .gateway file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.verbose(`No gateway file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
-        if (subnet && peer) {
+        // peer can be optional
+        if (subnet) {
           await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_WAN_ROUTABLE).catch((err) => {});
           if (this.networkConfig.isolated !== true) {
             // routable to/from other routable lans
@@ -90,16 +91,16 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
         const subnet = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.subnet6`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read .subnet file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.verbose(`No subnet6 file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
         const peer = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.gateway6`, {encoding: "utf8"})
           .then(content => content.trim())
           .catch((err) => {
-            this.log.error(`Failed to read .gateway file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+            this.log.verbose(`No gateway6 file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
             return null;
           });
-        if (subnet && peer) {
+        if (subnet) {
           await routing.addRouteToTable(`${subnet}`, peer, this.name, routing.RT_WAN_ROUTABLE, null, 6).catch((err) => {});
           if (this.networkConfig.isolated !== true) {
             // routable to/from other routable lans
@@ -150,7 +151,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
-        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
+        this.log.verbose(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}, probably because of file was removed by server_down.sh hook`, err.message);
         return null;
       });
     if (localIp) {
@@ -173,7 +174,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
     const localIp = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.local6`, { encoding: "utf8" })
       .then(content => content.trim())
       .catch((err) => {
-        this.log.error(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
+        this.log.verbose(`Failed to read .local file for openvpn ${this.name} ${this.networkConfig.instance}`, err.message);
         return null;
       });
     if (localIp) {

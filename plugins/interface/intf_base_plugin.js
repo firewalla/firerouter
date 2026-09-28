@@ -112,7 +112,7 @@ class InterfaceBasePlugin extends Plugin {
   async flushIP(af = null) {
     if (!af || af == 4) {
       await exec(`sudo ip -4 addr flush dev ${this.name}`).catch((err) => {
-        this.log.error(`Failed to flush ip address of ${this.name}`, err);
+        // interface may not exist, ignore error here
       });
       // make sure to stop dhclient no matter if dhcp is enabled
       if (this.networkConfig.dhcp) {
@@ -371,6 +371,10 @@ class InterfaceBasePlugin extends Plugin {
     return false;
   }
 
+  getBaseIntf() {
+    return null;
+  }
+
   async createInterface() {
     return true;
   }
@@ -438,7 +442,7 @@ class InterfaceBasePlugin extends Plugin {
       await routing.initializeInterfaceRoutingTables(this.name);
       if (!this.networkConfig.enabled)
         return;
-      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute);
+      await routing.createInterfaceRoutingRules(this.name, this.networkConfig.noSelfRoute, this.isWAN());
       await routing.createInterfaceGlobalRoutingRules(this.name);
       if (this.isLAN())
         await routing.createInterfaceGlobalLocalRoutingRules(this.name);
@@ -657,7 +661,7 @@ class InterfaceBasePlugin extends Plugin {
     pl.acquireApplyLock(async () => {
       await this.flushIP(6).then(() => this.applyIpv6Settings()).then(() => this.changeRoutingTables()).then(() => {
         // trigger downstream plugins to reapply, e.g., nat for ipv6
-        this.propagateConfigChanged(Plugin.CHANGE_FULL);
+        this.propagateConfigChanged(Plugin.CHANGE_IP_ONLY);
         this._reapplyNeeded = false;
         pl.scheduleReapply();
         return pl.publishIfaceChangeApplied();
@@ -1115,18 +1119,20 @@ class InterfaceBasePlugin extends Plugin {
 
   async updateRouteForDNS() {
     await this._removeOldRouteForDNS();
-    const dns = await this.getDNSNameservers();
+    const dns4 = await this.getDns4Nameservers();
+    const dns6 = await this.getRoutableDns6Nameservers();
     const gateway = await routing.getInterfaceGWIP(this.name, 4);
     const gateway6 = await routing.getInterfaceGWIP(this.name, 6);
-    if (!_.isArray(dns) || dns.length === 0 || !gateway)
-      return;
-    for (const dnsIP of dns) {
-      if (new Address4(dnsIP).isValid()) {
+    if (_.isArray(dns4) && dns4.length > 0 && gateway) {
+      for (const dnsIP of dns4) {
         if (dnsIP === gateway) continue;
         await routing.addRouteToTable(dnsIP, gateway, this.name, `${this.name}_default`, null, 4, true)
                       .then(()=>{this._updateDnsRouteCache(dnsIP, gateway, this.name, `${this.name}_default`, 4);})
                       .catch((err) => {});
-      } else {
+      }
+    }
+    if (_.isArray(dns6) && dns6.length > 0 && gateway6) {
+      for (const dnsIP of dns6) {
         if (dnsIP === gateway6) continue;
         await routing.addRouteToTable(dnsIP, gateway6, this.name, `${this.name}_default`, null, 6, true)
                       .then(()=>{this._updateDnsRouteCache(dnsIP, gateway6, this.name, `${this.name}_default`, 6);})
@@ -1259,8 +1265,10 @@ class InterfaceBasePlugin extends Plugin {
 
     if (this.networkConfig.allowHotplug === true && platform.isHotplugSupported(this.name)) {
       const ifRegistered = await this.isInterfacePresent();
-      if (!ifRegistered)
+      if (!ifRegistered && !this.getBaseIntf()) {
+        this.log.warn(`Interface ${this.name} is not present yet, defer applying config until it is hotplugged`);
         return;
+      }
     }
 
     const ifCreated = await this.createInterface();
@@ -1348,6 +1356,11 @@ class InterfaceBasePlugin extends Plugin {
     if (!this.isIPv6Enabled()) return [];
     const dns = await this.getDNSNameservers() || [];
     return dns.filter(i => new Address6(i).isValid());
+  }
+
+  async getRoutableDns6Nameservers() {
+    const dns = await this.getDns6Nameservers();
+    return dns.filter(i => !new Address6(i).isLinkLocal());
   }
 
   async getOrigDNS6Nameservers() {
@@ -2028,8 +2041,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getIPv4Addresses(),
       this.getRoutableSubnets(),
       this.getIPv6Addresses(),
-      routing.getInterfaceGWIP(this.name) || null,
-      routing.getInterfaceGWIP(this.name, 6) || null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name) || null) : null,
+      this.isWAN() ? (routing.getInterfaceGWIP(this.name, 6) || null) : null,
       this.getDns4Nameservers(),
       this.getOrigDNSNameservers(),
       this.getDns6Nameservers(),
