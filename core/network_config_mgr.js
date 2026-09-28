@@ -680,19 +680,27 @@ class NetworkConfigManager {
     return null;
   }
 
-  // turn the onboard network block into a full config: a compact profile is expanded against the
-  // ports this box actually has, a full config is taken as-is. Returns null if it cannot be built.
   async resolveOnboardNetwork(network) {
-    if (!op.isProfileConfig(network))
-      return network;
-    try {
-      const phyNames = await this.getPhyInterfaceNames();
-      const config = op.expandProfile(network, phyNames);
-      log.info(`Expanded '${network.profile}' network profile over ports ${phyNames.join(", ")}`);
-      return config;
-    } catch (err) {
-      log.error("Failed to expand onboard network profile", err.message);
-      return null;
+    if (!op.isProfileConfig(network)) {
+      // usually migrate, get frcc config
+      try {
+        const phyNames = await this.getPhyInterfaceNames();
+        return op.reconcilePorts(network, phyNames);
+      } catch (err) {
+        log.error("Failed to reconcile onboard network with ports on this box", err.message);
+        return null;
+      }
+    } else {
+      // usually set up as new, get adaptive config
+      try {
+        const phyNames = await this.getPhyInterfaceNames();
+        const config = op.expandProfile(network, phyNames);
+        log.info(`Expanded '${network.profile}' network profile over ports ${phyNames.join(", ")}`);
+        return config;
+      } catch (err) {
+        log.error("Failed to expand onboard network profile", err.message);
+        return null;
+      }
     }
   }
 
