@@ -30,10 +30,14 @@ const rclientDB0 = require('../../util/redis_manager.js').getPrimaryDBRedisClien
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const GoldPlatform = require('../../platform/gold/GoldPlatform')
+const log = require('../../util/logger.js')(__filename);
 const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
+
+const AP_SCAN_RESTORE_DEBOUNCE_MS = 2000;
+const AP_SCAN_RESTORE_WATCHDOG_MS = 35000;
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -106,8 +110,138 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+
+  static async _setInterfaceLinkState(iface, up) {
+    const isWifiClient = iface === platform.getWifiClientInterface();
+    const wpaService = `firerouter_wpa_supplicant@${iface}`;
+
+    if (!up && isWifiClient) {
+      await exec(`sudo systemctl stop ${wpaService}`).catch((err) => {
+        log.error(`Failed to stop ${wpaService}`, err.message);
+      });
+    }
+
+    await exec(`sudo ip link set ${iface} ${up ? 'up' : 'down'}`).catch((err) => {
+      // interface link may not exist, ignore error here
+    });
+
+    if (up && isWifiClient) {
+      await exec(`sudo systemctl start ${wpaService}`).catch((err) => {
+        log.error(`Failed to start ${wpaService}`, err.message);
+      });
+    }
+  }
+
+  static _runExclusiveWLANOp(op) {
+    const result = this._apScanExclusiveOp.then(op);
+    this._apScanExclusiveOp = result.catch((err) => {
+      log.error('Exclusive WLAN operation failed', err.message);
+    });
+    return result;
+  }
+
+  static _cancelAPScanRestoreTimer() {
+    if (this._apScanRestoreTimer) {
+      clearTimeout(this._apScanRestoreTimer);
+      this._apScanRestoreTimer = null;
+    }
+  }
+
+  // Acquire exclusive WLAN for AP scan. Returns true if acquired (caller must release).
+  static async prepareAPScanInterface(apScanInterface) {
+    const sibling = platform.getExclusiveWLANSibling(apScanInterface);
+    if (!sibling) {
+      return false;
+    }
+
+    await this._runExclusiveWLANOp(async () => {
+      this._cancelAPScanRestoreTimer();
+      // _setInterfaceLinkState is an idempotent operation; consider executing it every time to avoid unexpected issues.
+      log.info(`AP scan: ${sibling} down, then ${apScanInterface} up`);
+      await this._setInterfaceLinkState(sibling, false);
+      await this._setInterfaceLinkState(apScanInterface, true);
+      this._apScanRefCount++;
+      this._apScanRestoreArgs = { apScanInterface, sibling };
+      // Watchdog only: restore if release never arrives (e.g. hung wpa_cli).
+      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling, AP_SCAN_RESTORE_WATCHDOG_MS);
+    });
+    return true;
+  }
+
+  // Release after scan completes (success or failure). Debounces restore for back-to-back scans.
+  static releaseAPScanInterface() {
+    if (!this._apScanRestoreArgs) {
+      return;
+    }
+    const { apScanInterface, sibling } = this._apScanRestoreArgs;
+    if (this._apScanRefCount > 0) {
+      this._apScanRefCount--;
+    }
+    if (this._apScanRefCount === 0) {
+      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling, AP_SCAN_RESTORE_DEBOUNCE_MS);
+    }
+  }
+
+  static _scheduleAPScanInterfaceRestore(apScanInterface, sibling, delayMs) {
+    this._cancelAPScanRestoreTimer();
+    this._apScanRestoreTimer = setTimeout(() => {
+      this._apScanRestoreTimer = null;
+      this._runExclusiveWLANOp(async () => {
+        // Clear state even on watchdog path (refcount may have leaked).
+        this._apScanRefCount = 0;
+        this._apScanRestoreArgs = null;
+        await this._restoreExclusiveWLANForAPScan(apScanInterface, sibling);
+      });
+    }, delayMs);
+  }
+
+  static async _restoreExclusiveWLANForAPScan(apScanInterface, sibling) {
+    const siblingPlugin = pl.getPluginInstance('interface', sibling);
+    const siblingShouldUp = siblingPlugin && platform.shouldBringWLANInterfaceUp(siblingPlugin);
+    log.info(`AP scan restore: ${sibling} ${siblingShouldUp ? 'up' : 'down'}, ${apScanInterface} ${!siblingShouldUp ? 'up' : 'down'}`);
+    if (siblingShouldUp) {
+      await this._setInterfaceLinkState(apScanInterface, false);
+      await this._setInterfaceLinkState(sibling, true);
+    } else {
+      await this._setInterfaceLinkState(sibling, false);
+      await this._setInterfaceLinkState(apScanInterface, true);
+    }
+  }
+
   getDefaultMTU() {
     return 1500;
+  }
+
+  getBaseIntf() {
+    return this.networkConfig.baseIntf || platform.getDefaultBaseIntf(this.name);
+  }
+
+  getWlanType() {
+    return this.networkConfig.type || platform.getDefaultWLanType(this.name);
+  }
+
+  async _downExclusiveWLANSibling() {
+    const sibling = platform.getExclusiveWLANSibling(this.name);
+    if (!sibling) {
+      return;
+    }
+    await exec(`sudo ip link set ${sibling} down`).catch((err) => {
+      // interface link may not exist, ignore error here
+    });
+    return;
+  }
+
+  async interfaceUpDown() {
+    if (platform.shouldBringWLANInterfaceUp(this)) {
+      await this._downExclusiveWLANSibling();
+      await exec(`sudo ip link set ${this.name} up`).catch((err) => {
+        this.log.error(`Failed to turn on interface ${this.name}`, err.message);
+      });
+    } else {
+      await exec(`sudo ip link set ${this.name} down`).catch((err) => {
+        this.log.error(`Failed to turn off interface ${this.name}`, err.message);
+      });
+    }
   }
 
   async readyToConnect() {
@@ -140,6 +274,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async flush() {
+    const baseIntf = this.getBaseIntf();
     await super.flush();
 
     await platform.removeWLANInterface(this);
@@ -147,6 +282,15 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
       await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
       await fs.unlinkAsync(this._getWpaSupplicantConfigPath()).catch((err) => {});
+    }
+
+    if (baseIntf) {
+      const baseExists = await exec(`ip link show dev ${baseIntf}`).then(() => true).catch(() => false);
+      if (baseExists) {
+        await exec(`sudo ip link set ${baseIntf} up`).catch((err) => {
+          this.log.warn(`Failed to restore base interface ${baseIntf} link up`, err.message);
+        });
+      }
     }
   }
 
@@ -201,7 +345,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   async createInterface() {
     try {
-      await platform.createWLANInterface(this);
+      const created = await platform.createWLANInterface(this);
+      if (created === false) {
+        return false;
+      }
     } catch (err) {
       this.log.error(`Failed to create wlan interface ${this.name}`, err.message);
       return false;
@@ -209,7 +356,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     // refresh interface state in case something is not relinquished in driver
     await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
+    const shouldUp = platform.shouldBringWLANInterfaceUp(this);
+    if (shouldUp) {
+      await this._downExclusiveWLANSibling();
+      await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
+    }
 
     if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
       await exec('echo 4 > /proc/net/rtl8821cu/log_level').catch(()=>{})
@@ -225,7 +376,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
       await this.writeConfigFile()
 
-      if (this.networkConfig.enabled) {
+      if (shouldUp) {
         await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
@@ -395,5 +546,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 }
+
+WLANInterfacePlugin._apScanRestoreTimer = null;
+WLANInterfacePlugin._apScanExclusiveOp = Promise.resolve();
+WLANInterfacePlugin._apScanRefCount = 0;
+WLANInterfacePlugin._apScanRestoreArgs = null;
 
 module.exports = WLANInterfacePlugin;

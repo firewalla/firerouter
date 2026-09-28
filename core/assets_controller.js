@@ -282,6 +282,11 @@ class AssetsController {
     const peers = wgConf.peers;
     const extraPeers = wgConf.extra && wgConf.extra.peers;
     const privateKey = wgConf.privateKey;
+    const WG_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+    if (!WG_KEY_RE.test(privateKey)) {
+      log.error('Invalid WireGuard private key format');
+      return;
+    }
     this.selfPublicKey = await exec(`echo ${privateKey} | wg pubkey`).then((result) => result.stdout.trim()).catch((err) => null);
     if (!_.isArray(peers)) {
       log.error(`assets wg config does not include peers`, wgConf);
