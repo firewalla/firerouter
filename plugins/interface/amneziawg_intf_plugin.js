@@ -35,13 +35,14 @@ class AmneziawgInterfacePlugin extends WireguardInterfacePlugin {
     super(name);
     this.wireguardType = AMNEZIAWG_NAME;
     this.iptablesChainName = "FR_AMNEZIA_WG";
-    this.wgCmd = `${platform.getBinaryPath()}/awg`;
+    this.wgCmd = platform.getAwgBinPath();
   }
  
   static async preparePlugin() {
     // wireguard module will help to load all dependency module
     await execFile("sudo", ["modprobe", "wireguard"]);
     await platform.installKernelModule(AMNEZIAWG_NAME);
+    await platform.resolveAwgBinPath();
     await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/${AMNEZIAWG_NAME}`]);
   }
 
