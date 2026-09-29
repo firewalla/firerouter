@@ -230,9 +230,9 @@ describe('Test network config validation', function(){
       // apc goes to fwapc and the wireguard `extra` tree is app metadata, neither is walked by a
       // plugin here, so the sweep is the only thing that looks at them
       const config = baseConfig();
-      config.apc = { assets: { "20:6D:31:AF:00:51": { sysConfig: { name: "lobby\nssid=evil" } } } };
+      config.apc = { assets: { "00:00:5E:00:53:01": { sysConfig: { name: "lobby\nssid=evil" } } } };
       let errors = await ncm.validateConfig(config);
-      expect(errors).to.deep.equal(["control character in apc.assets.20:6D:31:AF:00:51.sysConfig.name"]);
+      expect(errors).to.deep.equal(["control character in apc.assets.00:00:5E:00:53:01.sysConfig.name"]);
 
       const config2 = baseConfig();
       config2.interface.wireguard = { "wg0": { privateKey: "k", extra: { peers: [{ name: "phone\nx" }] } } };
@@ -276,12 +276,55 @@ describe('Test network config validation', function(){
       expect(await ncm.validateConfig(apc)).to.deep.equal(["control character in apc.profile.p1.key"]);
     });
 
-    it('should accept display names holding non ascii', async()=> {
-      // real boxes carry CJK and emoji in these fields
+    it('should require a dhcp extraOptions key to be an option code', async()=> {
+      // the entry lands in a dnsmasq conf as `dhcp-option=tag:<iface>,<key>,<value>`, and dnsmasq
+      // reads an unrecognised leading word as a tag, so the line still parses. A key named `notes`
+      // or `ssid` would also carry the control character exemption those names hold, turning the
+      // rest of the value into a directive of its own - verified against the bundled dnsmasq
+      // the exempt names carry the payload, since the control character sweep would pass them
+      for (const key of ["notes", "ssid"]) {
+        const config = baseConfig();
+        config.dhcp = { "br0": { range: { from: "192.168.1.100", to: "192.168.1.200" },
+          extraOptions: { [key]: "15,example.test\ndhcp-script=/tmp/pwn.sh" } } };
+        const errors = await ncm.validateConfig(config);
+        expect(errors, `key ${key}`).to.deep.equal([`extraOptions of dhcp br0 is not a dhcp option code ${key}`]);
+      }
+      // every other key shape is rejected on its own, with a value the sweep has no quarrel with
+      for (const key of ["option:router", "256", "-1", "1.5", "", "15 "]) {
+        const config = baseConfig();
+        config.dhcp = { "br0": { range: { from: "192.168.1.100", to: "192.168.1.200" },
+          extraOptions: { [key]: "lan.example" } } };
+        const errors = await ncm.validateConfig(config);
+        expect(errors, `key ${JSON.stringify(key)}`).to.deep.equal([`extraOptions of dhcp br0 is not a dhcp option code ${key}`]);
+      }
+    });
+
+    it('should accept the dhcp option codes the app can produce', async()=> {
+      // its own editor restricts the code to 0-255, so this rejects nothing it can send
       const config = baseConfig();
-      config.interface.phy.eth0.meta.name = "办公室 🏢";
+      config.dhcp = { "br0": { range: { from: "192.168.1.100", to: "192.168.1.200" },
+        extraOptions: { "0": "a", "15": "lan.example", "255": "z",
+          "252": { value: "http://wpad.example/wpad.dat", force: true } } } };
       const errors = await ncm.validateConfig(config);
       expect(errors).to.be.empty;
+    });
+
+    it('should accept display names holding non ascii', async()=> {
+      // real boxes carry non ascii in these fields. one sample per writing system, because an
+      // encoding bug shows up on a particular byte shape rather than on "non ascii" as a class
+      const names = [
+        "测试",      // Chinese, 3 bytes per character in utf-8
+        "테스트",     // Korean, 3 bytes per character, composed hangul syllables
+        "اختبار",    // Arabic, 2 bytes per character, and right to left
+        "Büro",     // latin-1 supplement, a 2 byte character among 1 byte ones
+        "café 🏢"   // the same plus a 4 byte emoji, which is a surrogate pair in utf-16
+      ];
+      for (const name of names) {
+        const config = baseConfig();
+        config.interface.phy.eth0.meta.name = name;
+        const errors = await ncm.validateConfig(config);
+        expect(errors, `name ${JSON.stringify(name)}`).to.be.empty;
+      }
     });
   });
 
