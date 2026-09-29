@@ -16,10 +16,25 @@
 'use strict';
 
 const Platform = require('../Platform.js');
+const fs = require('fs');
+const os = require('os');
+
+const SYSTEM_AWG_BIN_PATH = '/usr/bin/awg';
 
 class CrystalPlatform extends Platform {
   getName() {
     return "crystal";
+  }
+
+  getAwgBinPath() {
+    const repoKoPath = `${this.getFilesPath()}/kernel_modules/${os.release()}/amneziawg.ko`;
+    if (fs.existsSync(repoKoPath)) {
+      return super.getAwgBinPath();
+    }
+    if (fs.existsSync(SYSTEM_AWG_BIN_PATH)) {
+      return SYSTEM_AWG_BIN_PATH;
+    }
+    return super.getAwgBinPath();
   }
 
   isOnboardConfigSupported() {
