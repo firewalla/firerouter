@@ -10,6 +10,13 @@ redis-cli del "fireboot:network_down:code"
 source ${FIREROUTER_HOME}/bin/common
 source ${FIREROUTER_HOME}/platform/platform.sh
 
+if [[ $NEED_FIRERESET == "false" && -e /etc/systemd/system/firereset.service ]]; then
+  echo "Firereset is not needed on this platform, removing it..."
+  sudo systemctl disable --now firereset &>/dev/null
+  sudo rm -f /etc/systemd/system/firereset.service /home/pi/.forever/firereset.log
+  sudo systemctl daemon-reload
+fi
+
 NODE_MODULES_PATH=$(get_node_modules_dir)
 if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
   if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
@@ -85,13 +92,6 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
       sudo systemctl start firereset
     fi
   fi
-fi
-
-if [[ $NEED_FIRERESET == "false" && -e /etc/systemd/system/firereset.service ]]; then
-  echo "Firereset is not needed on this platform, removing it..."
-  sudo systemctl disable --now firereset &>/dev/null
-  sudo rm -f /etc/systemd/system/firereset.service /home/pi/.forever/firereset.log
-  sudo systemctl daemon-reload
 fi
 logger "Uptime after firerouter_upgrade: $(awk '{print $1}' /proc/uptime)"
 
