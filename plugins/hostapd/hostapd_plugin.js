@@ -206,11 +206,18 @@ class HostapdPlugin extends Plugin {
       if (parameters.ssid && parameters.wpa_passphrase) {
         const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
         parameters.wpa_psk = psk;
-        // use hexdump for ssid
-        parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
         delete parameters["wpa_passphrase"];
-        delete parameters["ssid"];
       }
+    }
+
+    // hexdump the ssid in every security mode. the platform's enableHostapd writes each parameter
+    // as a `key=value` line, and ncm.validateConfig exempts an ssid from its control character
+    // sweep because 802.11 makes it an opaque octet string, so this encoding is what keeps a line
+    // break in one out of the generated config. hostapd takes ssid2 under SAE and with no security
+    // alike, and it has to run after the psk above, which needs the ssid in its original form.
+    if (parameters.ssid) {
+      parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
+      delete parameters["ssid"];
     }
 
     const hexdumpKeys = ["wep_key0", "wep_key1", "wep_key2", "wep_key3"];

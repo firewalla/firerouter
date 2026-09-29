@@ -254,6 +254,11 @@ describe('Test util', function(){
         .to.be.equal("hostapd.wlan0.params.wpa_passphrase");
     });
 
+    // Both exemptions are by key name, which is only safe where the key name is ours. Where it is
+    // the caller's - `dhcp.<iface>.extraOptions` - validateConfig restricts the key to a DHCP
+    // option code instead, so an entry cannot be named `notes` or `ssid` in the first place. That
+    // is covered in test_ncm.js, next to the other validateConfig rules.
+
     it('should not let an exempt key hide a subtree', async()=> {
       // the exemption is on an encoded string, anything below such a key is still walked
       expect(util.findControlChar({hostapd: {wlan0: {params: {ssid: {value: "a\nb"}}}}}))

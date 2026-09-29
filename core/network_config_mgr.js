@@ -776,6 +776,24 @@ class NetworkConfigManager {
           if (oif !== undefined && !INTF_NAME_REGEX.test(oif))
             return [`out of nat ${name} is not valid ${oif}`];
         }
+        // a dhcp extraOptions key is a DHCP option code, and dhcp_plugin emits every entry as
+        // `dhcp-option=tag:<iface>,<key>,<value>`. dnsmasq reads an unrecognised leading word as a
+        // tag, so a non-numeric key produces a line it still accepts - and one named `notes` or
+        // `ssid` would reach it carrying the control character exemption those names hold in
+        // util.findControlChar, turning a line break in the value into a directive of its own.
+        // The app already restricts the code to 0-255 in its own editor, so this rejects nothing
+        // it can produce.
+        if (configPath === "dhcp") {
+          const extraOptions = section[name] && section[name].extraOptions;
+          if (_.isObject(extraOptions)) {
+            for (const code of Object.keys(extraOptions)) {
+              // digits only as well as in range: the key is interpolated into the conf line, and
+              // toBoundedInt on its own would accept the surrounding whitespace it trims
+              if (!/^\d+$/.test(code) || util.toBoundedInt(code, 0, 255) === null)
+                return [`extraOptions of dhcp ${name} is not a dhcp option code ${code}`];
+            }
+          }
+        }
       }
     }
     const ifaceIp4PrefixMap = {};
