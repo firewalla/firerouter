@@ -42,6 +42,17 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  // returns networkConfig[field] if it is in the supported list, otherwise the fallback. for fields
+  // that are interpolated into a command, so they are held to what the driver documents
+  _supportedOrDefault(field, supported, fallback) {
+    const value = this.networkConfig[field];
+    if (supported.includes(value))
+      return value;
+    if (value)
+      this.log.error(`Unsupported bond ${field} for ${this.name}, using ${fallback}`, value);
+    return fallback;
+  }
+
   async createInterface() {
     const presentInterfaces = [];
     for (const intf of this.networkConfig.intf) {
@@ -62,9 +73,7 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     // supported mode list: balance-rr, active-backup, balance-xor, broadcast, 802.3ad, balance-tlb, balance-alb
     // default to balance-rr. mode is interpolated into the command below, so enforce that list
     const supportedModes = ["balance-rr", "active-backup", "balance-xor", "broadcast", "802.3ad", "balance-tlb", "balance-alb"];
-    const mode = supportedModes.includes(this.networkConfig.mode) ? this.networkConfig.mode : "balance-rr";
-    if (this.networkConfig.mode && mode !== this.networkConfig.mode)
-      this.log.error(`Unsupported bond mode for ${this.name}, using ${mode}`, this.networkConfig.mode);
+    const mode = this._supportedOrDefault("mode", supportedModes, "balance-rr");
     await execFile("sudo", ["ip", "link", "add", this.name, "type", "bond", "mode", mode]).catch((err) => {
       this.log.debug(`Failed to create bond interface ${this.name} with mode ${mode}`, err.message);
     });
