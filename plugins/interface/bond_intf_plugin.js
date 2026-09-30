@@ -92,10 +92,15 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
       // the slaves are detached above. interfaceUpDown() brings the bond back up.
       // on failure the bond keeps its current value and still carries traffic
       const adSelect = this._supportedOrDefault("adSelect", ["stable", "bandwidth", "count"], "stable");
-      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "down"]).catch((err) => {});
-      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "type", "bond", "ad_select", adSelect]).catch((err) => {
-        this.log.error(`Failed to set ad_select ${adSelect} on bond ${this.name}`, err.message);
-      });
+      // sysfs reads e.g. "stable 0". skip the admin down when the bond already has the value, so a
+      // re-apply doesn't bounce the bond for nothing. an unreadable value is set anyway
+      const current = await this._getSysFSClassNetValueOf(this.name, "bonding/ad_select");
+      if (!current || current.split(" ")[0] !== adSelect) {
+        await execFile("sudo", ["ip", "link", "set", "dev", this.name, "down"]).catch((err) => {});
+        await execFile("sudo", ["ip", "link", "set", "dev", this.name, "type", "bond", "ad_select", adSelect]).catch((err) => {
+          this.log.error(`Failed to set ad_select ${adSelect} on bond ${this.name}`, err.message);
+        });
+      }
     }
     if (presentInterfaces.length > 0) {
       await execFile("sudo", ["ifenslave", this.name].concat(presentInterfaces)).catch((err) => {

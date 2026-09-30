@@ -31,6 +31,15 @@ process.env.FIREROUTER_HOME = process.env.FIREROUTER_HOME || path.resolve(__dirn
 const cpp = require('child-process-promise');
 
 const calls = [];
+// commands containing one of these reject instead of resolving, for the failure paths
+const failing = [];
+
+function record(cmd) {
+  calls.push(cmd);
+  if (failing.some(needle => cmd.includes(needle)))
+    return Promise.reject(new Error(`stubbed failure: ${cmd}`));
+  return Promise.resolve({stdout: "", stderr: ""});
+}
 
 const SHARED = [
   '../../plugins/plugin.js',
@@ -47,16 +56,10 @@ function evict(resolvedPaths) {
 function load(resolvedPath) {
   const origExec = cpp.exec;
   const origExecFile = cpp.execFile;
-  cpp.exec = (cmd) => {
-    calls.push(cmd);
-    return Promise.resolve({stdout: "", stderr: ""});
-  };
+  cpp.exec = (cmd) => record(cmd);
   // execFile takes argv rather than a command line, record it joined so the assertions, which are
   // about the command a plugin builds, read the same either way
-  cpp.execFile = (file, args) => {
-    calls.push([file].concat(args || []).join(" "));
-    return Promise.resolve({stdout: "", stderr: ""});
-  };
+  cpp.execFile = (file, args) => record([file].concat(args || []).join(" "));
   const shared = SHARED.map(p => require.resolve(p));
   evict([resolvedPath, ...shared]);
   const mod = require(resolvedPath);
@@ -77,6 +80,7 @@ module.exports = {
   load,
   build,
   calls,
-  reset: () => { calls.length = 0; },
+  reset: () => { calls.length = 0; failing.length = 0; },
+  failOn: (needle) => { failing.push(needle); },
   matching: (needle) => calls.filter(c => c.includes(needle)),
 };
