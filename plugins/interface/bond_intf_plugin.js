@@ -77,11 +77,27 @@ class BondInterfacePlugin extends InterfaceBasePlugin {
     await execFile("sudo", ["ip", "link", "add", this.name, "type", "bond", "mode", mode]).catch((err) => {
       this.log.debug(`Failed to create bond interface ${this.name} with mode ${mode}`, err.message);
     });
+    // detach slave interfaces and add them back to ensure the MAC address of slave interfaces is updated after interface is re-added
     if (presentInterfaces.length > 0) {
-      // detach slave interfaces and add them back to ensure the MAC address of slave interfaces is updated after interface is re-added
       await execFile("sudo", ["ifenslave", "-d", this.name].concat(presentInterfaces)).catch((err) => {
         this.log.debug(`Failed to detach interfaces from bond ${this.name}`, err.message);
       });
+    }
+    if (mode === "802.3ad" && this.networkConfig.adSelect !== undefined) {
+      // optional aggregator selection policy, the kernel default is "stable". set on its own rather
+      // than on `ip link add`: after a soft upgrade the bond created by the previous version is
+      // still there, since plugin_loader configures a new instance before its flush decision,
+      // isFullFlushNeeded() compares the config with itself and only flushFast() runs, so
+      // `ip link add` fails with EEXIST. the kernel only takes ad_select while the bond is down, and
+      // the slaves are detached above. interfaceUpDown() brings the bond back up.
+      // on failure the bond keeps its current value and still carries traffic
+      const adSelect = this._supportedOrDefault("adSelect", ["stable", "bandwidth", "count"], "stable");
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "down"]).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "type", "bond", "ad_select", adSelect]).catch((err) => {
+        this.log.error(`Failed to set ad_select ${adSelect} on bond ${this.name}`, err.message);
+      });
+    }
+    if (presentInterfaces.length > 0) {
       await execFile("sudo", ["ifenslave", this.name].concat(presentInterfaces)).catch((err) => {
         this.log.error(`Failed to add interfaces to bond ${this.name}`, err.message);
       });

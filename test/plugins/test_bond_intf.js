@@ -46,4 +46,60 @@ describe('Test bond interface plugin', function(){
       expect(addCmd).to.contain("mode 802.3ad");
     });
   });
+
+  describe('adSelect', function(){
+    const pl = require('../../plugins/plugin_loader.js');
+    const origGetPluginInstance = pl.getPluginInstance;
+    // two present member ports, so the detach / re-enslave ordering is exercised
+    const member = { isInterfacePresent: async () => true };
+
+    beforeEach(() => {
+      pl.getPluginInstance = () => member;
+    });
+    afterEach(() => {
+      pl.getPluginInstance = origGetPluginInstance;
+    });
+
+    function build(extra) {
+      const plugin = stub.build(BondInterfacePlugin, "bond0",
+        Object.assign({intf: ["eth1", "eth2"], mode: "802.3ad", enabled: true}, extra));
+      plugin.subscribeChangeFrom = () => {};
+      return plugin;
+    }
+
+    it('should not touch ad_select when the field is absent', async()=> {
+      await build({}).createInterface();
+      expect(stub.matching("ad_select").length).to.be.equal(0);
+      expect(stub.calls.indexOf("sudo ip link set dev bond0 down")).to.be.equal(-1);
+    });
+
+    it('should set ad_select while the bond is down and its members are detached', async()=> {
+      await build({adSelect: "bandwidth"}).createInterface();
+      const addIdx = stub.calls.indexOf("sudo ip link add bond0 type bond mode 802.3ad");
+      const detachIdx = stub.calls.indexOf("sudo ifenslave -d bond0 eth1 eth2");
+      const downIdx = stub.calls.indexOf("sudo ip link set dev bond0 down");
+      const selIdx = stub.calls.indexOf("sudo ip link set dev bond0 type bond ad_select bandwidth");
+      const enslaveIdx = stub.calls.indexOf("sudo ifenslave bond0 eth1 eth2");
+      expect(addIdx).to.be.at.least(0);
+      expect(detachIdx).to.be.above(addIdx);
+      expect(downIdx).to.be.above(detachIdx);
+      expect(selIdx).to.be.above(downIdx);
+      expect(enslaveIdx).to.be.above(selIdx);
+    });
+
+    it('should fall back to stable for an unsupported value', async()=> {
+      const plugin = build({adSelect: "bandwidth; touch /tmp/pwn; #"});
+      const errors = [];
+      plugin.log = Object.assign(Object.create(plugin.log), {error: (...args) => errors.push(args.join(" "))});
+      await plugin.createInterface();
+      expect(stub.matching("touch /tmp/pwn").length).to.be.equal(0);
+      expect(stub.calls).to.include("sudo ip link set dev bond0 type bond ad_select stable");
+      expect(errors.some(e => e.includes("Unsupported bond adSelect for bond0, using stable"))).to.be.true;
+    });
+
+    it('should ignore the field for modes other than 802.3ad', async()=> {
+      await build({mode: "balance-rr", adSelect: "bandwidth"}).createInterface();
+      expect(stub.matching("ad_select").length).to.be.equal(0);
+    });
+  });
 });
