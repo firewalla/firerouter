@@ -123,24 +123,35 @@ function toVlanId(vlanId) {
     if (vid >= 1 && vid <= 4094)
       return vid;
   }
-  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, pppoe will run without vlan`);
+  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, wan will run without vlan`);
   return null;
+}
+
+function placeWan(wanConfig, vid) {
+  if (!vid)
+    return {wanIntf: WAN_PHY, phy: wanConfig};
+  const vlanIntf = `${WAN_PHY}.${vid}`;
+  return {
+    wanIntf: vlanIntf,
+    phy: {enabled: true},
+    vlan: {[vlanIntf]: {...wanConfig, intf: WAN_PHY, vid}}
+  };
 }
 
 function buildWan(wan) {
   const type = _.get(wan, "type");
+  const vid = toVlanId(_.get(wan, "vlanId"));
   switch (type) {
     case "dhcp":
       return {
-        wanIntf: WAN_PHY,
         ipv6: true,
-        phy: {
+        ...placeWan({
           meta: {name: "WAN", type: "wan"},
           enabled: true,
           dhcp: true,
           dhcp6: _.cloneDeep(WAN_DHCP6),
           extra: _.cloneDeep(WAN_EXTRA)
-        }
+        }, vid)
       };
     case "static": {
       const nameservers = toNameservers(wan.dns);
@@ -149,22 +160,20 @@ function buildWan(wan) {
       if (_.isEmpty(nameservers))
         throw new Error("wan dns is required for a static wan");
       return {
-        wanIntf: WAN_PHY,
         ipv6: false,
-        phy: {
+        ...placeWan({
           meta: {name: "WAN", type: "wan"},
           enabled: true,
           ipv4: toCidr(wan.ip, wan.mask, "wan"),
           gateway: wan.gateway,
           nameservers,
           extra: _.cloneDeep(WAN_EXTRA)
-        }
+        }, vid)
       };
     }
     case "pppoe": {
       if (!_.isString(wan.username) || !_.isString(wan.password) || !wan.username || !wan.password)
         throw new Error("wan username and password are required for pppoe");
-      const vid = toVlanId(wan.vlanId);
       const pppoeLower = vid ? `${WAN_PHY}.${vid}` : WAN_PHY;
       return {
         wanIntf: PPPOE_INTF,
