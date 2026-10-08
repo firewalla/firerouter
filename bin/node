@@ -9,6 +9,48 @@ else
   # Use system one
   NODE=$(which node)
 fi
+
+# Upgraded Node, installed by firewalla (scripts/install_node.sh from its assets) and shared with it.
+# Falls back to the choice above when not installed, or when config/.node_legacy is empty or holds
+# this version (written by hand for now, the crash guard below is disabled)
+NODE_UPGRADE_VERSION=v24.21.0   # must match NODE_UPGRADE_VERSION in firewalla platform/platform.sh
+NODE_VERSIONS_DIR=${NODE_VERSIONS_DIR:-/home/pi/.node_versions}
+NODE_UPGRADE_BIN=$NODE_VERSIONS_DIR/$NODE_UPGRADE_VERSION/bin/node
+NODE_LATCH=${FIREROUTER_HIDDEN:-/home/pi/.router}/config/.node_legacy
+latch=$(head -n1 "$NODE_LATCH" 2>/dev/null)
+if [[ -x $NODE_UPGRADE_BIN ]] && ! [[ -e $NODE_LATCH && ( -z $latch || $latch == $NODE_UPGRADE_VERSION ) ]]; then
+  NODE=$NODE_UPGRADE_BIN
+fi
+
+# Crash guard for the upgraded Node, disabled for now (2026-09-29, not needed while on dev)
+# # After a crash-guard fallback (below), systemd restarts FireRouter, which does not apply the network config
+# # on its own (fireboot and the upgrade scripts run init_network_config). Apply it once, in the background.
+# NODE_ROLLBACK_FLAG=${NODE_ROLLBACK_FLAG:-/dev/shm/firerouter.node_rollback}   # /dev/shm: a reboot applies it anyway
+# if [[ -e $NODE_ROLLBACK_FLAG ]]; then
+#   rm -f $NODE_ROLLBACK_FLAG
+#   logger "FIREROUTER:NODE_UPGRADE:ROLLBACK re-applying network config on $NODE"
+#   ( FIREROUTER_HOME=${FIREROUTER_HOME:-/home/pi/firerouter}; source $FIREROUTER_HOME/bin/common
+#     source $FIREROUTER_HOME/platform/platform.sh; init_network_config ) &>/dev/null &
+# fi
+
 redis-cli HINCRBY "stats:systemd:restart" FireRouter 1
-$NODE "$@"
-  
+# SECONDS=0
+"$NODE" "$@"
+# rc=$?
+
+# # Reached only when node exits on its own (systemctl stop/restart kills this script too).
+# # If the upgraded Node exits within 5 minutes 3 times in 30 minutes, latch its version into
+# # config/.node_legacy so the next start falls back to the default Node
+# if [[ $NODE == $NODE_VERSIONS_DIR/* ]] && (( SECONDS < 300 )); then
+#   exits_file=${FIREROUTER_HIDDEN:-/home/pi/.router}/run/node_short_exits
+#   mkdir -p $(dirname $exits_file)
+#   now=$(date +%s)
+#   { awk -v t=$((now - 1800)) '$1 > t' $exits_file 2>/dev/null; echo $now; } > $exits_file.tmp && mv $exits_file.tmp $exits_file
+#   if (( $(wc -l < $exits_file) >= 3 )); then
+#     echo $NODE_UPGRADE_VERSION > "$NODE_LATCH"
+#     rm -f $exits_file
+#     touch $NODE_ROLLBACK_FLAG
+#     logger "FIREROUTER:NODE_UPGRADE:ROLLBACK FireRouter exited (rc=$rc) 3 times within 30min on $NODE_UPGRADE_VERSION, falling back to default node"
+#   fi
+# fi
+# exit $rc
