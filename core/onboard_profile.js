@@ -117,12 +117,13 @@ function dhcpRange(lanIp, prefix) {
 function toVlanId(vlanId) {
   if (vlanId === undefined || vlanId === null || vlanId === "")
     return null;
-  const vid = Number(vlanId);
-  if (!/^\d+$/.test(String(vlanId)) || vid < 1 || vid > 4094) {
-    log.error(`wan vlanId is not a valid vlan id: ${vlanId}, pppoe will run without vlan`);
-    return null;
+  if ((_.isNumber(vlanId) || _.isString(vlanId)) && /^\d+$/.test(String(vlanId))) {
+    const vid = Number(vlanId);
+    if (vid >= 1 && vid <= 4094)
+      return vid;
   }
-  return vid;
+  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, pppoe will run without vlan`);
+  return null;
 }
 
 function buildWan(wan) {
