@@ -122,42 +122,47 @@ function toVlanId(vlanId) {
     if (vid >= 1 && vid <= 4094)
       return vid;
   }
-  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, pppoe will run without vlan`);
+  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, wan will run without vlan`);
   return null;
+}
+
+function placeWan(wanConfig, vid) {
+  if (!vid)
+    return {wanIntf: WAN_PHY, phy: wanConfig};
+  const vlanIntf = `${WAN_PHY}.${vid}`;
+  return {
+    wanIntf: vlanIntf,
+    phy: {enabled: true},
+    vlan: {[vlanIntf]: {...wanConfig, intf: WAN_PHY, vid}}
+  };
 }
 
 function buildWan(wan) {
   const type = _.get(wan, "type");
+  const vid = toVlanId(_.get(wan, "vlanId"));
   switch (type) {
     case "dhcp":
-      return {
-        wanIntf: WAN_PHY,
-        phy: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true, extra: _.cloneDeep(WAN_EXTRA)}
-      };
+      return placeWan({meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true, extra: _.cloneDeep(WAN_EXTRA)}, vid);
     case "static": {
       const nameservers = toNameservers(wan.dns);
       if (ipToInt(wan.gateway) === null)
         throw new Error(`wan gateway is not a valid IPv4 address: ${wan.gateway}`);
       if (_.isEmpty(nameservers))
         throw new Error("wan dns is required for a static wan");
-      return {
-        wanIntf: WAN_PHY,
-        phy: {
-          meta: {name: "WAN", type: "wan"},
-          enabled: true,
-          ipv4: toCidr(wan.ip, wan.mask, "wan"),
-          gateway: wan.gateway,
-          nameservers,
-          extra: _.cloneDeep(WAN_EXTRA)
-        }
-      };
+      return placeWan({
+        meta: {name: "WAN", type: "wan"},
+        enabled: true,
+        ipv4: toCidr(wan.ip, wan.mask, "wan"),
+        gateway: wan.gateway,
+        nameservers,
+        extra: _.cloneDeep(WAN_EXTRA)
+      }, vid);
     }
     case "pppoe": {
       if (!_.isString(wan.username) || !_.isString(wan.password) || !wan.username || !wan.password)
         throw new Error("wan username and password are required for pppoe");
       // The WAN is the ppp interface riding on eth0, so eth0 itself stays a plain enabled port:
       // it carries no address and must not be marked as the wan (see pppoe_intf_plugin.js).
-      const vid = toVlanId(wan.vlanId);
       const pppoeLower = vid ? `${WAN_PHY}.${vid}` : WAN_PHY;
       return {
         wanIntf: PPPOE_INTF,
