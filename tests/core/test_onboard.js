@@ -149,7 +149,7 @@ describe('Test onboard network profile', function() {
     });
 
     it('should fall back to pppoe on eth0 for an invalid vlanId', () => {
-      for (const vlanId of [0, 4095, -1, 1.5, "abc", "35 ", true]) {
+      for (const vlanId of [0, 4095, -1, 1.5, "abc", "35 ", true, [35], [["35"]], {}, {toString: null}]) {
         const config = op.expandProfile(adaptiveNetwork({
           type: "pppoe", username: "u", password: "p", vlanId
         }), ports(2));
