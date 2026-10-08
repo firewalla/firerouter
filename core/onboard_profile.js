@@ -30,6 +30,7 @@
 //     "lan": { "ip": "192.168.49.1", "mask": "255.255.255.0" } }
 
 const _ = require('lodash');
+const log = require('../util/logger.js')(__filename);
 
 const PROFILE_ADAPTIVE = "adaptive";
 const WAN_PHY = "eth0";          // crystal-ifmap guarantees this is the installer's WAN port
@@ -113,51 +114,72 @@ function dhcpRange(lanIp, prefix) {
   return {from: intToIp(from), to: intToIp(to)};
 }
 
+function toVlanId(vlanId) {
+  if (vlanId === undefined || vlanId === null || vlanId === "")
+    return null;
+  if ((_.isNumber(vlanId) || _.isString(vlanId)) && /^\d+$/.test(String(vlanId))) {
+    const vid = Number(vlanId);
+    if (vid >= 1 && vid <= 4094)
+      return vid;
+  }
+  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, wan will run without vlan`);
+  return null;
+}
+
+function placeWan(wanConfig, vid) {
+  if (!vid)
+    return {wanIntf: WAN_PHY, phy: wanConfig};
+  const vlanIntf = `${WAN_PHY}.${vid}`;
+  return {
+    wanIntf: vlanIntf,
+    phy: {enabled: true},
+    vlan: {[vlanIntf]: {...wanConfig, intf: WAN_PHY, vid}}
+  };
+}
+
 function buildWan(wan) {
   const type = _.get(wan, "type");
+  const vid = toVlanId(_.get(wan, "vlanId"));
   switch (type) {
     case "dhcp":
-      return {
-        wanIntf: WAN_PHY,
-        phy: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true, extra: _.cloneDeep(WAN_EXTRA)}
-      };
+      return placeWan({meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true, extra: _.cloneDeep(WAN_EXTRA)}, vid);
     case "static": {
       const nameservers = toNameservers(wan.dns);
       if (ipToInt(wan.gateway) === null)
         throw new Error(`wan gateway is not a valid IPv4 address: ${wan.gateway}`);
       if (_.isEmpty(nameservers))
         throw new Error("wan dns is required for a static wan");
-      return {
-        wanIntf: WAN_PHY,
-        phy: {
-          meta: {name: "WAN", type: "wan"},
-          enabled: true,
-          ipv4: toCidr(wan.ip, wan.mask, "wan"),
-          gateway: wan.gateway,
-          nameservers,
-          extra: _.cloneDeep(WAN_EXTRA)
-        }
-      };
+      return placeWan({
+        meta: {name: "WAN", type: "wan"},
+        enabled: true,
+        ipv4: toCidr(wan.ip, wan.mask, "wan"),
+        gateway: wan.gateway,
+        nameservers,
+        extra: _.cloneDeep(WAN_EXTRA)
+      }, vid);
     }
-    case "pppoe":
+    case "pppoe": {
       if (!_.isString(wan.username) || !_.isString(wan.password) || !wan.username || !wan.password)
         throw new Error("wan username and password are required for pppoe");
       // The WAN is the ppp interface riding on eth0, so eth0 itself stays a plain enabled port:
       // it carries no address and must not be marked as the wan (see pppoe_intf_plugin.js).
+      const pppoeLower = vid ? `${WAN_PHY}.${vid}` : WAN_PHY;
       return {
         wanIntf: PPPOE_INTF,
         phy: {enabled: true},
+        ...(vid ? {vlan: {[pppoeLower]: {enabled: true, intf: WAN_PHY, vid}}} : {}),
         pppoe: {
           [PPPOE_INTF]: {
             meta: {name: "WAN", type: "wan"},
             enabled: true,
-            intf: WAN_PHY,
+            intf: pppoeLower,
             username: wan.username,
             password: wan.password,
             extra: _.cloneDeep(WAN_EXTRA)
           }
         }
       };
+    }
     default:
       throw new Error(`unsupported wan type: ${type}`);
   }
@@ -179,7 +201,7 @@ function expandProfile(network, phyNames) {
   const lan = _.get(network, "lan") || {};
   const lanCidr = toCidr(lan.ip, lan.mask, "lan");
   const lanPrefix = maskToPrefix(lan.mask);
-  const {wanIntf, phy, pppoe} = buildWan(_.get(network, "wan"));
+  const {wanIntf, phy, vlan, pppoe} = buildWan(_.get(network, "wan"));
 
   // Every port that is not the wan is a LAN member — that is what "adaptive" means.
   const lanIntfs = eths.filter(n => n !== WAN_PHY);
@@ -230,6 +252,8 @@ function expandProfile(network, phyNames) {
       [LAN_BRIDGE]: {enabled: true}
     }
   };
+  if (vlan)
+    config.interface.vlan = vlan;
   if (pppoe)
     config.interface.pppoe = pppoe;
   return config;
