@@ -123,6 +123,41 @@ describe('Test onboard network profile', function() {
       expect(_.get(config, ["nat", "br0-eth0"])).to.be.undefined;
     });
 
+    it('should put a pppoe wan with vlanId on top of a vlan of eth0', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "pppoe", username: "user@isp", password: "secret", vlanId: 35
+      }), ports(3));
+      expect(_.get(config, ["interface", "phy", "eth0"])).to.eql({enabled: true});
+      expect(_.get(config, ["interface", "vlan"])).to.eql({"eth0.35": {enabled: true, intf: "eth0", vid: 35}});
+      expect(_.get(config, ["interface", "pppoe", "ppp0", "intf"])).to.equal("eth0.35");
+      expect(_.get(config, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2"]);
+      expect(_.get(config, ["routing", "global", "default", "viaIntf"])).to.equal("ppp0");
+      expect(_.get(config, ["nat", "br0-ppp0"])).to.eql({in: "br0", out: "ppp0"});
+    });
+
+    it('should accept a numeric string vlanId and ignore an empty one', () => {
+      const config = op.expandProfile(adaptiveNetwork({
+        type: "pppoe", username: "u", password: "p", vlanId: "4094"
+      }), ports(2));
+      expect(_.get(config, ["interface", "vlan", "eth0.4094", "vid"])).to.equal(4094);
+      expect(_.get(config, ["interface", "pppoe", "ppp0", "intf"])).to.equal("eth0.4094");
+      for (const vlanId of [undefined, null, ""]) {
+        const plain = op.expandProfile(adaptiveNetwork({type: "pppoe", username: "u", password: "p", vlanId}), ports(2));
+        expect(_.get(plain, ["interface", "vlan"])).to.be.undefined;
+        expect(_.get(plain, ["interface", "pppoe", "ppp0", "intf"])).to.equal("eth0");
+      }
+    });
+
+    it('should fall back to pppoe on eth0 for an invalid vlanId', () => {
+      for (const vlanId of [0, 4095, -1, 1.5, "abc", "35 ", true]) {
+        const config = op.expandProfile(adaptiveNetwork({
+          type: "pppoe", username: "u", password: "p", vlanId
+        }), ports(2));
+        expect(_.get(config, ["interface", "vlan"])).to.be.undefined;
+        expect(_.get(config, ["interface", "pppoe", "ppp0", "intf"])).to.equal("eth0");
+      }
+    });
+
     it('should enable dhcpv6 on a dhcp wan and delegate the prefix to the lan', () => {
       const config = op.expandProfile(adaptiveNetwork(), ports(4));
       expect(_.get(config, ["interface", "phy", "eth0", "dhcp6"])).to.eql({});
@@ -178,6 +213,7 @@ describe('Test onboard network profile', function() {
     it('should produce a config that passes validateConfig', async () => {
       for (const wan of [{type: "dhcp"},
                          {type: "pppoe", username: "u", password: "p"},
+                         {type: "pppoe", username: "u", password: "p", vlanId: 35},
                          {type: "static", ip: "203.0.113.5", mask: "255.255.255.0", gateway: "203.0.113.1", dns: "1.1.1.1"}]) {
         const errors = await ncm.validateConfig(op.expandProfile(adaptiveNetwork(wan), ports(5)));
         expect(errors).to.eql([]);
