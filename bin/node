@@ -22,6 +22,12 @@ if [[ -x $NODE_UPGRADE_BIN ]] && ! [[ -e $NODE_LATCH && ( -z $latch || $latch ==
   NODE=$NODE_UPGRADE_BIN
 fi
 
+# Node on boxes with <= 2.5GB RAM: favor memory over speed (never passed to the default Node)
+NODE_OPTS=""
+if [[ $NODE == $NODE_VERSIONS_DIR/* ]] && (( $(awk '/MemTotal/{print $2}' /proc/meminfo) <= 2621440 )); then
+  NODE_OPTS=--optimize-for-size
+fi
+
 # Crash guard for the upgraded Node, disabled for now (2026-09-29, not needed while on dev)
 # # After a crash-guard fallback (below), systemd restarts FireRouter, which does not apply the network config
 # # on its own (fireboot and the upgrade scripts run init_network_config). Apply it once, in the background.
@@ -35,7 +41,7 @@ fi
 
 redis-cli HINCRBY "stats:systemd:restart" FireRouter 1
 # SECONDS=0
-"$NODE" "$@"
+"$NODE" $NODE_OPTS "$@"
 # rc=$?
 
 # # Reached only when node exits on its own (systemctl stop/restart kills this script too).
