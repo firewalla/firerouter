@@ -13,11 +13,15 @@ NEW_CHECK='[[ $HTTP_STATUS_CODE =~ ^[1-5][0-9][0-9]$ ]]'
 [[ -f $SCRIPT ]] || exit 0
 grep -qE "$OLD_CHECK" $SCRIPT || exit 0
 
+WAS_RO=0
 restore_ro() {
+  # only put back what was there before: a writable layer stays writable
+  [[ $WAS_RO -eq 1 ]] || return 0
   sudo mount -o remount,ro $HOME_RO || logger "WARN: FIREROUTER.UPGRADE failed to remount $HOME_RO read-only"
 }
 
 if findmnt -no OPTIONS $HOME_RO | tr ',' '\n' | grep -qx ro; then
+  WAS_RO=1
   # the pristine layer must not stay writable, whatever happens below
   trap restore_ro EXIT
   sudo mount -o remount,rw $HOME_RO || { logger "WARN: FIREROUTER.UPGRADE failed to remount $HOME_RO writable"; exit 0; }
