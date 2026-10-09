@@ -25,6 +25,8 @@ router.post('/save_txt_file', jsonParser, async (req, res, next) => {
   const config = req.body;
   if (!config || !config.filename || !config.content) {
     res.status(400).json({ errors: ['Either "filename" or "content" is not specified.'] });
+  } else if (typeof config.content !== 'string') {
+    res.status(400).json({ errors: ['"content" should be a string.'] });
   } else {
     await storage.saveFile(config.filename, config.content).then(() => {
       res.status(200).json({});
