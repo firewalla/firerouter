@@ -20,6 +20,7 @@ const router = express.Router();
 const bodyParser = require('body-parser');
 const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
+const op = require('../../core/onboard_profile.js');
 const ns = require('../../core/network_setup.js');
 const util = require('../../util/util.js');
 const AsyncLock = require('async-lock');
@@ -261,6 +262,8 @@ router.post('/set',
       delete newConfig.transID;
       const ignoreNcid = newConfig.ignoreNcid || false;
       delete newConfig.ignoreNcid;
+      const reconcilePorts = newConfig.reconcilePorts === true;
+      delete newConfig.reconcilePorts;
       if (transactionOp && !validTransactionOps.includes(transactionOp)) {
         const errMsg = `Unrecognized transactionOp in config: ${transactionOp}`;
         log.error(errMsg);
@@ -314,6 +317,12 @@ router.post('/set',
             break;
           default:
         }
+      }
+      if (reconcilePorts && transactionOp !== T_OP_REVERT) {
+        const phyNames = await ncm.getPhyInterfaceNames();
+        log.info(`Reconcile network config with top level keys: ${Object.keys(newConfig).join(", ")}`);
+        newConfig = op.reconcilePorts(newConfig, phyNames);
+        log.info(`Reconciled network config over ports ${phyNames.join(", ")}`);
       }
       let errors = await ncm.validateConfig(newConfig);
       if (errors && errors.length != 0) {

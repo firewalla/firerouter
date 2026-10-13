@@ -682,16 +682,12 @@ class NetworkConfigManager {
 
   async resolveOnboardNetwork(network) {
     if (!op.isProfileConfig(network)) {
-      // usually migrate, get frcc config
-      try {
-        const phyNames = await this.getPhyInterfaceNames();
-        return op.reconcilePorts(network, phyNames);
-      } catch (err) {
-        log.error("Failed to reconcile onboard network with ports on this box", err.message);
-        return null;
-      }
+      // frcc config, already expanded over the ports of this box by the crystal iso installer
+      return network;
     } else {
-      // usually set up as new, get adaptive config
+      // @deprecated
+      // crystal iso installer will expand the adaptive config to frcc config, should not here
+      log.warn(`Deprecated: expanding '${network.profile}' network profile on the box, the installer is expected to expand it`);
       try {
         const phyNames = await this.getPhyInterfaceNames();
         const config = op.expandProfile(network, phyNames);
