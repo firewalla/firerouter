@@ -556,32 +556,21 @@ describe('Test onboard config consumption', function() {
       expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"]).length).to.equal(9);
     });
 
-    it('should still accept a full network config', async () => {
-      await writeOnboard({
+    it('should apply a full network config as is, without fitting it to the ports', async () => {
+      const network = {
         interface: {
           phy: {eth0: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true}, eth1: {enabled: true}},
           bridge: {br0: {meta: {name: "LAN", type: "lan"}, ipv4: "10.10.0.1/24", intf: ["eth1"], enabled: true}}
         },
         routing: {global: {default: {viaIntf: "eth0"}}},
         nat: {br0_eth0: {in: "br0", out: "eth0"}}
-      });
+      };
+      await writeOnboard(network);
       const consumed = await ncm.consumeOnboardConfig();
       expect(consumed).to.be.true;
-      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
-    });
-
-    it('should fit a full network config onto the ports of this box', async () => {
-      await writeOnboard({
-        interface: {
-          phy: {eth0: {meta: {name: "WAN", type: "wan"}, enabled: true, dhcp: true}, eth1: {enabled: true}, eth5: {enabled: true}},
-          bridge: {br0: {meta: {name: "LAN", type: "lan"}, ipv4: "10.10.0.1/24", intf: ["eth1", "eth5"], enabled: true}}
-        },
-        routing: {global: {default: {viaIntf: "eth0"}}}
-      });
-      const consumed = await ncm.consumeOnboardConfig();
-      expect(consumed).to.be.true;
-      expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
-      expect(_.get(savedConfig, ["interface", "phy", "eth5"])).to.be.undefined;
+      expect(Object.keys(savedConfig.interface.phy)).to.eql(["eth0", "eth1"]);
+      expect(savedConfig.interface.bridge.br0.intf).to.eql(["eth1"]);
+      expect(savedConfig.nat).to.eql(network.nat);
     });
 
     it('should not consume when the profile cannot be expanded', async () => {
