@@ -685,7 +685,7 @@ class NetworkConfigManager {
       // frcc config, from the migrate source or expanded by the crystal iso installer, follow the ports of this box
       try {
         const phyNames = await this.getPhyInterfaceNames();
-        return op.reconcilePorts(network, phyNames);
+        return op.reconcilePorts(_.omit(network, ["ncid", "reqId"]), phyNames);
       } catch (err) {
         log.error("Failed to reconcile onboard network with ports on this box", err.message);
         return null;
