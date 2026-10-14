@@ -563,11 +563,15 @@ describe('Test onboard config consumption', function() {
           bridge: {br0: {meta: {name: "LAN", type: "lan"}, ipv4: "10.10.0.1/24", intf: ["eth1"], enabled: true}}
         },
         routing: {global: {default: {viaIntf: "eth0"}}},
-        nat: {br0_eth0: {in: "br0", out: "eth0"}}
+        nat: {br0_eth0: {in: "br0", out: "eth0"}},
+        ncid: "source-box-ncid",
+        reqId: "source-box-reqid"
       });
       const consumed = await ncm.consumeOnboardConfig();
       expect(consumed).to.be.true;
       expect(_.get(savedConfig, ["interface", "bridge", "br0", "intf"])).to.eql(["eth1", "eth2", "eth3"]);
+      expect(savedConfig.ncid).to.be.undefined;
+      expect(savedConfig.reqId).to.be.undefined;
     });
 
     it('should fit a full network config onto the ports of this box', async () => {
