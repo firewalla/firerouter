@@ -190,7 +190,10 @@ describe('Test interface base dhcp6', function(){
     before(async () => {
         this.plugin = new InterfaceBasePlugin("eth0");
         this.plugin.configure({dhcp6:{}});
-        await exec(`cat /dev/null | sudo tee ${r.getRuntimeFolder()}/dhcpcd.duid`).catch((err) => {});
+        // _genDuid returns early, with no value, when the duid on disk already carries the type
+        // being asked for, so the first case only generates from an empty file. the name to empty
+        // is the per-interface one _getDuid reads
+        await exec(`cat /dev/null | sudo tee ${r.getRuntimeFolder()}/dhcpcd-${this.plugin.name}.duid`).catch((err) => {});
     });
 
     after((done) => {
