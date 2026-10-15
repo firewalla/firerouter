@@ -21,9 +21,9 @@ before_firereset
 # use this user firereset binary if configured, for debugging purpose only
 USER_FIRERESET=/home/pi/.firewalla/run/firereset
 if [[ -e $USER_FIRERESET ]]; then
-  sudo BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout $BLUETOOTH_TIMEOUT
+  sudo UART_LE="$UART_LE" BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout $BLUETOOTH_TIMEOUT
   exit 0
 fi
 
 FIRERESET_BINARY=$(get_firereset_path)
-sudo BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout $BLUETOOTH_TIMEOUT
+sudo UART_LE="$UART_LE" BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout $BLUETOOTH_TIMEOUT

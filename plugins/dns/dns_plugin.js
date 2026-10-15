@@ -43,6 +43,30 @@ class DNSPlugin extends Plugin {
     await this.createDirectories();
     await this.installDNSScript();
     await this.installSystemService();
+    await this.cleanupLocalhostDnsConf();
+  }
+
+  // Remove localhost-upstream confs whose port isn't listening yet (boot gap guard).
+  // Only runs once per boot via a /dev/shm marker; skipped on plain firerouter restarts
+  static async cleanupLocalhostDnsConf() {
+    const marker = '/dev/shm/firerouter_dns_boot_cleanup_done';
+    const alreadyRun = await fs.accessAsync(marker).then(() => true).catch(() => false);
+    if (alreadyRun) return;
+
+    const confDir = `${r.getFirewallaUserConfigFolder()}/dnsmasq`;
+    const { stdout } = await exec(`grep -rl 'server=127\\.0\\.0\\.1#' '${confDir}'`).catch(() => ({ stdout: '' }));
+    const confs = stdout.trim().split('\n').filter(Boolean);
+    for (const conf of confs) {
+      const content = await fs.readFileAsync(conf, 'utf8').catch(() => '');
+      const match = content.match(/server=127\.0\.0\.1#(\d+)/);
+      if (!match) continue;
+      const port = match[1];
+      const listening = await exec(`ss -lntu | grep -q '127\\.0\\.0\\.1:${port} '`).then(() => true).catch(() => false);
+      if (!listening)
+        await fs.unlinkAsync(conf).catch(() => {});
+    }
+
+    await fs.writeFileAsync(marker, '').catch(() => {});
   }
 
   static async createDirectories() {
