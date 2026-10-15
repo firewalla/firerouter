@@ -21,11 +21,21 @@ let expect = chai.expect;
 const fs = require('fs');
 const exec = require('child-process-promise').exec;
 
+const os = require('os');
+const path = require('path');
+
 const r = require('../../util/firerouter');
 let log = require('../../util/logger.js')(__filename, 'info');
 const routing = require('../../util/routing.js');
+const sysctl = require('../../util/sysctl.js');
+const util = require('../../util/util.js');
+
+// the last two describes drive applyIpv6Settings, which restarts dhcpcd6 on a real interface, so
+// they use the stubbed copy. the describes before them keep the real one and keep shelling out
+const stub = require('./stub_exec.js');
 
 let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js');
+const StubbedInterfaceBasePlugin = stub.load(require.resolve('../../plugins/interface/intf_base_plugin.js'));
 
 describe('Test ipv6 prefix renumbering', function(){
     const pdRecord = '/dev/shm/dhcpcd.pd_deprecated.eth9';
@@ -404,5 +414,113 @@ describe('Test interface base dhcp6', function(){
       expect(content).to.equal("protocol MLDv2;\npinstance \"br0\"(1): \"eth1\" ==> \"br0\";\n");
       await fs.promises.unlink(confPath).catch(() => {});
       await fs.promises.rmdir(confDir).catch(() => {});
+    });
+  });
+
+  describe('Test interface base dhcp6 prefix delegation', function(){
+    this.timeout(30000);
+
+    // pdSize, numOfPDs and pdHints are all written into dhcpcd.conf, which is line-oriented, and
+    // numOfPDs also bounds the loop that builds those lines
+    const confPath = path.join(os.tmpdir(), `firerouter_test_dhcpcd6_${process.pid}.conf`);
+
+    const generate = async (dhcp6) => {
+      stub.reset();
+      const plugin = stub.build(StubbedInterfaceBasePlugin, "eth0", {enabled: true, dhcp6});
+      plugin._getDHCPCD6ConfigPath = () => confPath;
+      plugin._resetDuid = async () => {};
+      await fs.unlinkAsync(confPath).catch(() => {});
+      let threw = false;
+      await plugin.applyIpv6Settings().catch(() => { threw = true; });
+      const content = await fs.readFileAsync(confPath, {encoding: "utf8"}).catch(() => null);
+      return {threw, content, pdOpts: content ? content.split("\n").filter(l => l.includes("ia_pd")) : []};
+    };
+
+    before(() => {
+      this.origSetValue = sysctl.setValue;
+      this.origAddRouteToTable = routing.addRouteToTable;
+      sysctl.setValue = async () => {};
+      routing.addRouteToTable = async () => {};
+    });
+
+    after(async () => {
+      sysctl.setValue = this.origSetValue;
+      routing.addRouteToTable = this.origAddRouteToTable;
+      await fs.unlinkAsync(confPath).catch(() => {});
+    });
+
+    it('should not let numOfPDs run the generation loop unbounded', async() => {
+      for (const numOfPDs of ["Infinity", 1e9, "1e9", -1, 2.5]) {
+        const {pdOpts} = await generate({numOfPDs});
+        log.debug(`numOfPDs ${numOfPDs}`, pdOpts);
+        expect(pdOpts.length, `numOfPDs ${numOfPDs} should fall back to a single ia_pd`).to.be.equal(1);
+      }
+    });
+
+    it('should refuse a pdSize that is not an integer up to 64', async() => {
+      for (const pdSize of ["56\nnohook resolv.conf", 65, "Infinity", 2.5]) {
+        const {threw, content} = await generate({numOfPDs: 1, pdSize});
+        expect(threw, `pdSize ${pdSize} should be rejected`).to.be.true;
+        expect(content, 'no dhcpcd.conf should be written').to.be.null;
+      }
+    });
+
+    it('should refuse a pdHint holding a line break', async() => {
+      const {threw, content} = await generate({numOfPDs: 1, pdHints: ["2001:db8::/56\nnohook resolv.conf"]});
+      expect(threw, 'a pdHint with a line break should be rejected').to.be.true;
+      expect(content, 'no dhcpcd.conf should be written').to.be.null;
+    });
+
+    it('should still generate the requested prefix delegations', async() => {
+      const withSize = await generate({numOfPDs: 3, pdSize: 56});
+      expect(withSize.pdOpts).to.deep.equal([
+        "ia_pd 1/::/56 not_exist/1",
+        "ia_pd 2/::/56 not_exist/1",
+        "ia_pd 3/::/56 not_exist/1"
+      ]);
+      const withHints = await generate({numOfPDs: 2, pdHints: ["2001:db8::/56", "2001:db8:1::/60"]});
+      expect(withHints.pdOpts).to.deep.equal([
+        "ia_pd 1/2001:db8::/56 not_exist/1",
+        "ia_pd 2/2001:db8:1::/60 not_exist/1"
+      ]);
+      const bare = await generate({});
+      expect(bare.pdOpts).to.deep.equal(["ia_pd 1 not_exist/1"]);
+    });
+  });
+
+  describe('Test interface base http test url', function(){
+    this.timeout(30000);
+
+    // the hostname parsed out of httpTestURL is a dig operand, and execFile keeps it out of a
+    // shell but not out of dig's own option parsing
+    const digCommand = async (httpTestURL) => {
+      stub.reset();
+      const plugin = stub.build(StubbedInterfaceBasePlugin, "eth0", {enabled: true, extra: {httpTestURL}});
+      plugin.isWAN = () => true;
+      plugin.getDNSNameservers = async () => ["1.1.1.1"];
+      plugin.getIPv4Addresses = async () => ["192.0.2.1/24"];
+      plugin.getIPv6Addresses = async () => [];
+      await plugin.checkHttpStatus().catch(() => {});
+      return stub.matching("dig ")[0] || null;
+    };
+
+    it('should keep a hostname that is not a dns name out of dig', async() => {
+      for (const url of ["http://-felection.example/", "http://x$(id).example/", "http://a&b.example/"]) {
+        const cmd = await digCommand(url);
+        log.debug(url, cmd);
+        expect(cmd, `no dig command built for ${url}`).to.not.be.null;
+        // the operand is dig's last argument. url.parse cuts a label at the first character it
+        // rejects and which characters those are moves with the node version - on node 12
+        // "x$(id).example" arrives as "x" - so what has to hold is that whatever reaches dig is a
+        // dns name, not which hostname it turned out to be
+        const operand = cmd.trim().split(/\s+/).pop();
+        expect(util.isValidDNSName(operand), `${url} reached dig as ${operand}`).to.be.true;
+      }
+    });
+
+    it('should honor a legitimate http test url', async() => {
+      const cmd = await digCommand("http://captive.example.com/generate_204");
+      log.debug("cmd", cmd);
+      expect(cmd).to.contain("captive.example.com");
     });
   });

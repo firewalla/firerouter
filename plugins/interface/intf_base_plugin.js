@@ -532,12 +532,19 @@ class InterfaceBasePlugin extends Plugin {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-      const pdSize = this.networkConfig.dhcp6.pdSize || null;
-      if (pdSize && pdSize > 64)
-        this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
+      // pdSize, numOfPDs and pdHints are all written into the dhcpcd.conf below, which is
+      // line-oriented, so a value carrying a control character would add a dhcpcd directive of its
+      // own. numOfPDs also bounds the loop that builds those lines, and "Infinity" is valid json
+      const pdSize = util.toBoundedInt(this.networkConfig.dhcp6.pdSize, 1, 64);
+      if (this.networkConfig.dhcp6.pdSize && !pdSize)
+        this.fatal(`Prefix delegation size should be an integer no more than 64 on ${this.name}, ${this.networkConfig.dhcp6.pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
-      const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
+      const numOfPDs = util.toBoundedInt(this.networkConfig.dhcp6.numOfPDs, 1, 16) || 1;
       const pdHints = this.networkConfig.dhcp6.pdHints || [];
+      // control characters only: pdHints has no producer in the repo, so the value shape is
+      // unverified and a stricter check (an Address6 parse) risks rejecting what the real caller sends
+      if (pdHints.some(hint => util.REGEX_CONTROL_CHARS.test(String(hint))))
+        this.fatal(`Prefix delegation hint contains a control character on ${this.name}`);
       const rapidCommitOpts = this.networkConfig.dhcp6.rapidCommit === false ? "#option rapid_commit" : "option rapid_commit";
       const ianaOpts = this.networkConfig.dhcp6.iana === false ? "" : "ia_na"; // by default ia_na will be specified unless explicitly disabled
       const pdOpts = [];
@@ -1742,8 +1749,10 @@ class InterfaceBasePlugin extends Plugin {
     const extraConf = this.networkConfig && this.networkConfig.extra;
     let testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     let u = url.parse(testURL);
-    // an override is caller supplied, fall back rather than reaching curl with an unchecked url
-    if (!u.hostname || (u.protocol !== "http:" && u.protocol !== "https:")) {
+    // an override is caller supplied, fall back rather than reaching curl with an unchecked url.
+    // the hostname is also a dig operand in getDNSResult below, and execFile keeps it out of a
+    // shell but does not stop dig reading a value like "-felection" as an option
+    if (!u.hostname || !util.isValidDNSName(u.hostname) || (u.protocol !== "http:" && u.protocol !== "https:")) {
       this.log.error(`invalid http test url on ${this.name}:`, testURL);
       testURL = defaultTestURL;
       u = url.parse(testURL);

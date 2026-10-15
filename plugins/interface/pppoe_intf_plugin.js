@@ -19,6 +19,7 @@ const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
 const { exec, execFile } = require('child-process-promise');
 const r = require('../../util/firerouter.js');
+const util = require('../../util/util.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 const pl = require('../plugin_loader.js');
@@ -76,6 +77,22 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     return addr;
   }
 
+  // A config value on its way into etc/ppp.conf.template, which pppd reads as an options file and
+  // scripts/firerouter_pppd@.service runs as root with no User= of its own. pppd reads options word
+  // by word, so both a control character and an unescaped quote end the value and let whatever
+  // follows be taken as another pppd option. Reject the former, escape the quote and the backslash.
+  //
+  // A value holding a bare quote is already broken today - pppd stops the word at it - so escaping
+  // cannot cost a working credential, whichever way pppd resolves a backslash inside quotes.
+  _quotedPPPDWord(value, name) {
+    const word = String(value);
+    if (util.REGEX_CONTROL_CHARS.test(word)) {
+      this.log.error(`${name} of pppoe ${this.name} contains a control character`);
+      return null;
+    }
+    return word.replace(/([\\'])/g, "\\$1");
+  }
+
   async createInterface() {
     // create config file instead
     if (!this.networkConfig || !this.networkConfig.username || !this.networkConfig.password) {
@@ -83,11 +100,13 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       return false;
     }
     let config = await fs.readFileAsync(pppoeTemplateFilePath, {encoding: "utf8"});
-    const username = this.networkConfig.username;
-    const password = this.networkConfig.password;
+    const username = this._quotedPPPDWord(this.networkConfig.username, "username");
+    const password = this._quotedPPPDWord(this.networkConfig.password, "password");
+    if (username === null || password === null)
+      return false;
     const intf = this.networkConfig.intf;
-    const mru = this.networkConfig.mru || 1492;
-    const mtu = this.networkConfig.mtu || 1492;
+    const mru = util.toBoundedInt(this.networkConfig.mru, 128, 16384) || 1492;
+    const mtu = util.toBoundedInt(this.networkConfig.mtu, 128, 16384) || 1492;
     const linkname = this.name;
     config = config.replace("#USERNAME#", username)
       .replace("#PASSWORD#", password)
@@ -97,8 +116,12 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
       .replace(/#LINKNAME#/g, linkname);
     if (this.networkConfig.dhcp6 || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
       config = `${config}\n+ipv6`;
-    if (this.networkConfig.serviceName)
-      config = `${config}\nrp_pppoe_service '${this.networkConfig.serviceName}'`;
+    if (this.networkConfig.serviceName) {
+      const serviceName = this._quotedPPPDWord(this.networkConfig.serviceName, "serviceName");
+      if (serviceName === null)
+        return false;
+      config = `${config}\nrp_pppoe_service '${serviceName}'`;
+    }
     const intfPlugin = pl.getPluginInstance("interface", intf);
     if (intfPlugin) {
       this.subscribeChangeFrom(intfPlugin);
