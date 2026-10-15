@@ -285,9 +285,26 @@ class Platform {
   }
 
   async getModuleSrcVersion(moduleOrPath) {
-    const stdout = await execFile("modinfo", [moduleOrPath]).then((result) => result.stdout.toString()).catch(() => "");
-    const match = stdout.match(/^srcversion:\s*(\S+)/m);
-    return match ? match[1] : "";
+    return this.getModuleInfoField(moduleOrPath, "srcversion");
+  }
+
+  // Reads a field from the .modinfo section ("key=value\0" entries) of a module file.
+  // Unlike modinfo, this also works on files not named *.ko, e.g. <name>.ko.aarch64-none-linux-gnu-gcc
+  async getModuleInfoField(moduleOrPath, field) {
+    const koPath = moduleOrPath.includes('/')
+      ? moduleOrPath
+      : await execFile("modinfo", ["-n", moduleOrPath]).then((result) => result.stdout.trim()).catch(() => "");
+    if (!koPath) return "";
+    const content = await fsp.readFile(koPath).catch(() => null);
+    if (!content) return "";
+    const key = Buffer.from(`${field}=`);
+    let start = content.indexOf(key);
+    // a real entry starts right after the NUL that ends the previous one
+    while (start > 0 && content[start - 1] !== 0)
+      start = content.indexOf(key, start + 1);
+    if (start < 0) return "";
+    const end = content.indexOf(0, start + key.length);
+    return content.toString('utf8', start + key.length, end < 0 ? content.length : end).trim();
   }
 
   async getKernelModulesPath() {
