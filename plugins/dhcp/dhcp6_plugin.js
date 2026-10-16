@@ -82,7 +82,7 @@ class DHCP6Plugin extends DHCPPlugin {
       case "stateful": {
         if (!from || !to)
           this.fatal(`from/to is not specified for dhcp6 of ${this.name}`);
-        if (prefixLen < 64)
+        if (!(prefixLen >= 64))
           this.fatal(`prefixLen for dhcp6 of ${this.name} should be at least 64`);
         content.push(`dhcp-range=tag:${iface},${extraTags}${from},${to},${prefixLen},${leaseTime}`);
         content.push('enable-ra');
