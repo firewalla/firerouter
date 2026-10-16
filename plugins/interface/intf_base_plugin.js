@@ -419,7 +419,8 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     }
     const prefixAddr6 = new Address6(parentPrefix);
-    const subIdAddr6 = new Address6(`0000:0000:0000:${subId}::/64`);
+    const subIdHex = Number(subId).toString(16);
+    const subIdAddr6 = new Address6(`0000:0000:0000:${subIdHex}::/64`);
     const subPrefix = Address6.fromBigInteger(prefixAddr6.bigInteger().add(subIdAddr6.bigInteger()));
     return `${subPrefix.correctForm()}/64`;
   }
