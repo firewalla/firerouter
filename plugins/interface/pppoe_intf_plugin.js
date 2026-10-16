@@ -102,24 +102,34 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     let config = await fs.readFileAsync(pppoeTemplateFilePath, {encoding: "utf8"});
     const username = this._quotedPPPDWord(this.networkConfig.username, "username");
     const password = this._quotedPPPDWord(this.networkConfig.password, "password");
+    // throw rather than return false: apply() only warns on a false return, so a rejection there
+    // reads as a successful apply to the loader while flush() has already taken the link down
     if (username === null || password === null)
-      return false;
+      this.fatal(`username or password of pppoe ${this.name} cannot be written to the options file`);
     const intf = this.networkConfig.intf;
-    const mru = util.toBoundedInt(this.networkConfig.mru, 128, 16384) || 1492;
+    // the bound is only there to keep a non-integer out of the options file, so it has to admit
+    // everything a client can already have saved: the app accepts an mru of 68 to 65535 and an mtu
+    // of 1280 to 9000 (NSNumber+VlanValidation.m), and pppd's rp-pppoe plugin clamps an mru above
+    // the link limit rather than refusing it. A tighter ceiling here would silently rewrite a
+    // working persisted value instead of honouring it
+    const mru = util.toBoundedInt(this.networkConfig.mru, 68, 65535) || 1492;
     const mtu = util.toBoundedInt(this.networkConfig.mtu, 128, 16384) || 1492;
     const linkname = this.name;
-    config = config.replace("#USERNAME#", username)
-      .replace("#PASSWORD#", password)
-      .replace("#INTF#", intf)
-      .replace("#MRU#", mru)
-      .replace("#MTU#", mtu)
-      .replace(/#LINKNAME#/g, linkname);
+    // function replacements, so each value is inserted literally. a string replacement would read
+    // $& $` $' in it as substitution patterns and splice parts of this template back in, newlines
+    // and all, which puts a line break into the options file that _quotedPPPDWord never sees
+    config = config.replace("#USERNAME#", () => username)
+      .replace("#PASSWORD#", () => password)
+      .replace("#INTF#", () => intf)
+      .replace("#MRU#", () => mru)
+      .replace("#MTU#", () => mtu)
+      .replace(/#LINKNAME#/g, () => linkname);
     if (this.networkConfig.dhcp6 || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
       config = `${config}\n+ipv6`;
     if (this.networkConfig.serviceName) {
       const serviceName = this._quotedPPPDWord(this.networkConfig.serviceName, "serviceName");
       if (serviceName === null)
-        return false;
+        this.fatal(`serviceName of pppoe ${this.name} cannot be written to the options file`);
       config = `${config}\nrp_pppoe_service '${serviceName}'`;
     }
     const intfPlugin = pl.getPluginInstance("interface", intf);

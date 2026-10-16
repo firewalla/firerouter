@@ -32,42 +32,34 @@ if [[ ! -d "$TEST_MODULES" ]]; then
 fi
 
 # The node the FireRouter unit runs, so the tests run on the same one and pick the same mocha major.
-# bin/node decides this, but it execs node and bumps a redis restart counter, so it cannot be asked
-# for the path; keep the two in step. Unlike firewalla there is no per-platform get_node_bin_path -
-# one wrapper serves every model.
-if [[ -e /home/pi/.nvm/versions/node/v8.7.0/bin/node ]]; then
-  NODE_BIN=/home/pi/.nvm/versions/node/v8.7.0/bin/node
-elif [[ -d ~/.nvm ]]; then
-  . ~/.nvm/nvm.sh &> /dev/null
-  NODE_BIN=$(nvm which current)
-else
-  NODE_BIN=$(which node)
-fi
-NODE_UPGRADE_VERSION=v24.21.0   # must match NODE_UPGRADE_VERSION in bin/node
-NODE_VERSIONS_DIR=${NODE_VERSIONS_DIR:-/home/pi/.node_versions}
-NODE_UPGRADE_BIN=$NODE_VERSIONS_DIR/$NODE_UPGRADE_VERSION/bin/node
-NODE_LATCH=${FIREROUTER_HIDDEN:-/home/pi/.router}/config/.node_legacy
-latch=$(head -n1 "$NODE_LATCH" 2>/dev/null)
-if [[ -x $NODE_UPGRADE_BIN ]] && ! [[ -e $NODE_LATCH && ( -z $latch || $latch == $NODE_UPGRADE_VERSION ) ]]; then
-  NODE_BIN=$NODE_UPGRADE_BIN
-fi
+# Ask bin/node which one that is rather than keeping a second copy of its choice here: bin/node is
+# the only thing that decides, and what it decides moves (nvm's current version, the upgrade under
+# .node_versions, the config/.node_legacy latch). It bumps a redis counter on every call, and that
+# counter tallies FireRouter restarts, so shadow redis-cli for this one question.
+shim=$(mktemp -d) || exit 1
+printf '#!/bin/sh\nexit 0\n' > "$shim/redis-cli" && chmod +x "$shim/redis-cli" || exit 1
+# bin/node sources nvm.sh without silencing it, so take the last line only
+NODE_BIN=$(PATH="$shim:$PATH" "$FIREROUTER_HOME/bin/node" -p process.execPath 2>/dev/null | tail -n1)
+rm -rf "$shim"
 if [[ -z $NODE_BIN || ! -x $NODE_BIN ]]; then
-  echo "no usable node found" >&2
+  echo "bin/node did not report a usable node" >&2
   exit 1
 fi
 
 NODE_BIN_DIR=$(dirname "$NODE_BIN")
 NPM_BIN_DIR=$NODE_BIN_DIR
-# the upgraded Node is installed as bin/node only (firewalla's scripts/install_node.sh, shared with
-# this repo); its npm, npx and corepack are unpacked from the same assets tarball next to the test
-# tree, leaving that install untouched
-if [[ $NODE_BIN == $NODE_VERSIONS_DIR/* ]]; then
-  NPM_DIR=$(dirname "$TEST_MODULES")/node-$NODE_UPGRADE_VERSION
+# npm sits beside an nvm-installed node, but the upgraded one is installed as bin/node alone
+# (firewalla's scripts/install_node.sh, shared with this repo). Testing for npm rather than for the
+# install path keeps this free of the selection policy too. Its npm, npx and corepack come from the
+# same assets tarball, unpacked next to the test tree so that install stays untouched
+if [[ ! -x "$NODE_BIN_DIR/npm" ]]; then
+  NODE_VERSION=$("$NODE_BIN" -v)
+  NPM_DIR=$(dirname "$TEST_MODULES")/node-$NODE_VERSION
   NPM_BIN_DIR=$NPM_DIR/bin
   if [[ ! -x "$NPM_BIN_DIR/npm" ]]; then
-    tarball=$(ls "${FIREWALLA_HIDDEN:-$HOME/.firewalla}"/run/assets/node-$NODE_UPGRADE_VERSION-linux-*.tar.xz 2>/dev/null | head -n1)
+    tarball=$(ls "${FIREWALLA_HIDDEN:-$HOME/.firewalla}"/run/assets/node-$NODE_VERSION-linux-*.tar.xz 2>/dev/null | head -n1)
     if [[ -z $tarball ]]; then
-      echo "assets tarball of node $NODE_UPGRADE_VERSION not found, cannot install npm" >&2
+      echo "assets tarball of node $NODE_VERSION not found, cannot install npm" >&2
       exit 1
     fi
     top=$(basename "$tarball" .tar.xz)

@@ -556,7 +556,11 @@ class InterfaceBasePlugin extends Plugin {
       }
       content = content.replace(/%RAPID_COMMIT_OPTS%/g, rapidCommitOpts);
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
-      content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
+      // a function replacement, so the pdHint inside pdOpts is inserted literally. a string
+      // replacement would read $& $` $' in it as substitution patterns and splice parts of this
+      // template back in, newlines and all, which is how a hint with no control character in it
+      // still reaches dhcpcd as a directive of its own
+      content = content.replace(/%IA_PD_OPTS%/g, () => pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
       // customize duid type
       if (this.networkConfig.dhcp6.duidType) {
@@ -1747,15 +1751,23 @@ class InterfaceBasePlugin extends Plugin {
     // hostname came from the default while the url came from the override, curl would ignore
     // --resolve and do an ordinary lookup instead of the wan specific one
     const extraConf = this.networkConfig && this.networkConfig.extra;
+    // the hostname is a dig operand in getDNSResult below, and execFile keeps it out of a shell but
+    // does not stop dig reading a value like "-felection" as an option. both candidates are caller
+    // supplied - the connectivity API passes its httpSites through as defaultTestURL - so the
+    // fallback has to clear the same bar as the override, and there is nothing left to test if it
+    // does not
+    const usableURL = (parsed) => parsed && parsed.hostname && util.isValidDNSName(parsed.hostname)
+      && (parsed.protocol === "http:" || parsed.protocol === "https:");
     let testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     let u = url.parse(testURL);
-    // an override is caller supplied, fall back rather than reaching curl with an unchecked url.
-    // the hostname is also a dig operand in getDNSResult below, and execFile keeps it out of a
-    // shell but does not stop dig reading a value like "-felection" as an option
-    if (!u.hostname || !util.isValidDNSName(u.hostname) || (u.protocol !== "http:" && u.protocol !== "https:")) {
+    if (!usableURL(u)) {
       this.log.error(`invalid http test url on ${this.name}:`, testURL);
       testURL = defaultTestURL;
       u = url.parse(testURL);
+      if (!usableURL(u)) {
+        this.log.error(`invalid default http test url on ${this.name}:`, testURL);
+        return null;
+      }
     }
     const hostname = u.hostname;
     const protocol = u.protocol;

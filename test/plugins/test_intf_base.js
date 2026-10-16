@@ -471,6 +471,19 @@ describe('Test interface base dhcp6', function(){
       expect(content, 'no dhcpcd.conf should be written').to.be.null;
     });
 
+    it('should not let a pd hint splice the template into the config', async() => {
+      // $& $` $' are String.replace substitution patterns, not control characters, so they pass
+      // every check that looks for a control character and reach the template sink intact
+      for (const hint of ["::/56 $'script /tmp/pwn$'#", "::/56 $`script /tmp/pwn$`#", "::/56 $&script /tmp/pwn"]) {
+        const {content} = await generate({numOfPDs: 1, pdHints: [hint]});
+        expect(content, `no dhcpcd.conf written for ${hint}`).to.not.be.null;
+        log.debug(hint, content);
+        const directives = content.split("\n").filter(l => /^\s*(script|hook|env|interface|nohook)\b/.test(l));
+        expect(directives, `${hint} added a dhcpcd directive`).to.deep.equal([]);
+        expect(content, `${hint} was not inserted literally`).to.contain(`ia_pd 1/${hint} not_exist/1`);
+      }
+    });
+
     it('should still generate the requested prefix delegations', async() => {
       const withSize = await generate({numOfPDs: 3, pdSize: 56});
       expect(withSize.pdOpts).to.deep.equal([

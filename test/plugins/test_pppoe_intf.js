@@ -77,6 +77,20 @@ describe('Test pppoe interface plugin', function(){
     expect(injected(content), 'mtu added a pppd option').to.deep.equal([]);
   });
 
+  it('should keep an mru or mtu a client can already have saved', async() => {
+    // the iOS app accepts an mru of 68 to 65535 and an mtu of 1280 to 9000
+    // (NSNumber+VlanValidation.m), so a persisted value anywhere in those ranges has to reach the
+    // options file unchanged rather than fall back to the default
+    for (const mru of [68, 1492, 9000, 65535]) {
+      const {content} = await generate({enabled: true, intf: "eth0", username: "u", password: "p", mru});
+      expect(content, `mru ${mru} was not preserved`).to.contain(`mru ${mru}\n`);
+    }
+    for (const mtu of [1280, 1500, 9000]) {
+      const {content} = await generate({enabled: true, intf: "eth0", username: "u", password: "p", mtu});
+      expect(content, `mtu ${mtu} was not preserved`).to.contain(`mtu ${mtu}\n`);
+    }
+  });
+
   it('should refuse a credential or service name holding a line break', async() => {
     for (const field of ["username", "password", "serviceName"]) {
       const config = {enabled: true, intf: "eth0", username: "u", password: "p"};
@@ -96,6 +110,27 @@ describe('Test pppoe interface plugin', function(){
       log.debug(field, injected(content));
       expect(injected(content), `${field} added a pppd option`).to.deep.equal([]);
       expect(content, `${field} quote was not escaped`).to.contain("value\\'");
+    }
+  });
+
+  it('should not let a credential splice the template into the config', async() => {
+    // $& $` $' are String.replace substitution patterns, not control characters, so they pass
+    // _quotedPPPDWord and would otherwise paste this template back into the value, newlines and all
+    const base = await generate({enabled: true, intf: "eth0", username: "u", password: "p"});
+    const baseLines = base.content.split("\n").length;
+    for (const field of ["username", "password", "serviceName"]) {
+      for (const payload of ["v$` plugin /tmp/pwn.so #", "v$' plugin /tmp/pwn.so #", "v$& plugin /tmp/pwn.so #"]) {
+        const config = {enabled: true, intf: "eth0", username: "u", password: "p"};
+        config[field] = payload;
+        const {created, content} = await generate(config);
+        expect(created, `${field} ${payload} should still produce a config`).to.be.true;
+        log.debug(field, payload, content);
+        expect(injected(content), `${field} ${payload} added a pppd option`).to.deep.equal([]);
+        // the value stays one word on its own line: serviceName appends a line of its own, and
+        // nothing else may change the line count, which a spliced-in copy of the template would
+        expect(content.split("\n").length, `${field} ${payload} added lines to the options file`)
+          .to.equal(baseLines + (field === "serviceName" ? 1 : 0));
+      }
     }
   });
 
