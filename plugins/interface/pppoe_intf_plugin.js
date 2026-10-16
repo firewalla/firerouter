@@ -89,12 +89,15 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     const mru = this.networkConfig.mru || 1492;
     const mtu = this.networkConfig.mtu || 1492;
     const linkname = this.name;
-    config = config.replace("#USERNAME#", username)
-      .replace("#PASSWORD#", password)
-      .replace("#INTF#", intf)
-      .replace("#MRU#", mru)
-      .replace("#MTU#", mtu)
-      .replace(/#LINKNAME#/g, linkname);
+    const placeholderValues = {
+      USERNAME: username,
+      PASSWORD: password,
+      INTF: intf,
+      MRU: mru,
+      MTU: mtu,
+      LINKNAME: linkname
+    };
+    config = config.replace(/#(USERNAME|PASSWORD|INTF|MRU|MTU|LINKNAME)#/g, (match, key) => String(placeholderValues[key]));
     if (this.networkConfig.dhcp6 || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
       config = `${config}\n+ipv6`;
     if (this.networkConfig.serviceName)
