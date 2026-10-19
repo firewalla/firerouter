@@ -20,6 +20,8 @@ append_iptables() { printf '%s\n' "$@" >> "$IPTABLES_RESTORE_FILE"; }
 append_ip6tables() { printf '%s\n' "$@" >> "$IP6TABLES_RESTORE_FILE"; }
 append_ipset() { printf '%s\n' "$@" >> "$IPSET_RESTORE_FILE"; }
 
+MSS_CLAMP="-p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+
 # save FR_SNAT to FR_SNAT_TMP temporarily to avoid no snat during firerouter setup
 sudo iptables -w -t nat -F FR_SNAT_TMP &> /dev/null
 sudo iptables -w -t nat -C POSTROUTING -j FR_SNAT_TMP &>/dev/null && sudo iptables -w -t nat -D POSTROUTING -j FR_SNAT_TMP &>/dev/null
@@ -74,7 +76,7 @@ append_iptables "-A FR_INPUT -j FR_ICMP"
 append_iptables "-A FR_INPUT -j FR_SSH"
 append_iptables "-A FR_INPUT -j FR_WIREGUARD"
 append_iptables "-A FR_INPUT -j FR_AMNEZIA_WG"
-append_iptables "-A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+append_iptables "-A FR_FORWARD $MSS_CLAMP"
 append_iptables "-A FR_FORWARD -j FR_PASSTHROUGH"
 append_iptables "-A FR_FORWARD -j FR_IGMP"
 append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob src -j DROP"
@@ -137,7 +139,7 @@ append_ip6tables "-A FR_INPUT -p icmpv6 --icmpv6-type router-advertisement -j AC
 append_ip6tables "-A FR_INPUT -j FR_ICMP"
 append_ip6tables "-A FR_INPUT -j FR_WIREGUARD"
 append_ip6tables "-A FR_INPUT -j FR_AMNEZIA_WG"
-append_ip6tables "-A FR_FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+append_ip6tables "-A FR_FORWARD $MSS_CLAMP"
 append_ip6tables "-A FR_FORWARD -j FR_PASSTHROUGH"
 append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 src -j DROP"
 append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 dst -j DROP"
