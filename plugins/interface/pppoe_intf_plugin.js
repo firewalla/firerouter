@@ -115,15 +115,20 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     const mru = util.toBoundedInt(this.networkConfig.mru, 68, 65535) || 1492;
     const mtu = util.toBoundedInt(this.networkConfig.mtu, 128, 16384) || 1492;
     const linkname = this.name;
-    // function replacements, so each value is inserted literally. a string replacement would read
+    const placeholderValues = {
+      USERNAME: username,
+      PASSWORD: password,
+      INTF: intf,
+      MRU: mru,
+      MTU: mtu,
+      LINKNAME: linkname
+    };
+    // a function replacement, so each value is inserted literally: a string replacement would read
     // $& $` $' in it as substitution patterns and splice parts of this template back in, newlines
-    // and all, which puts a line break into the options file that _quotedPPPDWord never sees
-    config = config.replace("#USERNAME#", () => username)
-      .replace("#PASSWORD#", () => password)
-      .replace("#INTF#", () => intf)
-      .replace("#MRU#", () => mru)
-      .replace("#MTU#", () => mtu)
-      .replace(/#LINKNAME#/g, () => linkname);
+    // and all, putting a line break into the options file that _quotedPPPDWord never sees. One pass
+    // over all the placeholders also keeps a value that itself reads like a placeholder from being
+    // substituted again by a later round
+    config = config.replace(/#(USERNAME|PASSWORD|INTF|MRU|MTU|LINKNAME)#/g, (match, key) => String(placeholderValues[key]));
     if (this.networkConfig.dhcp6 || (this.networkConfig.ipv6 && this.networkConfig.ipv6.length > 0))
       config = `${config}\n+ipv6`;
     if (this.networkConfig.serviceName) {
