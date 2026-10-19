@@ -155,7 +155,8 @@ class NetworkConfigManager {
           });
           const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
           const state = await isWPAComplate();
-          if (_.get(currentNetwork, 'ssid') === ssid && state === true) {
+          const isCurrentSsid = currentNetwork && (currentNetwork.ssid === ssid || currentNetwork.ssidHex === ssidHex);
+          if (isCurrentSsid && state === true) {
             log.info(`WPA state is already complete on current SSID ${ssid}, no need to switch`);
             done(null, []);
             return;
