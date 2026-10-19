@@ -77,13 +77,22 @@ class PPPoEInterfacePlugin extends InterfaceBasePlugin {
     return addr;
   }
 
-  // A config value on its way into etc/ppp.conf.template, which pppd reads as an options file and
-  // scripts/firerouter_pppd@.service runs as root with no User= of its own. pppd reads options word
-  // by word, so both a control character and an unescaped quote end the value and let whatever
-  // follows be taken as another pppd option. Reject the former, escape the quote and the backslash.
+  // Encodes a config value as one pppd word for etc/ppp.conf.template, where it is written inside
+  // single quotes. pppd parses that file word by word and scripts/firerouter_pppd@.service gives it
+  // no User= of its own, so a value that escapes its quoting becomes a further pppd option read as
+  // root.
   //
-  // A value holding a bare quote is already broken today - pppd stops the word at it - so escaping
-  // cannot cost a working credential, whichever way pppd resolves a backslash inside quotes.
+  // pppd's getword() applies the backslash inside quotes exactly as outside: the escape test is not
+  // gated on the quote state, so `\\` yields one backslash, `\'` yields a quote that does not close
+  // the word, and `\n` `\t` `\b` `\ddd` `\xNN` yield the bytes they name. Escaping the backslash and
+  // the quote is the exact inverse of that reader, and is what makes the value arrive as typed: a
+  // value ending in a backslash would otherwise consume the closing quote and swallow the rest of
+  // the file, and one containing `\b` or `\xNN` would arrive as that byte instead.
+  //
+  // A control character would in fact survive this encoding - inside a quote pppd stores a raw
+  // newline or tab like any other byte - so refusing one is the config policy the rest of the tree
+  // applies (util.REGEX_CONTROL_CHARS, the same class validateConfig sweeps with), not a limit of
+  // the encoding. It also keeps the unquoted slots in the same template honest.
   _quotedPPPDWord(value, name) {
     const word = String(value);
     if (util.REGEX_CONTROL_CHARS.test(word)) {

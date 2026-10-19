@@ -134,6 +134,32 @@ describe('Test pppoe interface plugin', function(){
     }
   });
 
+  // The written form on the left of each pair is what pppd's getword() decodes back to the
+  // configured value. Confirmed against the real parser on a box with
+  //   sudo pppd dryrun /dev/null file <conf>
+  // which prints the options it parsed and exits without dialling; see test/CLAUDE.md.
+  it('should encode a credential so pppd reads back what was configured', async() => {
+    const cases = [
+      ["p@ss w0rd!", "p@ss w0rd!"],      // nothing pppd treats as syntax
+      ["a\\b", "a\\\\b"],                // unescaped, \b is a backspace
+      ["a\\\\b", "a\\\\\\\\b"],          // each backslash stands for itself
+      ["trailing\\", "trailing\\\\"],    // unescaped, this eats the closing quote
+      ["has'quote", "has\\'quote"],      // \' is a quote that does not close the word
+      ["\\x41hex", "\\\\x41hex"],        // unescaped, this arrives as "Ahex"
+      ["\\101octal", "\\\\101octal"]
+    ];
+    for (const [configured, written] of cases) {
+      const {created, content} = await generate({enabled: true, intf: "eth0", username: configured, password: "p"});
+      expect(created, `${JSON.stringify(configured)} should produce a config`).to.be.true;
+      log.debug(JSON.stringify(configured), "->", JSON.stringify(written));
+      // the whole line, not a substring of it: anything appended after the closing quote would still
+      // satisfy a contains(), and injected() only sees an option that starts a line of its own
+      expect(content.split("\n"), `${JSON.stringify(configured)} was not encoded as ${JSON.stringify(written)}`)
+        .to.include(`user '${written}'`);
+      expect(injected(content), `${JSON.stringify(configured)} added a pppd option`).to.deep.equal([]);
+    }
+  });
+
   it('should generate an ordinary pppoe config', async() => {
     const {created, content} = await generate({
       enabled: true, intf: "eth0", username: "user@isp.example", password: "p@ss w0rd!",

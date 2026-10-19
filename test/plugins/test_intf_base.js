@@ -449,11 +449,30 @@ describe('Test interface base dhcp6', function(){
       await fs.unlinkAsync(confPath).catch(() => {});
     });
 
-    it('should not let numOfPDs run the generation loop unbounded', async() => {
-      for (const numOfPDs of ["Infinity", 1e9, "1e9", -1, 2.5]) {
+    it('should fall back to a single ia_pd when numOfPDs is absent or unparseable', async() => {
+      for (const numOfPDs of ["Infinity", -1, 2.5, "not-a-number"]) {
         const {pdOpts} = await generate({numOfPDs});
-        log.debug(`numOfPDs ${numOfPDs}`, pdOpts);
-        expect(pdOpts.length, `numOfPDs ${numOfPDs} should fall back to a single ia_pd`).to.be.equal(1);
+        log.debug(`numOfPDs ${JSON.stringify(numOfPDs)}`, pdOpts);
+        expect(pdOpts.length, `numOfPDs ${JSON.stringify(numOfPDs)} should fall back to a single ia_pd`).to.be.equal(1);
+      }
+    });
+
+    it('should honour a prefix count a saved config can already carry', async() => {
+      // the app caps at 8 and nothing else bounds this, so a larger saved count has to reach
+      // dhcpcd as configured rather than be quietly reduced to one
+      for (const numOfPDs of [8, 20, "20", 4096]) {
+        const {threw, pdOpts} = await generate({numOfPDs});
+        expect(threw, `numOfPDs ${JSON.stringify(numOfPDs)} should be accepted`).to.be.false;
+        expect(pdOpts.length, `numOfPDs ${JSON.stringify(numOfPDs)} was not honoured`).to.be.equal(Number(numOfPDs));
+      }
+    });
+
+    it('should refuse a prefix count past the generation ceiling', async() => {
+      for (const numOfPDs of [4097, "4097", 1e9, "1e9"]) {
+        const {threw, content} = await generate({numOfPDs});
+        log.debug(`numOfPDs ${JSON.stringify(numOfPDs)} threw=${threw}`);
+        expect(threw, `numOfPDs ${JSON.stringify(numOfPDs)} should be rejected`).to.be.true;
+        expect(content, `no dhcpcd.conf should be written for numOfPDs ${JSON.stringify(numOfPDs)}`).to.be.null;
       }
     });
 

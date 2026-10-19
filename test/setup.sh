@@ -18,7 +18,10 @@ if (return 0 2>/dev/null); then
   return 0
 fi
 
-FIREROUTER_HOME=${FIREROUTER_HOME:-$HOME/firerouter}
+# default to the checkout this script lives in, not to a fixed path: with a second clone around,
+# a fixed default prepares that one and leaves the checkout you ran from unusable. BASH_SOURCE
+# rather than $0 because this file is also sourced, and the override still wins when set
+FIREROUTER_HOME=${FIREROUTER_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 TEST_MODULES=/data/.node_modules.fr.test/node_modules
 
 # written only after npm install succeeds: a failed install still leaves most packages unpacked,

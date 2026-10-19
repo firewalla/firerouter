@@ -539,7 +539,15 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.dhcp6.pdSize && !pdSize)
         this.fatal(`Prefix delegation size should be an integer no more than 64 on ${this.name}, ${this.networkConfig.dhcp6.pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
-      const numOfPDs = util.toBoundedInt(this.networkConfig.dhcp6.numOfPDs, 1, 16) || 1;
+      // numOfPDs bounds the generation loop below, so it needs a ceiling - but one that still admits
+      // every count a saved config can carry. The app caps at 8 and nothing else bounds it, so the
+      // limit here is dhcpcd's: it builds one message holding every IA and each needs at least 16
+      // bytes, so a count past a few thousand cannot fit an ordinary UDP datagram however it is
+      // framed. Refuse beyond that instead of quietly asking for one prefix in place of the saved
+      // number - an absent or unparseable value is the only case that falls back
+      const numOfPDs = util.toBoundedInt(this.networkConfig.dhcp6.numOfPDs, 1, Number.MAX_VALUE) || 1;
+      if (numOfPDs > 4096)
+        this.fatal(`Prefix delegation count should be no more than 4096 on ${this.name}, ${this.networkConfig.dhcp6.numOfPDs}`);
       const pdHints = this.networkConfig.dhcp6.pdHints || [];
       // control characters only: pdHints has no producer in the repo, so the value shape is
       // unverified and a stricter check (an Address6 parse) risks rejecting what the real caller sends
