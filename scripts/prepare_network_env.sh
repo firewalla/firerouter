@@ -65,6 +65,7 @@ append_iptables ":FR_SSH - [0:0]"
 append_iptables ":FR_WIREGUARD - [0:0]"
 append_iptables ":FR_AMNEZIA_WG - [0:0]"
 append_iptables ":FR_FORWARD - [0:0]"
+append_iptables ":FR_OUTPUT - [0:0]"
 append_iptables ":FR_PASSTHROUGH - [0:0]"
 append_iptables ":FR_OSI_INSPECTION - [0:0]"
 append_iptables ":FR_OSI_RULES - [0:0]"
@@ -77,6 +78,8 @@ append_iptables "-A FR_INPUT -j FR_SSH"
 append_iptables "-A FR_INPUT -j FR_WIREGUARD"
 append_iptables "-A FR_INPUT -j FR_AMNEZIA_WG"
 append_iptables "-A FR_FORWARD $MSS_CLAMP"
+# box-originated SYNs: clamp after mangle OUTPUT may have re-routed them to a smaller-MTU WAN
+append_iptables "-A FR_OUTPUT $MSS_CLAMP"
 append_iptables "-A FR_FORWARD -j FR_PASSTHROUGH"
 append_iptables "-A FR_FORWARD -j FR_IGMP"
 append_iptables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob src -j DROP"
@@ -127,6 +130,7 @@ append_ip6tables ":FR_ICMP - [0:0]"
 append_ip6tables ":FR_WIREGUARD - [0:0]"
 append_ip6tables ":FR_AMNEZIA_WG - [0:0]"
 append_ip6tables ":FR_FORWARD - [0:0]"
+append_ip6tables ":FR_OUTPUT - [0:0]"
 append_ip6tables ":FR_PASSTHROUGH - [0:0]"
 append_ip6tables ":FR_OSI_INSPECTION - [0:0]"
 append_ip6tables ":FR_OSI_RULES - [0:0]"
@@ -140,6 +144,8 @@ append_ip6tables "-A FR_INPUT -j FR_ICMP"
 append_ip6tables "-A FR_INPUT -j FR_WIREGUARD"
 append_ip6tables "-A FR_INPUT -j FR_AMNEZIA_WG"
 append_ip6tables "-A FR_FORWARD $MSS_CLAMP"
+# box-originated SYNs: clamp after mangle OUTPUT may have re-routed them to a smaller-MTU WAN
+append_ip6tables "-A FR_OUTPUT $MSS_CLAMP"
 append_ip6tables "-A FR_FORWARD -j FR_PASSTHROUGH"
 append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 src -j DROP"
 append_ip6tables "-A FR_OSI_INSPECTION -m set --match-set osi_match_all_knob6 dst -j DROP"
@@ -208,6 +214,7 @@ sudo iptables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip
 sudo iptables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo iptables -w -t mangle -A OUTPUT -j FR_OUTPUT
 sudo iptables -w -C INPUT -j FR_INPUT &> /dev/null || sudo iptables -w -I INPUT -j FR_INPUT
 sudo iptables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo iptables -w -I FORWARD -j FR_FORWARD
+sudo iptables -w -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo iptables -w -I OUTPUT -j FR_OUTPUT
 
 sudo ip6tables -w -t nat -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo ip6tables -w -t nat -I PREROUTING -j FR_PREROUTING
 sudo ip6tables -w -t nat -C POSTROUTING -j FR_POSTROUTING &>/dev/null || sudo ip6tables -w -t nat -I POSTROUTING -j FR_POSTROUTING
@@ -215,6 +222,7 @@ sudo ip6tables -w -t mangle -C PREROUTING -j FR_PREROUTING &>/dev/null || sudo i
 sudo ip6tables -w -t mangle -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo ip6tables -w -t mangle -A OUTPUT -j FR_OUTPUT
 sudo ip6tables -w -C INPUT -j FR_INPUT &> /dev/null || sudo ip6tables -w -I INPUT -j FR_INPUT
 sudo ip6tables -w -C FORWARD -j FR_FORWARD &>/dev/null || sudo ip6tables -w -I FORWARD -j FR_FORWARD
+sudo ip6tables -w -C OUTPUT -j FR_OUTPUT &>/dev/null || sudo ip6tables -w -I OUTPUT -j FR_OUTPUT
 
 OSI_TIMEOUT=$(redis-cli get osi:admin:timeout)
 if [[ -z "$OSI_TIMEOUT" ]]; then
