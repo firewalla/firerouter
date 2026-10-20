@@ -109,6 +109,10 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
             this.log.error(`Failed to enable STP on ${this.name}`, err.message);
           });
         }
+        // priority 0 is the only one no other bridge can beat on priority alone, so the box stays root
+        await mstpctl("settreeprio", this.name, "0", "0").catch((err) => {
+          this.log.warn(`Failed to set STP priority on ${this.name}`, err.message);
+        });
         if (!this._stateSync)
           this._stateSync = new BridgePortStateSync(this.name, this.log);
         await this._stateSync.startMonitor(this.networkConfig.intf);

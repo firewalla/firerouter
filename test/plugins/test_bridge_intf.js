@@ -92,5 +92,45 @@ describe('Test bridge interface plugin', function(){
         expect(stub.matching("brctl stp br0")).to.be.deep.equal(["sudo brctl stp br0 off", "sudo brctl stp br0 on"]);
       });
     });
+
+    describe('priority', function(){
+      const setter = "mstpctl settreeprio br0 0 0";
+
+      it('should set priority 0 after stp is turned on', async()=> {
+        await build({}, "1").createInterface();
+        const on = stub.calls.indexOf("sudo brctl stp br0 on");
+        const prio = stub.calls.findIndex(c => c.endsWith(setter));
+        expect(on).to.be.at.least(0);
+        expect(prio).to.be.above(on);
+      });
+
+      it('should set priority 0 when the toggle is skipped', async()=> {
+        stub.outputFor("showbridge br0 enabled", "yes\n");
+        await build({}, "2").createInterface();
+        expect(stub.matching(setter).length).to.be.equal(1);
+      });
+
+      it('should not set priority when stp is disabled', async()=> {
+        await build({stp: false}).createInterface();
+        expect(stub.matching("settreeprio")).to.be.deep.equal([]);
+      });
+
+      it('should not set priority on a single member bridge', async()=> {
+        await build({intf: ["eth1"]}).createInterface();
+        expect(stub.matching("settreeprio")).to.be.deep.equal([]);
+      });
+
+      it('should not set priority on a vlan bridge', async()=> {
+        await build({intf: ["eth1.10", "eth2.10"]}).createInterface();
+        expect(stub.matching("settreeprio")).to.be.deep.equal([]);
+      });
+
+      it('should still apply when the setter fails', async()=> {
+        stub.failOn("settreeprio");
+        expect(await build({}, "1").createInterface()).to.be.equal(true);
+        expect(stub.matching("settreeprio").length).to.be.equal(1);
+        expect(stub.matching("ip link set dev br0 up").length).to.be.equal(1);
+      });
+    });
   });
 });
