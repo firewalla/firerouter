@@ -97,14 +97,18 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         this.log.warn(`Failed to start mstpd service`, err.message);
       });
       if (this.networkConfig.stp !== false) {
-        // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
-        // instead of transitioning to stp_state=2 (BR_USER_STP).
-        await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
-        // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
-        // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
-        await execFile("sudo", ["brctl", "stp", this.name, "on"]).catch((err) => {
-          this.log.error(`Failed to enable STP on ${this.name}`, err.message);
-        });
+        // toggling on a running bridge makes mstpd recreate it with its ports present, which resets the
+        // tree state and sends BPDUs at the default priority
+        if (!await this.isStpRunning()) {
+          // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
+          // instead of transitioning to stp_state=2 (BR_USER_STP).
+          await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
+          // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
+          // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
+          await execFile("sudo", ["brctl", "stp", this.name, "on"]).catch((err) => {
+            this.log.error(`Failed to enable STP on ${this.name}`, err.message);
+          });
+        }
         if (!this._stateSync)
           this._stateSync = new BridgePortStateSync(this.name, this.log);
         await this._stateSync.startMonitor(this.networkConfig.intf);
@@ -154,6 +158,14 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     }
 
     return true;
+  }
+
+  // true only if the kernel hands the bridge to mstpd (stp_state=2) and mstpd has it enabled; any failed read is false
+  async isStpRunning() {
+    if (await this._getSysFSClassNetValueOf(this.name, "bridge/stp_state") !== "2")
+      return false;
+    const result = await mstpctl("showbridge", this.name, "enabled").catch(() => null);
+    return result !== null && result.stdout.trim() === "yes";
   }
 
   getDefaultMTU() {
