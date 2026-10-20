@@ -26,6 +26,8 @@ const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const SEED_INTF = 'eth0';
 
+const mstpctl = (...args) => execFile("sudo", [`${platform.getBinaryPath()}/mstpctl`, ...args]);
+
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
   isFlushNeeded(newConfig) {
@@ -213,8 +215,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
     if (this.networkConfig.intf.length <= 1 || isVlanBridge || this.networkConfig.stp === false)
       return null;
-    const mstpctl = `${platform.getBinaryPath()}/mstpctl`;
-    const result = await execFile("sudo", [mstpctl, "showportdetail", this.name]).catch((err) => {
+    const result = await mstpctl("showportdetail", this.name).catch((err) => {
       this.log.warn(`Failed to get mstp port status on ${this.name}`, err.message);
       return null;
     });
