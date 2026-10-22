@@ -13,7 +13,7 @@ fi
 # Upgraded Node, installed by firewalla (scripts/install_node.sh from its assets) and shared with it.
 # Falls back to the choice above when not installed, or when config/.node_legacy is empty or holds
 # this version (written by hand for now, the crash guard below is disabled)
-NODE_UPGRADE_VERSION=v24.21.0   # must match NODE_UPGRADE_VERSION in firewalla platform/platform.sh
+NODE_UPGRADE_VERSION=v24.22.1   # must match NODE_UPGRADE_VERSION in firewalla platform/platform.sh
 NODE_VERSIONS_DIR=${NODE_VERSIONS_DIR:-/home/pi/.node_versions}
 NODE_UPGRADE_BIN=$NODE_VERSIONS_DIR/$NODE_UPGRADE_VERSION/bin/node
 NODE_LATCH=${FIREROUTER_HIDDEN:-/home/pi/.router}/config/.node_legacy
