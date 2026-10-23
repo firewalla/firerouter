@@ -7,8 +7,11 @@ function get_pppoe_rps_cpus {
 }
 
 function get_hostapd_path {
+  # bundled hostapd with OWE support
+  if [[ -x ${FW_PLATFORM_CUR_DIR}/bin/hostapd ]]; then
+    echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
   # backward compatibility for old hostapd binary
-  if [[ -e /usr/local/bin/hostapd ]]; then
+  elif [[ -e /usr/local/bin/hostapd ]]; then
     echo "/usr/local/bin/hostapd"
   else
     echo "/usr/sbin/hostapd"
