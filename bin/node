@@ -9,24 +9,6 @@ else
   # Use system one
   NODE=$(which node)
 fi
-
-NODE_OPTS=""
-
-# Trust the system CA store, kept current by firewalla scripts/update_ca_certificates.sh, instead of the roots
-# bundled in the Node binary, so a distrusted CA is dropped for Node as well. Only when the store is at least the
-# ca-certificates version bundled in firewalla, so a box whose store is not upgraded yet keeps the bundled roots
-SYSTEM_CA_MIN_VERSION=20260816ubuntu0.22.04.1   # must match SYSTEM_CA_MIN_VERSION in firewalla bin/node
-function use_system_ca {
-  # --use-openssl-ca needs Node >= 7.5, a Node without a version in its path is left alone
-  [[ $NODE =~ /v([0-9]+)\.[0-9]+\.[0-9]+/ ]] && (( BASH_REMATCH[1] >= 8 )) || return 1
-  # manual switch back to the bundled roots, shared with firewalla
-  [[ ! -e ${FIREWALLA_HIDDEN:-/home/pi/.firewalla}/config/.node_bundled_ca ]] || return 1
-  [[ -s /etc/ssl/certs/ca-certificates.crt ]] || return 1
-  local ca=$(dpkg-query -W -f='${db:Status-Status} ${Version}' ca-certificates 2>/dev/null)
-  [[ $ca == "installed "* ]] && dpkg --compare-versions "${ca#installed }" ge $SYSTEM_CA_MIN_VERSION
-}
-use_system_ca && NODE_OPTS="$NODE_OPTS --use-openssl-ca"
-
 redis-cli HINCRBY "stats:systemd:restart" FireRouter 1
-"$NODE" $NODE_OPTS "$@"
+$NODE "$@"
   
