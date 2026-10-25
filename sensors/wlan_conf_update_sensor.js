@@ -30,7 +30,7 @@ class WlanConfUpdateSensor extends Sensor {
       return;
     const filename = `/sys/class/net/${iface}`;
     fs.watchFile(filename, {interval: 2000}, async (curr, prev) => {
-      if (curr.ctimeMs > prev.ctimeMs) {
+      if (curr.ino !== 0 && curr.ino !== prev.ino) {
         this.log.info(`${iface} appears, check and update network config if necessary ...`);
         await this.checkAndUpdateNetworkConfig(iface).catch((err) => {
           this.log.error(`Failed to check and update network config for ${iface}`, err.message);
