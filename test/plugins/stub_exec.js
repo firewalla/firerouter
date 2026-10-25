@@ -33,12 +33,15 @@ const cpp = require('child-process-promise');
 const calls = [];
 // commands containing one of these reject instead of resolving, for the failure paths
 const failing = [];
+// stdout to return for commands containing the needle, for code that reads a command's output
+const outputs = {};
 
 function record(cmd) {
   calls.push(cmd);
   if (failing.some(needle => cmd.includes(needle)))
     return Promise.reject(new Error(`stubbed failure: ${cmd}`));
-  return Promise.resolve({stdout: "", stderr: ""});
+  const needle = Object.keys(outputs).find(n => cmd.includes(n));
+  return Promise.resolve({stdout: needle ? outputs[needle] : "", stderr: ""});
 }
 
 const SHARED = [
@@ -80,7 +83,8 @@ module.exports = {
   load,
   build,
   calls,
-  reset: () => { calls.length = 0; failing.length = 0; },
+  reset: () => { calls.length = 0; failing.length = 0; Object.keys(outputs).forEach(k => delete outputs[k]); },
   failOn: (needle) => { failing.push(needle); },
+  outputFor: (needle, stdout) => { outputs[needle] = stdout; },
   matching: (needle) => calls.filter(c => c.includes(needle)),
 };
