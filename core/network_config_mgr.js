@@ -906,11 +906,15 @@ class NetworkConfigManager {
     }
     const fwapcExecPath = r.getFwapcExecPath();
     const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
-    await fsp.writeFile(tempFile, JSON.stringify(config));
-    // turn off log output on stdout to avoid inteference with JSON parsing
-    const response = await execFile(fwapcExecPath, ["ciap", tempFile], {env: Object.assign({}, process.env, {FW_LOG: "OFF"})});
-    const data = JSON.parse(response.stdout);
-    await fsp.unlink(tempFile).catch((err) => {});
+    let data;
+    try {
+      await fsp.writeFile(tempFile, JSON.stringify(config));
+      // turn off log output on stdout to avoid inteference with JSON parsing
+      const response = await execFile(fwapcExecPath, ["ciap", tempFile], {env: Object.assign({}, process.env, {FW_LOG: "OFF"})});
+      data = JSON.parse(response.stdout);
+    } finally {
+      await fsp.unlink(tempFile).catch((err) => {});
+    }
     log.debug(`Converted effective config`, data);
     return data;
   }
