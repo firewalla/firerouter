@@ -253,7 +253,8 @@ class InterfaceBasePlugin extends Plugin {
             continue;
           const networkAddr = addr.startAddress();
           const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE, 6).catch((err) => {});
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, 6).catch((err) => {});
         }
       }
       if (this.networkConfig.ipv6DelegateFrom) {
