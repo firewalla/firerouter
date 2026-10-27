@@ -35,11 +35,14 @@ const lock = new AsyncLock();
 const fsp = require('fs').promises;
 const crypto = require('crypto');
 const util = require('../util/util.js');
-const { spawnWpaCliInteractive } = require('../util/wpa_cli.js');
+const { spawnWpaCliInteractive, parseSsidTempDisabled } = require('../util/wpa_cli.js');
 const pluginConfig = require('../util/config.js').getConfig();
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
+
+// TEMP-DISABLED reasons that mean the credentials were rejected, wpa_supplicant's retry won't help
+const EARLY_FAIL_REASONS = new Set(['WRONG_KEY', 'AUTH_FAILED']);
 
 const WPA_ALLOWED_KEYS = new Set([
   'ssid', 'psk', 'key_mgmt', 'eap', 'identity', 'password',
@@ -112,6 +115,7 @@ class NetworkConfigManager {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
         let checkTask = null;
+        let monitor = null;
         let finished = false;
         // every exit goes through here so the lock is released once, cleanup runs after claiming the exit
         const finish = async (errors, cleanup) => {
@@ -119,10 +123,13 @@ class NetworkConfigManager {
             return;
           finished = true;
           clearInterval(checkTask);
+          if (monitor)
+            monitor.quit();
           if (cleanup)
             await cleanup();
           done(null, errors);
         };
+        let undoDisable = null;
         try {
           const iface = await ns.getInterface(intf);
           const ssidHex = util.getHexStrArray(ssid).map(hex => `\\x${hex}`).join("");
@@ -214,28 +221,79 @@ class NetworkConfigManager {
           };
           if (!params.hasOwnProperty("ssid"))
             params.ssid = ssid;
+          const invalidKey = Object.keys(params).find(key => !WPA_ALLOWED_KEYS.has(key));
+          // an empty key is itself invalid, so compare with undefined rather than test truthiness
+          if (invalidKey !== undefined) {
+            await finish([`Invalid wpa_supplicant parameter: ${invalidKey}`]);
+            return;
+          }
+          // watch the control socket so an attempt rejected for its credentials fails right away
+          let armed = false;
+          const attached = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), 2000);
+            monitor = spawnWpaCliInteractive({
+              wpaCliPath, socketDir, intf, timeout: '45s', completeLines: true,
+              onLine: (line) => {
+                // PONG means the monitor connection is attached, wpa_cli reads stdin only after that
+                if (/(^|> )PONG$/.test(line)) {
+                  clearTimeout(timer);
+                  resolve(true);
+                  return;
+                }
+                const event = armed && parseSsidTempDisabled(line);
+                if (!event || finished || event.id !== String(selectedNetwork.id))
+                  return;
+                log.warn(`wpa_supplicant temporarily disabled ${ssid} on ${intf}, reason ${event.reason}`);
+                // other reasons such as CONN_FAILED can be transient and wpa_supplicant retries, keep polling
+                if (EARLY_FAIL_REASONS.has(event.reason))
+                  finish([event.reason], restorePrevious);
+              }
+            });
+            monitor.child.on('error', (err) => {
+              log.warn(`Failed to run wpa_cli monitor on ${intf}`, err.message);
+              resolve(false);
+            });
+            monitor.child.on('exit', () => resolve(false));
+            monitor.write('ping');
+          });
+          if (!attached) {
+            log.warn(`wpa_cli monitor is not attached on ${intf}, will only poll the connection state`);
+            monitor.quit();
+            monitor = null;
+          }
+          // stop any attempt with the old settings so it cannot report a stale failure
+          await wpaCli("disable_network", String(selectedNetwork.id)).catch((err) => { });
+          // a setup error leaves the target as enabled as it was before the disable above
+          // flags is the raw list_networks column, match the exact token so [TEMP-DISABLED] still counts as enabled
+          if (networks.includes(selectedNetwork) && !(selectedNetwork.flags && selectedNetwork.flags.includes("[DISABLED]")))
+            undoDisable = () => wpaCli("enable_network", String(selectedNetwork.id)).catch((err) => { });
           for (const key of Object.keys(params)) {
-            if (!WPA_ALLOWED_KEYS.has(key)) {
-              await finish([`Invalid wpa_supplicant parameter: ${key}`]);
-              return;
-            }
             const value = await util.generateWpaSupplicantConfig(key, params);
             // the key is allowlisted above but the value is caller supplied, keep it out of a shell
             const error = await wpaCli("set_network", String(selectedNetwork.id), key, String(value)).then(() => null).catch((err) => err.message);
             if (error) {
-              await finish([error]);
+              await finish([error], undoDisable);
               return;
             }
           }
+          // events from here on belong to the attempt select_network starts
+          armed = true;
           let error = await wpaCli("select_network", String(selectedNetwork.id)).then(() => null).catch((err) => err.message);
           if (error) {
-            await finish([error]);
+            await finish([error], undoDisable);
             return;
           }
+          // the attempt may already have failed while select_network was returning
+          if (finished)
+            return;
           const t1 = Date.now() / 1000;
           let t2 = null;
           checkTask = setInterval(async () => {
+            if (finished)
+              return;
             const state = await isWPAComplate();
+            if (finished)
+              return;
             if (state === true) {
               if (!testOnly) {
                 log.info(`WPA state complete on new SSID ${ssid}, enabling other networks`);
@@ -245,6 +303,8 @@ class NetworkConfigManager {
             } else {
               t2 = Date.now() / 1000;
               await wpaCli("bssid_ignore", "clear").catch((err) => { });
+              if (finished)
+                return;
             }
             // if timeout exceeded or test only is set and connection is successful, switch back to previous setup
             if (t2 - t1 > 30 || state === true && testOnly) {
@@ -252,7 +312,7 @@ class NetworkConfigManager {
             }
           }, 3000);
         } catch(err) {
-          await finish([err])
+          await finish([err], undoDisable)
         }
       }, (err, ret) => {
         platform.setDFSScanState(false);
