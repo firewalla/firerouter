@@ -51,20 +51,41 @@ fi
 
 NODE_BIN_DIR=$(dirname "$NODE_BIN")
 NPM_BIN_DIR=$NODE_BIN_DIR
+
+# Downloads the x64 tarball of a node version from the asset server to /tmp, or reuses the copy there
+# when it matches the .sha256 object. Dev only: nothing is cleaned up, and the signature is not checked.
+fetch_node_tarball() {
+  local version=$1 name=node-$1-linux-x64.tar.xz prefix url hash
+  # read as data, ~/.fwrc is not sourced
+  prefix=${ASSETS_PREFIX:-$(sed -n 's/^[[:space:]]*\(export[[:space:]]\+\)\{0,1\}ASSETS_PREFIX=//p' ~/.fwrc 2>/dev/null | tail -n1 | tr -d "\"'")}
+  url=${prefix:-https://fireupgrade.s3.us-west-2.amazonaws.com/dev}/all/node/$name
+  tarball=/tmp/$name
+  hash=$(curl -sf --connect-timeout 10 -m 30 "$url.sha256")
+  if [[ ${#hash} != 64 ]]; then
+    echo "failed to get the hash of $url" >&2
+    return 1
+  fi
+  [[ -f $tarball && $(sha256sum "$tarball" | awk '{print $1}') == "$hash" ]] && return 0
+  if ! curl -sf --connect-timeout 10 -m 600 -o "$tarball.part" "$url" ||
+     [[ $(sha256sum "$tarball.part" | awk '{print $1}') != "$hash" ]]; then
+    rm -f "$tarball.part"
+    echo "failed to download $url" >&2
+    return 1
+  fi
+  mv -f "$tarball.part" "$tarball"
+}
+
 # npm sits beside an nvm-installed node, but the upgraded one is installed as bin/node alone
 # (firewalla's scripts/install_node.sh, shared with this repo). Testing for npm rather than for the
 # install path keeps this free of the selection policy too. Its npm, npx and corepack come from the
-# same assets tarball, unpacked next to the test tree so that install stays untouched
+# x64 tarball of the same version (plain JS, so any arch will do), unpacked next to the test tree so
+# that install stays untouched
 if [[ ! -x "$NODE_BIN_DIR/npm" ]]; then
   NODE_VERSION=$("$NODE_BIN" -v)
   NPM_DIR=$(dirname "$TEST_MODULES")/node-$NODE_VERSION
   NPM_BIN_DIR=$NPM_DIR/bin
   if [[ ! -x "$NPM_BIN_DIR/npm" ]]; then
-    tarball=$(ls "${FIREWALLA_HIDDEN:-$HOME/.firewalla}"/run/assets/node-$NODE_VERSION-linux-*.tar.xz 2>/dev/null | head -n1)
-    if [[ -z $tarball ]]; then
-      echo "assets tarball of node $NODE_VERSION not found, cannot install npm" >&2
-      exit 1
-    fi
+    fetch_node_tarball "$NODE_VERSION" || exit 1
     top=$(basename "$tarball" .tar.xz)
     rm -rf "$NPM_DIR.tmp" && mkdir -p "$NPM_DIR.tmp" &&
       tar -xJf "$tarball" -C "$NPM_DIR.tmp" --strip-components=1 \
