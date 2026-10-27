@@ -23,6 +23,7 @@ const event = require('../core/event.js');
 const sclient = require('../util/redis_manager.js').getSubscriptionClient();
 const _ = require('lodash');
 const InterfaceBasePlugin = require('../plugins/interface/intf_base_plugin.js');
+const WLANInterfacePlugin = require('../plugins/interface/wlan_intf_plugin.js');
 
 class WanConnCheckSensor extends Sensor {
 
@@ -82,6 +83,7 @@ class WanConnCheckSensor extends Sensor {
       const result = await wanIntfPlugin.checkWanConnectivity(defaultPingTestIP, defaultPingTestCount, defaultPingSuccessRate, defaultDnsTestDomain, null, true);
       this._checkHttpConnectivity(wanIntfPlugin).catch((err) => {
         this.log.error("Got error when checking http, err:", err.message);
+        return null;
       });
 
       if (!result)
@@ -89,6 +91,17 @@ class WanConnCheckSensor extends Sensor {
       if (pl.isApplyInProgress()) {
         this.log.info("A network config is being applied, discard WAN connectivity test result");
         return;
+      }
+      const httpResult = _.get(wanIntfPlugin.getWanStatus(), "http");
+      if (httpResult && httpResult.ts >= Date.now() / 1000 - 60 && httpResult.statusCode >= 300 && httpResult.statusCode < 400) {
+        if (!result.active) {
+          if (wanIntfPlugin instanceof WLANInterfacePlugin) {
+            this.log.info(`${wanIntfPlugin.name} has captive portal enabled, consider it as connected although connectivity test failed`);
+            result.active = true;
+          } else {
+            this.log.info(`${wanIntfPlugin.name} detected HTTP redirect but it is not a wireless WAN, keep it as disconnected to allow failover`);
+          }
+        }
       }
       const lastAppliedTimestamp = pl.getLastAppliedTimestamp();
       if (lastAppliedTimestamp > t1) {
@@ -104,7 +117,8 @@ class WanConnCheckSensor extends Sensor {
       const active = result.active;
       const forceState = result.forceState;
       const failures = result.failures;
-      const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures});
+      const carrier = result.carrier;
+      const e = event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: wanIntfPlugin.name, active: active, forceState: forceState, failures: failures, carrier: carrier});
       event.suppressLogging(e);
       if (!active)
         this.log.warn(`Wan connectivity test failed on ${wanIntfPlugin.name}, failures: ${JSON.stringify(failures)}`);

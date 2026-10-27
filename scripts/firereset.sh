@@ -5,6 +5,12 @@ LICENSE_FILE=/home/pi/.firewalla/license
 
 source $DIR/../platform/platform.sh
 
+if [[ $NEED_FIRERESET == "false" ]]; then
+  echo "Firereset is not needed on this platform, disabling it..."
+  sudo systemctl --no-block disable --now firereset
+  exec sleep infinity
+fi
+
 run_host_light_until_paired() {
   type run_horse_light || return 1
   while [[ ! -e $LICENSE_FILE ]]; do
@@ -16,12 +22,14 @@ run_host_light_until_paired() {
 
 : ${BLUETOOTH_TIMEOUT:=0}
 
+before_firereset
+
 # use this user firereset binary if configured, for debugging purpose only
 USER_FIRERESET=/home/pi/.firewalla/run/firereset
 if [[ -e $USER_FIRERESET ]]; then
-  sudo BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout $BLUETOOTH_TIMEOUT
+  sudo UART_LE="$UART_LE" BLE_IDLE_TIMEOUT=30 $USER_FIRERESET -timeout $BLUETOOTH_TIMEOUT
   exit 0
 fi
 
 FIRERESET_BINARY=$(get_firereset_path)
-sudo BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout $BLUETOOTH_TIMEOUT
+sudo UART_LE="$UART_LE" BLE_IDLE_TIMEOUT=30 $FIRERESET_BINARY -timeout $BLUETOOTH_TIMEOUT

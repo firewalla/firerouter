@@ -16,7 +16,7 @@
 'use strict';
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter.js');
 const event = require('../../core/event.js');
@@ -27,16 +27,17 @@ const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const PlatformLoader = require('../../platform/PlatformLoader.js');
 const platform = PlatformLoader.getPlatform();
+const rclientDB0 = require('../../util/redis_manager').getPrimaryDBRedisClient();
 
 class UPnPPlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/upnp`);
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_upnpd@.service /etc/systemd/system/`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/upnp`]);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_upnpd@.service`, "/etc/systemd/system/"]);
     // redirect miniupnpd log to specific log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/10-miniupnpd.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/10-miniupnpd.conf`, "/etc/rsyslog.d/"]);
     pl.scheduleRestartRsyslog();
     // copy logrotate config for miniupnpd log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/miniupnpd /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/miniupnpd`, "/etc/logrotate.d/"]);
     await platform.installMiniupnpd();
   }
 
@@ -57,13 +58,13 @@ class UPnPPlugin extends Plugin {
   }
 
   async flush() {
-    await exec(`sudo systemctl stop firerouter_upnpd@${this.name}`).catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", `firerouter_upnpd@${this.name}`]).catch((err) => {});
     await fs.unlinkAsync(this._getConfigFilePath()).catch((err) => {});
-    await exec(`sudo iptables -w -t nat -F ${this._getNATChain()}`).catch((err) => {});
-    await exec(`sudo iptables -w -F ${this._getFilterChain()}`).catch((err) => {});
-    await exec(`sudo iptables -w -D FR_UPNP_ACCEPT -j ${this._getFilterChain()}`).catch((err) => {});
-    await exec(`sudo iptables -w -t nat -F ${this._getNATPostroutingChain()}`).catch((err) => {});
-    await exec(`sudo iptables -w -t nat -D FR_UPNP_POSTROUTING -j ${this._getNATPostroutingChain()}`).catch((err) => {});
+    await execFile("sudo", ["iptables", "-w", "-t", "nat", "-F", this._getNATChain()]).catch((err) => {});
+    await execFile("sudo", ["iptables", "-w", "-F", this._getFilterChain()]).catch((err) => {});
+    await execFile("sudo", ["iptables", "-w", "-D", "FR_UPNP_ACCEPT", "-j", this._getFilterChain()]).catch((err) => {});
+    await execFile("sudo", ["iptables", "-w", "-t", "nat", "-F", this._getNATPostroutingChain()]).catch((err) => {});
+    await execFile("sudo", ["iptables", "-w", "-t", "nat", "-D", "FR_UPNP_POSTROUTING", "-j", this._getNATPostroutingChain()]).catch((err) => {});
     if (this._currentExtIp4)
       await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_UPNP -d ${this._currentExtIp4} -j ${this._getNATChain()}`)).catch((err) => {});
   }
@@ -83,6 +84,12 @@ class UPnPPlugin extends Plugin {
     const allowNetworks = internalNetworks.map(n => `allow 1024-65535 ${n} 1024-65535`);
     content = content.replace(/%ALLOW_NETWORK%/g, allowNetworks.join("\n"));
     await fs.writeFileAsync(this._getConfigFilePath(), content, {encoding: 'utf8'});
+
+    // delete lease file on turning off
+    if (!upnpEnabled) {
+      await execFile("sudo", ["rm", `/var/run/upnp.${this.name}.leases`]).catch((err) => {});
+      await rclientDB0.hdelAsync('sys:scan:nat', 'upnp');
+    }
   }
 
   async apply() {
@@ -149,7 +156,7 @@ class UPnPPlugin extends Plugin {
     const internalIPs = intState.ip4s.sort().filter((v, i, a) => a.indexOf(v) === i);
     const internalNetworks = internalCidrs.map(internalCidr => `${internalCidr.networkAddress}/${internalCidr.subnetMaskLength}`).sort().filter((v, i, a) => a.indexOf(v) === i);
     await this.generateConfig(uuid, extIntf, internalIPs, internalNetworks);
-    await exec(`sudo systemctl restart firerouter_upnpd@${this.name}`);
+    await execFile("sudo", ["systemctl", "restart", `firerouter_upnpd@${this.name}`]);
   }
 
   onEvent(e) {

@@ -1,0 +1,15 @@
+/var/log/firerouter_dns.log
+{
+  su root adm
+  rotate 3
+  daily
+  maxsize 1M
+  missingok
+  notifempty
+  compress
+  delaycompress
+  nocreate
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}

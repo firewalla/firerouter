@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Restart=always
-ExecStart=/sbin/dhcpcd -6 -t 0 -f "/home/pi/.router/config/dhcpcd6/%i.conf" %i -e rt_tables="main %i_local %i_default" -e default_rt_tables="%i_default"
+EnvironmentFile=-/home/pi/.router/config/dhcpcd6/ipv6_passthrough_%i.env
+ExecStart=/bin/bash -c '/home/pi/firerouter/scripts/start_dhcpcd_service.sh %i >/dev/null 2>&1'
 RemainAfterExit=true
 RestartSec=3

@@ -28,16 +28,7 @@ class RedisManager {
   }
 
   getPrimaryDBRedisClient() {
-    if(!this.primaryDBClient) {
-      this.primaryDBClient = redis.createClient({
-        host: "localhost",
-        db: 0
-      });
-      this.primaryDBClient.on('error', (err) => {
-        log.error("Redis client got error:", err);
-      })
-    }
-    return this.primaryDBClient;
+    return this.getRedisClient(0);
   }
 
   getRedisClient(db = 1) {

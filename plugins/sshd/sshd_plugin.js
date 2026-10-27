@@ -16,7 +16,7 @@
 'use strict';
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const util = require('../../util/util.js');
 const r = require('../../util/firerouter.js');
@@ -24,9 +24,10 @@ const event = require('../../core/event.js');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const serverKeyDir = `${r.getUserConfigFolder()}/sshd/keys`;
-const keyAlgorithms = ['dsa', 'ecdsa', 'ed25519', 'rsa'];
+const keyAlgorithms = platform.getSSHKeyTypes();
 
 
 class SSHDPlugin extends Plugin {
@@ -36,12 +37,12 @@ class SSHDPlugin extends Plugin {
   }
 
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/sshd`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/sshd`]);
     await SSHDPlugin.ensureGenerateHostKeys();
   }
 
   static async ensureGenerateHostKeys() {
-    await exec(`mkdir -p ${serverKeyDir}`);
+    await execFile("mkdir", ["-p", serverKeyDir]);
     for (const alg of keyAlgorithms) {
       const keyFilePath = SSHDPlugin.getKeyFilePath(alg);
       await fs.accessAsync(keyFilePath, fs.constants.F_OK).then(() => {
@@ -67,7 +68,7 @@ class SSHDPlugin extends Plugin {
   }
 
   async reloadSSHD() {
-    await exec(`${__dirname}/reload_sshd.sh`).catch((err) => {
+    await execFile(`${__dirname}/reload_sshd.sh`, []).catch((err) => {
       this.log.error(`Failed to execute reload_sshd.sh`, err.message);
     });
   }

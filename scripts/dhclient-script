@@ -249,6 +249,19 @@ fi
 
 # The action starts here
 
+# Some upstream DHCP servers announce ntp-servers even when it is not in the parameter request
+# list, and dhclient exports every option it can parse from the lease regardless of what was
+# requested, so the generated dhclient.conf alone cannot keep an interface out of the NTP hooks.
+# firerouter_dhclient@.service passes fr_allow_ntp to dhclient with -e, one value per interface.
+# Hide the announced servers from the hooks unless this interface opted in - they then take their
+# remove path and drop whatever they had installed for this interface earlier, instead of being
+# skipped and leaving it behind. This also covers the stock ntp/ntpdate/timesyncd hooks, which an
+# apt upgrade of the ntp or systemd package can reinstall behind FireRouter's back.
+if [ "$fr_allow_ntp" != "1" ]; then
+    unset new_ntp_servers old_ntp_servers
+    unset new_dhcp6_sntp_servers old_dhcp6_sntp_servers
+fi
+
 # Invoke the local dhcp client enter hooks, if they exist.
 run_hook /etc/dhcp/dhclient-enter-hooks
 run_hookdir /etc/dhcp/dhclient-enter-hooks.d

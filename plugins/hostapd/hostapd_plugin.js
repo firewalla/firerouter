@@ -21,9 +21,11 @@ const ncm = require('../../core/network_config_mgr')
 const platform = require('../../platform/PlatformLoader').getPlatform()
 
 const hostapdServiceFileTemplate = __dirname + "/firerouter_hostapd@.template.service";
+const hostapdCliServiceFileTemplate = __dirname + "/firerouter_hostapd_cli@.template.service";
 const hostapdScript = __dirname + "/hostapd.sh";
+const hostapdCliScript = __dirname + "/hostapd_cli.sh";
 
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 
 const r = require('../../util/firerouter');
 const fsp = require('fs').promises;
@@ -31,6 +33,7 @@ const fs = require('fs');
 
 const pluginConfig = require('./config.json');
 const util = require('../../util/util');
+const _ = require('lodash');
 
 const WLANInterfacePlugin = require('../interface/wlan_intf_plugin')
 
@@ -38,18 +41,33 @@ const WLAN_AVAILABLE_RETRY = 3
 
 class HostapdPlugin extends Plugin {
 
+  onConfigChanged(changeType) {
+    if (changeType === Plugin.CHANGE_NONE) {
+      this._reapplyNeeded = false;
+      return;
+    }
+    if (changeType === Plugin.CHANGE_FULL) {
+      this._reapplyNeeded = true;
+      return;
+    }
+    this._reapplyNeeded = this._reapplyNeeded || false;
+    return;
+  }
+
   static async preparePlugin() {
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/15-hostapd.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/15-hostapd.conf`, "/etc/rsyslog.d/"]);
     pl.scheduleRestartRsyslog();
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/hostapd /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/hostapd`, "/etc/logrotate.d/"]);
     await this.createDirectories();
     await this.installHostapdScript();
     await this.installSystemService();
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/hostapd`).catch((err) => {});
-    await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
+    await fsp.mkdir(r.getUserConfigFolder() + "/hostapd", {recursive: true}).catch((err) => {});
+    await fsp.mkdir(r.getUserConfigFolder() + "/hostapd/band_2.4g", {recursive: true}).catch((err) => {});
+    await fsp.mkdir(r.getUserConfigFolder() + "/hostapd/band_5g", {recursive: true}).catch((err) => {});
+    await fsp.mkdir(r.getTempFolder(), {recursive: true}).catch((err) => {});
   }
 
   static async installSystemService() {
@@ -57,34 +75,46 @@ class HostapdPlugin extends Plugin {
     content = content.replace(/%HOSTAPD_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_hostapd@.service";
     await fsp.writeFile(targetFile, content);
-    await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+    await execFile("sudo", ["cp", targetFile, "/etc/systemd/system"]);
+
+
+    // install hostapd_cli listener service
+    let cli_content = await fsp.readFile(hostapdCliServiceFileTemplate, {encoding: 'utf8'});
+    cli_content = cli_content.replace(/%HOSTAPD_DIRECTORY%/g, r.getTempFolder());
+    const cli_targetFile = r.getTempFolder() + "/firerouter_hostapd_cli@.service";
+    await fsp.writeFile(cli_targetFile, cli_content);
+    await execFile("sudo", ["cp", cli_targetFile, "/etc/systemd/system"]);
   }
 
   static async installHostapdScript() {
-    await exec(`cp ${hostapdScript} ${r.getTempFolder()}/hostapd.sh`);
+    await execFile("cp", [hostapdScript, `${r.getTempFolder()}/hostapd.sh`]);
+    await execFile("cp", [hostapdCliScript, `${r.getTempFolder()}/hostapd_cli.sh`]);
   }
 
   async flush() {
-    const confPath = this._getConfFilePath();
-    await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
-    await fsp.unlink(confPath).catch((err) => {});
-  }
+    // clean up hostapd_cli listener service
+    await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd_cli@${this.name}`]).catch((err) => {});
 
-  _getConfFilePath() {
-    return `${r.getUserConfigFolder()}/hostapd/${this.name}.conf`;
+    await platform.disableHostapd(this.name);
   }
 
   async apply() {
     const parameters = pluginConfig.default ? JSON.parse(JSON.stringify(pluginConfig.default)) : {};
     const params = this.networkConfig.params || {};
     parameters.interface = this.name;
+    const hasExclusiveSibling = !!platform.getExclusiveWLANSibling(this.name);
     const intfPlugin = pl.getPluginInstance("interface", this.name);
     if (!intfPlugin)
       this.fatal(`Cannot find interface plugin ${this.name}`);
     this.subscribeChangeFrom(intfPlugin);
-    if (await intfPlugin.isInterfacePresent() === false) {
+    // if wlan is managed by apc, WLAN interface may be dynamically removed/created by hostapd using multi-bss config
+    if (!platform.isWLANManagedByAPC() && await intfPlugin.isInterfacePresent() === false) {
       this.log.warn(`WLAN interface ${this.name} is not present yet`);
       return;
+    }
+    // primary interface will be used as main interface in hostapd config, others will be bss interfaces
+    if (_.get(intfPlugin.networkConfig, "primary", false)) {
+      parameters.primary = true;
     }
     if (this.networkConfig.bridge) {
       const bridgeIntfPlugin = pl.getPluginInstance("interface", this.networkConfig.bridge);
@@ -102,72 +132,91 @@ class HostapdPlugin extends Plugin {
       return;
     }
 
-    if (params.ht_capab && !Array.isArray(params.ht_capab)) delete params.ht_capab
-
     if (platform.wifiSD) {
       Object.assign(parameters, platform.wifiSD().getHostapdConfig())
     }
 
     Object.assign(parameters, params)
 
-    parameters.ht_capab = new Set(parameters.ht_capab)
+    if (!platform.isWLANManagedByAPC()) {
+      if (!parameters.channel) {
+        let availableChannels = await HostapdPlugin.getAvailableChannels()
 
-    if (!parameters.channel) {
-      let availableChannels = await HostapdPlugin.getAvailableChannels()
-
-      if (parameters.chanlist) {
-        // chanlist doesn't work in hostapd config, as it doesn't support acs
-        // use it just to filter preset available channels here
-        const chanlist = util.parseNumList(parameters.chanlist)
-        const filtered = availableChannels.filter(c => chanlist.includes(c))
-        if (filtered.length) {
-          availableChannels = filtered
-          this.log.info('chanlist set, available channels now', availableChannels)
-        } else {
-          this.log.error('No channels available after filtering, using default channels')
+        if (parameters.chanlist) {
+          // chanlist doesn't work in hostapd config, as it doesn't support acs
+          // use it just to filter preset available channels here
+          const chanlist = util.parseNumList(parameters.chanlist)
+          const filtered = availableChannels.filter(c => chanlist.includes(c))
+          if (filtered.length) {
+            availableChannels = filtered
+            this.log.info('chanlist set, available channels now', availableChannels)
+          } else {
+            this.log.error('No channels available after filtering, using default channels')
+          }
+          delete parameters.chanlist
         }
-        delete parameters.chanlist
-      }
 
-      let availableWLANs
-      for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {
-        availableWLANs = await ncm.getWlansViaWpaSupplicant()
-        if (availableWLANs && availableWLANs.length)
-          break; // stop on first successful call
-        else
-          this.log.warn('No wlan found, trying again...')
-        await util.delay(2000)
-      } catch(err) {
-        this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
-        await util.delay(2000)
-      }
-
-      if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
-        // 5G network is preferred
-        parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
-        this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
-      }
-      else {
-        const scores = HostapdPlugin.calculateChannelScores(availableWLANs)
-
-        let bestChannel = undefined
-        for (const ch of availableChannels) {
-          // available channels should be listed in ascending order, so empty 5G channel is always preferred
-          if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
-            bestChannel = ch
+        let availableWLANs
+        for (let i = WLAN_AVAILABLE_RETRY; i--; i > 0) try {
+          availableWLANs = await ncm.getWlansViaWpaSupplicant()
+          if (availableWLANs && availableWLANs.length)
+            break; // stop on first successful call
+          else
+            this.log.warn('No wlan found, trying again...')
+          await util.delay(2000)
+        } catch (err) {
+          this.log.warn('Error scanning WLAN, trying again after 2s ...', err.message)
+          await util.delay(2000)
         }
-        this.log.info('Best channel is', bestChannel)
 
-        parameters.channel = bestChannel
+        if (!Array.isArray(availableWLANs) || !availableWLANs.length) {
+          // 5G network is preferred
+          parameters.channel = availableChannels.filter(x => x >= 36)[0] || availableChannels[0]
+          this.log.warn('Failed to fetch WLANs, using channel', parameters.channel)
+        }
+        else {
+          const scores = HostapdPlugin.calculateChannelScores(availableWLANs)
+
+          let bestChannel = undefined
+          for (const ch of availableChannels) {
+            // available channels should be listed in ascending order, so empty 5G channel is always preferred
+            if (!bestChannel || !scores[ch] || scores[bestChannel] > scores[ch])
+              bestChannel = ch
+          }
+          this.log.info('Best channel is', bestChannel)
+
+          parameters.channel = bestChannel
+        }
+      }
+      else if (hasExclusiveSibling) {
+        // channel already set, skip scan but still ensure exclusive WLAN is owned by AP
+        const sibling = platform.getExclusiveWLANSibling(this.name);
+        this.log.info(`Exclusive WLAN for hostapd: ${sibling} down, then ${this.name} up`);
+        await WLANInterfacePlugin._setInterfaceLinkState(sibling, false);
+        await WLANInterfacePlugin._setInterfaceLinkState(this.name, true);
       }
     }
 
-    if (parameters.ssid && parameters.wpa_passphrase) {
-      const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
-      parameters.wpa_psk = psk;
-      // use hexdump for ssid
+    // when in wpa3 mode, no need to hash passphrase
+    if (parameters.wpa3_mode) {
+      // need to delete this parameter as hostapd doesn't support it
+      // this parameter is only used to indicate wpa3 mode, and used only inside firerouter code
+      delete parameters["wpa3_mode"];
+    } else {
+      if (parameters.ssid && parameters.wpa_passphrase) {
+        const psk = await util.generatePSK(parameters.ssid, parameters.wpa_passphrase);
+        parameters.wpa_psk = psk;
+        delete parameters["wpa_passphrase"];
+      }
+    }
+
+    // hexdump the ssid in every security mode. the platform's enableHostapd writes each parameter
+    // as a `key=value` line, and ncm.validateConfig exempts an ssid from its control character
+    // sweep because 802.11 makes it an opaque octet string, so this encoding is what keeps a line
+    // break in one out of the generated config. hostapd takes ssid2 under SAE and with no security
+    // alike, and it has to run after the psk above, which needs the ssid in its original form.
+    if (parameters.ssid) {
       parameters.ssid2 = util.getHexStrArray(parameters.ssid).join("");
-      delete parameters["wpa_passphrase"];
       delete parameters["ssid"];
     }
 
@@ -178,55 +227,101 @@ class HostapdPlugin extends Plugin {
       }
     }
 
-    const channelConfig = pluginConfig.channel[parameters.channel]
-    if (channelConfig.ht_capab) {
-      channelConfig.ht_capab.default && channelConfig.ht_capab.default.forEach(c => parameters.ht_capab.add(c))
-      channelConfig.ht_capab.not && channelConfig.ht_capab.not.forEach(c => parameters.ht_capab.delete(c))
+    if (!platform.isWLANManagedByAPC()) {
+      if (parameters.ht_capab && !Array.isArray(parameters.ht_capab)) delete parameters.ht_capab
+      parameters.ht_capab = new Set(parameters.ht_capab)
+  
+      const channelConfig = pluginConfig.channel[parameters.channel]
+      if (channelConfig.ht_capab) {
+        channelConfig.ht_capab.default && channelConfig.ht_capab.default.forEach(c => parameters.ht_capab.add(c))
+        channelConfig.ht_capab.not && channelConfig.ht_capab.not.forEach(c => parameters.ht_capab.delete(c))
+      }
+      channelConfig.hw_mode && (parameters.hw_mode = channelConfig.hw_mode)
+      parameters.ht_capab = '[' + Array.from(parameters.ht_capab).join('][') + ']'
     }
-    channelConfig.hw_mode && (parameters.hw_mode = channelConfig.hw_mode)
-    parameters.ht_capab = '[' + Array.from(parameters.ht_capab).join('][') + ']'
 
-    const confPath = this._getConfFilePath();
-    await fsp.writeFile(confPath, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
-    await exec(`sudo systemctl stop firerouter_hostapd@${this.name}`).catch((err) => {});
+    if ((_.isArray(parameters.ht_capab) || _.isSet(parameters.ht_capab)) && !_.isEmpty(parameters.ht_capab)) {
+      parameters.ht_capab = Array.from(parameters.ht_capab).map(c => `[${c}]`).join("");
+    }
+
+    if ((_.isArray(parameters.vht_capab) || _.isSet(parameters.vht_capab)) && !_.isEmpty(parameters.vht_capab)) {
+      parameters.vht_capab = Array.from(parameters.vht_capab).map(c => `[${c}]`).join("");
+    }
+
+    if (platform.getName() === 'goldplus2' && parameters.channel) {
+      Object.assign(parameters, HostapdPlugin.getVhtOperConfig(parameters.channel));
+    }
+
+    const vendorConfig = pluginConfig.vendor[await platform.getWlanVendor()];
+    const vendorExtra = vendorConfig && vendorConfig.extra;
+    if (vendorExtra) {
+      Object.keys(vendorExtra).forEach(k => {
+        parameters[k] = vendorExtra[k]
+      })
+    }
+    await platform.disableHostapd(this.name);
+    await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd_cli@${this.name}`]).catch((err) => {}); // stop the listener first
     const iwPhy = await fsp.readFile(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (this.networkConfig.enabled !== false) {
-      await exec(`sudo systemctl start firerouter_hostapd@${this.name}`).catch((err) => {});
-      if (this.networkConfig.bridge) {
-        // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
-        let addedToBridge = false;
-        let retryCount = 0
-        while (true) {
-          if (retryCount >= 10) {
-            this.log.error(`Failed to add ${this.name} to bridge ${this.networkConfig.bridge}`);
-            break;
-          }
-          await util.delay(1000);
-          addedToBridge = await fsp.access(`/sys/class/net/${this.networkConfig.bridge}/lower_${this.name}`, fs.constants.F_OK).then(() => true).catch((err) => false);
-          if (addedToBridge) {
-            this.log.info(`${this.name} is added to bridge ${this.networkConfig.bridge} by hostapd`);
-            break;
-          } else {
-            this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
-            await exec(`sudo systemctl restart firerouter_hostapd@${this.name}`).catch((err) => {});
-            retryCount++;
+      await platform.enableHostapd(this.name, parameters);
+      if (platform.isWLANManagedByAPC()) {
+        await execFile("sudo", ["systemctl", "start", `firerouter_hostapd_cli@${this.name}`]).catch((err) => {});
+      } else {
+        if (this.networkConfig.bridge) {
+          // ensure wlan interface is added to bridge by hostapd, it is observed on u22 that a failed HT_SCAN request will cause the wlan being removed from bridge
+          let addedToBridge = false;
+          let retryCount = 0
+          while (true) {
+            if (retryCount >= 10) {
+              this.log.error(`Failed to add ${this.name} to bridge ${this.networkConfig.bridge}`);
+              break;
+            }
+            await util.delay(1000);
+            addedToBridge = await fsp.access(`/sys/class/net/${this.networkConfig.bridge}/lower_${this.name}`, fs.constants.F_OK).then(() => true).catch((err) => false);
+            if (addedToBridge) {
+              this.log.info(`${this.name} is added to bridge ${this.networkConfig.bridge} by hostapd`);
+              break;
+            } else {
+              this.log.error(`${this.name} is not added to bridge ${this.networkConfig.bridge} by hostapd, will try again`);
+              await platform.enableHostapd(this.name, parameters);
+              retryCount++;
+            }
           }
         }
+        if (iwPhy && !hasExclusiveSibling)
+          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, ['set', 'autoscan', 'exponential:2:300']).catch((err) => {
+            this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+          });
       }
-      if (iwPhy)
-        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan exponential:2:300').catch((err) => {
-          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
-        });
     } else {
-      if (iwPhy)
-        await WLANInterfacePlugin.simpleWpaCommand(iwPhy, 'set autoscan periodic:10').catch((err) => {
-          this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
-        });
+      if (!platform.isWLANManagedByAPC()) {
+        if (iwPhy && !hasExclusiveSibling)
+          await WLANInterfacePlugin.simpleWpaCommand(iwPhy, ['set', 'autoscan', 'periodic:10']).catch((err) => {
+            this.log.error(`Failed to set autoscan via wpa_cli on iw phy ${iwPhy} from ${this.name}`, err.message);
+          });
+      }
     }
   }
 
   static async getAvailableChannels() {
     return pluginConfig.vendor[await platform.getWlanVendor()].channels
+  }
+
+  static getVhtOperConfig(channel) {
+    const ch = Number(channel);
+    if ([36, 40, 44, 48].includes(ch)) {
+      return {
+        vht_oper_chwidth: 1,
+        vht_oper_centr_freq_seg0_idx: 42,
+      };
+    }
+    if ([149, 153, 157, 161].includes(ch)) {
+      return {
+        vht_oper_chwidth: 1,
+        vht_oper_centr_freq_seg0_idx: 155,
+      };
+    }
+    return {};
   }
 
   static calculateChannelScores(availableWLANs, withWeight = true) {

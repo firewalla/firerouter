@@ -21,7 +21,11 @@ const bodyParser = require('body-parser');
 const log = require('../../util/logger.js')(__filename);
 const ncm = require('../../core/network_config_mgr.js');
 const ns = require('../../core/network_setup.js');
-
+const util = require('../../util/util.js');
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
+const sensorLoader = require('../../sensors/sensor_loader.js');
+const constants = require('../../util/constants.js');
 
 const WLAN_FLAG_WEP         = 0b1
 const WLAN_FLAG_WPA         = 0b10
@@ -32,6 +36,7 @@ const WLAN_FLAG_SAE         = 0b100000
 const WLAN_FLAG_PSK_SHA256  = 0b1000000
 const WLAN_FLAG_EAP_SHA256  = 0b10000000
 
+const LOCK_NETWORK_CONFIG_NCID = "LOCK_NETWORK_CONFIG_NCID";
 
 const _ = require('lodash');
 const { exec } = require('child-process-promise');
@@ -45,7 +50,6 @@ const T_OP_REVERT = "revert";
 const validTransactionOps = [T_OP_APPEND, T_OP_COMMIT, T_OP_REVERT];
 const T_REVERT_TIMEOUT = 120 * 1000; // revert back to previous persisted config in 2 minutes
 
-const assetsController = require('../../core/assets_controller.js');
 
 router.get('/active', async (req, res, next) => {
   const config = await ncm.getActiveConfig(inTransaction);
@@ -249,103 +253,134 @@ router.get('/interfaces', async (req, res, next) => {
 router.post('/set',
   jsonParser,
   async (req, res, next) => {
-    let newConfig = req.body;
-    const transactionOp = newConfig.transactionOp;
-    const transID = newConfig.transID;
-    delete newConfig.transactionOp; // do not leave transactionOp in the saved config
-    delete newConfig.transID;
-    if (transactionOp && !validTransactionOps.includes(transactionOp)) {
-      const errMsg = `Unrecognized transactionOp in config: ${transactionOp}`;
-      log.error(errMsg);
-      res.status(400).json({errors:[errMsg]});
-    }
-    if (inTransaction && !validTransactionOps.includes(transactionOp)) {
-      const errMsg = "A config change transaction context is in progress, reject non-transaction change request";
-      log.error(errMsg);
-      res.status(400).json({errors:[errMsg]});
-      return;
-    }
-    if (!inTransaction && (transactionOp === T_OP_COMMIT || transactionOp === T_OP_REVERT)) {
-      const errMsg = "No ongoing config change transaction context, cannot commit or revert";
-      log.error(errMsg);
-      res.status(400).json({errors: [errMsg]});
-      return;
-    }
-    if (validTransactionOps.includes(transactionOp) && _.isEmpty(transID)) {
-      const errMsg = `transID is not defined in transactional network config change request`;
-      log.error(errMsg);
-      res.status(400).json({errors: [errMsg]});
-      return;
-    }
-    if (inTransaction && (_.isEmpty(transID) || transID !== currentTransID)) {
-      const errMsg = `transID ${transID} does not match current transaction ID`;
-      log.error(errMsg);
-      res.status(400).json({errors: [errMsg]});
-      return;
-    }
-    if (inTransaction) {
-      switch (transactionOp) {
-        case T_OP_COMMIT:
-          newConfig = await ncm.getActiveConfig(true);
-          await ncm.saveConfig(newConfig, false); // save transaction config to persisted config
-          if (transactionTask)
-            clearTimeout(transactionTask)
-          inTransaction = false;
-          currentTransID = null;
-          log.info("Commit config change transaction: " + JSON.stringify(newConfig));
-          res.status(200).json({errors: []});
-          return;
-        case T_OP_REVERT:
-          // previous persisted config will be applied in the code below
-          newConfig = await ncm.getActiveConfig(false);
-          log.info("Manually revert back to previous persisted config: " + JSON.stringify(newConfig));
-          if (transactionTask)
-            clearTimeout(transactionTask);
-          inTransaction = false;
-          currentTransID = null;
-          break;
-        default:
+    await ncm.acquireConfigRWLock(async () => {
+      let newConfig = req.body;
+      const transactionOp = newConfig.transactionOp;
+      const transID = newConfig.transID;
+      delete newConfig.transactionOp; // do not leave transactionOp in the saved config
+      delete newConfig.transID;
+      const ignoreNcid = newConfig.ignoreNcid || false;
+      delete newConfig.ignoreNcid;
+      if (transactionOp && !validTransactionOps.includes(transactionOp)) {
+        const errMsg = `Unrecognized transactionOp in config: ${transactionOp}`;
+        log.error(errMsg);
+        res.status(400).json({errors:[errMsg]});
+        return;
       }
-    }
-    let errors = await ncm.validateConfig(newConfig);
-    if (errors && errors.length != 0) {
-      log.error("Invalid network config", errors);
-      res.status(400).json({errors: errors});
-    } else {
-      errors = await ncm.tryApplyConfig(newConfig);
-      if (errors && errors.length != 0) {
-        log.error("Failed to apply new network config", errors);
-        res.status(400).json({errors: errors});
-      } else {
-        log.info("New config is applied with no error");
-        if (transactionOp === T_OP_APPEND) {
-          log.info("in transaction context now");
-          inTransaction = true;
-          currentTransID = transID;
-          // create or extend the timeout task
-          if (transactionTask)
-            clearTimeout(transactionTask);
-          transactionTask = setTimeout(async () => {
-            const oldConfig = await ncm.getActiveConfig(false);
-            log.info("Automatically revert back to previous persisted config: " + JSON.stringify(oldConfig));
-            await ncm.tryApplyConfig(oldConfig).catch((err) => {
-              log.error(`Failed to automatically revert to old config`, err.message);
-            });
-            transactionTask = null;
+      if (inTransaction && !validTransactionOps.includes(transactionOp)) {
+        const errMsg = "A config change transaction context is in progress, reject non-transaction change request";
+        log.error(errMsg);
+        res.status(400).json({errors:[errMsg]});
+        return;
+      }
+      if (!inTransaction && (transactionOp === T_OP_COMMIT || transactionOp === T_OP_REVERT)) {
+        const errMsg = "No ongoing config change transaction context, cannot commit or revert";
+        log.error(errMsg);
+        res.status(400).json({errors: [errMsg]});
+        return;
+      }
+      if (validTransactionOps.includes(transactionOp) && _.isEmpty(transID)) {
+        const errMsg = `transID is not defined in transactional network config change request`;
+        log.error(errMsg);
+        res.status(400).json({errors: [errMsg]});
+        return;
+      }
+      if (inTransaction && (_.isEmpty(transID) || transID !== currentTransID)) {
+        const errMsg = `transID ${transID} does not match current transaction ID`;
+        log.error(errMsg);
+        res.status(400).json({errors: [errMsg]});
+        return;
+      }
+      if (inTransaction) {
+        switch (transactionOp) {
+          case T_OP_COMMIT:
+            newConfig = await ncm.getActiveConfig(true);
+            await ncm.saveConfig(newConfig, false); // save transaction config to persisted config
+            if (transactionTask)
+              clearTimeout(transactionTask)
             inTransaction = false;
             currentTransID = null;
-          }, T_REVERT_TIMEOUT);
+            log.info("Commit config change transaction: " + JSON.stringify(newConfig));
+            res.status(200).json({errors: [], "ncid": newConfig.ncid || ""});
+            return;
+          case T_OP_REVERT:
+            // previous persisted config will be applied in the code below
+            newConfig = await ncm.getActiveConfig(false);
+            log.info("Manually revert back to previous persisted config: " + JSON.stringify(newConfig));
+            if (transactionTask)
+              clearTimeout(transactionTask);
+            inTransaction = false;
+            currentTransID = null;
+            break;
+          default:
         }
-        await ncm.saveConfig(newConfig, inTransaction);
-        res.status(200).json({errors: errors});
       }
-    }
+      let errors = await ncm.validateConfig(newConfig);
+      if (errors && errors.length != 0) {
+        log.error("Invalid network config", errors);
+        res.status(400).json({errors: errors});
+        return;
+      }
+  
+      try {
+        errors = await ncm.validateNcidOrReqId(newConfig, inTransaction, ignoreNcid);
+        if (errors && errors.length !== 0) {
+          log.error("Invalid network config", errors);
+          res.status(400).json({ errors: errors });
+        } else {
+          errors = await ncm.tryApplyConfig(newConfig);
+          if (errors && errors.length !== 0) {
+            log.error("Failed to apply new network config", errors);
+            res.status(400).json({ errors: errors });
+          } else {
+            log.info("New config is applied with no error");
+            if (transactionOp === T_OP_APPEND) {
+              log.info("in transaction context now");
+              inTransaction = true;
+              currentTransID = transID;
+              // create or extend the timeout task
+              if (transactionTask) clearTimeout(transactionTask);
+              transactionTask = setTimeout(async () => {
+                const oldConfig = await ncm.getActiveConfig(false);
+                log.info(
+                  "Automatically revert back to previous persisted config: " +
+                  JSON.stringify(oldConfig)
+                );
+                await ncm.tryApplyConfig(oldConfig).catch((err) => {
+                  log.error(
+                    `Failed to automatically revert to old config`,
+                    err.message
+                  );
+                });
+                transactionTask = null;
+                inTransaction = false;
+                currentTransID = null;
+              }, T_REVERT_TIMEOUT);
+            }
+            newConfig.ncid = util.generateUUID();
+            log.info("New ncid generated", newConfig.ncid);
+            await ncm.saveConfig(newConfig, inTransaction);
+
+            res.status(200).json({ errors: errors, ncid: newConfig.ncid });
+          }
+        }
+      } catch (err) {
+        log.error("Cannot set network config", err.message);
+        res.status(500).json({ errors: [err.message] });
+      }
+    }).catch((err) => {
+      log.error("Failed to set network config", err.message);
+      res.status(500).json({errors: [err.message]});
+    });
   });
 
 router.post('/prepare_env',
   jsonParser,
   async (req, res, next) => {
+    const t1 = Date.now() / 1000;
     await ns.prepareEnvironment().then(() => {
+      const t2 = Date.now() / 1000;
+      log.info(`prepareEnvironment took ${t2 - t1} seconds`);
       res.status(200).json({errors: []});
     }).catch((err) => {
       log.error(req.url, err)
@@ -356,26 +391,31 @@ router.post('/prepare_env',
 router.post('/apply_current_config',
   jsonParser,
   async (req, res, next) => {
-    const currentConfig = await ncm.getActiveConfig(inTransaction);
-    if (currentConfig) {
-      let errors = await ncm.validateConfig(currentConfig);
-      if (errors && errors.length != 0) {
-        log.error("Invalid network config", errors);
-        res.status(400).json({errors: errors});
-      } else {
-        errors = await ncm.tryApplyConfig(currentConfig);
+    await ncm.acquireConfigRWLock(async () => {
+      const currentConfig = await ncm.getActiveConfig(inTransaction);
+      if (currentConfig) {
+        let errors = await ncm.validateConfig(currentConfig);
         if (errors && errors.length != 0) {
-          log.error("Failed to apply current network config", errors);
+          log.error("Invalid network config", errors);
           res.status(400).json({errors: errors});
         } else {
-          log.info("Current config is applied with no error");
-          await ncm.saveConfig(currentConfig);
-          res.status(200).json({errors: errors});
+          errors = await ncm.tryApplyConfig(currentConfig);
+          if (errors && errors.length != 0) {
+            log.error("Failed to apply current network config", errors);
+            res.status(400).json({errors: errors});
+          } else {
+            log.info("Current config is applied with no error");
+            await ncm.saveConfig(currentConfig);
+            res.status(200).json({errors: errors});
+          }
         }
+      } else {
+        res.status(404).send("Network config is not set.");
       }
-    } else {
-      res.status(404).send("Network config is not set.");
-    }
+    }).catch((err) => {
+      log.error("Failed to apply current config", err.message);
+      res.status(500).json({errors: [err.message]});
+    });
   });
 
 router.post('/renew_dhcp_lease',
@@ -426,6 +466,43 @@ router.post('/renew_dhcp6_lease',
     });
   });
 
+router.post('/power_mode',
+  jsonParser,
+  async (req, res, next) => {
+    const powerMode = req.body.powerMode;
+    if (!powerMode) {
+      res.status(400).json({errors: ['"powerMode" is not specified']});
+      return;
+    }
+    if (!constants.SUPPORTED_POWER_MODES.includes(powerMode)) {
+      res.status(400).json({errors: ['Invalid power mode']});
+      return;
+    }
+    const pdoSensor = sensorLoader.getSensor('PDOSensor');
+    if (pdoSensor) {
+      await pdoSensor.setPowerMode(powerMode);
+      const configuredPowerMode = await pdoSensor.getPowerMode();
+      const effectivePowerMode = await pdoSensor.getEffectivePowerMode();
+      const pdoInfo = await pdoSensor.getPDOInfo();
+      res.status(200).json({configuredPowerMode, effectivePowerMode, pdoInfo});
+    } else {
+      res.status(500).json({errors: ['PDO sensor not found']});
+    }
+  });
+
+router.get('/power_mode',
+  async (req, res, next) => {
+    const pdoSensor = sensorLoader.getSensor('PDOSensor');
+    if (pdoSensor) {
+      const configuredPowerMode = await pdoSensor.getPowerMode();
+      const effectivePowerMode = await pdoSensor.getEffectivePowerMode();
+      const pdoInfo = await pdoSensor.getPDOInfo();
+      res.status(200).json({configuredPowerMode, effectivePowerMode, pdoInfo});
+    } else {
+      res.status(500).json({errors: ['PDO sensor not found']});
+    }
+  });
+
 router.get('/dhcp_lease/:intf', async (req, res, next) => {
     const intf = req.params.intf;
     if (!intf) {
@@ -457,56 +534,5 @@ router.get('/dhcp6_lease/:intf', async (req, res, next) => {
       res.status(400).json({errors: [err.message]});
     });
   })
-
-  router.put('/assets/:uid',
-    jsonParser,
-    async (req, res, next) => {
-      const uid = req.params.uid;
-      const config = req.body;
-      const errors = [];
-      await assetsController.setConfig(uid, config).catch((err) => {
-        errors.push(err.message);
-      });
-      res.status(200).json({errors});
-    }
-  )
-
-  router.get('/assets/:uid', async (req, res, next) => {
-    const uid = req.params.uid;
-    const config = await assetsController.getConfig(uid);
-    if (!config)
-      res.status(404).json({errors: [`Cannot find asset uid ${uid}`]});
-    else
-      res.status(200).json(config);
-  })
-
-  router.delete('/assets/:uid', async (req, res, next) => {
-    const uid = req.params.uid;
-    const config = await assetsController.deleteConfig(uid);
-    if (!config)
-      res.status(404).json({errors: [`Cannot find asset uid ${uid}`]});
-    else
-      res.status(200).json(config);
-  })
-
-  router.put('/assets',
-    jsonParser,
-    async (req, res, next) => {
-      const body = req.body;
-      const errors = [];
-      for (const uid of Object.keys(body)) {
-        await assetsController.setConfig(uid, body[uid]).catch((err) => {
-          errors.push(err.message);
-        });
-      }
-      res.status(200).json({errors});
-    }
-  )
-
-  router.get('/assets', async (req, res, next) => {
-    const config = await assetsController.getAllConfig();
-    res.status(200).json(config);
-  })
-
   
 module.exports = router;

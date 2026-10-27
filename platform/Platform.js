@@ -16,9 +16,17 @@
 'use strict';
 
 const log = require('../util/logger.js')(__filename);
-const fsp = require('fs').promises
+const fs = require('fs');
+const fsp = fs.promises
 const r = require('../util/firerouter')
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
+const pl = require('../plugins/plugin_loader.js');
+const util = require('../util/util.js');
+
+const APSafeFreqs = [
+  2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
+  5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
+]
 
 class Platform {
   getName() {
@@ -28,7 +36,7 @@ class Platform {
   }
 
   async getLSBCodeName() {
-    return await exec("lsb_release -cs", {encoding: 'utf8'}).then(result=> result.stdout.trim()).catch((err)=>{
+    return await execFile("lsb_release", ["-cs"], {encoding: 'utf8'}).then(result=> result.stdout.trim()).catch((err)=>{
       log.error("failed to get codename from lsb_release:",err.message);
     });
   }
@@ -39,6 +47,16 @@ class Platform {
 
   async isUbuntu22() {
     return await this.getLSBCodeName() === 'jammy';
+  }
+
+  async isMiniupnpdUsingNft() {
+    const cmd = "miniupnpd --version | grep -w nftables";
+    const result = await exec(cmd, {encoding: 'utf8'}).then(() => true).catch(() => false);
+    return result;
+  }
+
+  getMiniupnpdNftPath() {
+    return null;
   }
 
   getDefaultNetworkJsonFile() {
@@ -53,6 +71,30 @@ class Platform {
     return null;
   }
 
+  getWifiAPInterface() {
+    return null;
+  }
+
+  getAPScanInterface() {
+    return this.getWifiClientInterface();
+  }
+
+  getDefaultBaseIntf(intfName) {
+    return null;
+  }
+
+  getDefaultWLanType(intfName) {
+    return "managed";
+  }
+
+  getExclusiveWLANSibling(intfName) {
+    return null;
+  }
+
+  shouldBringWLANInterfaceUp(wlanIntfPlugin) {
+    return wlanIntfPlugin.networkConfig.enabled !== false;
+  }
+
   async getWpaCliBinPath() {
     return null;
   }
@@ -63,6 +105,21 @@ class Platform {
 
   getBinaryPath() {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/bin`;
+  }
+
+  getAwgBinPath() {
+    return `${this.getBinaryPath()}/awg`;
+  }
+
+  async resolveAwgBinPath() {
+  }
+
+  getFilesPath() {
+    return `${r.getFireRouterHome()}/platform/${this.getName()}/files`;
+  }
+
+  getNtpServiceName() {
+    return "ntp";
   }
 
   async ledNormalVisibleStart() {
@@ -87,14 +144,14 @@ class Platform {
     const confPath = `${srcDir}/${koName}.conf`;
     let changed = false;
     try {
-      await exec(`cmp -s ${srcPath} ${dstPath}`);
+      await execFile("cmp", ["-s", srcPath, dstPath]);
     } catch (err) {
       try {
         // copy over <name>.conf (if any) and <name>.ko
         // NOTE: copy 2 files in same line to avoid harmless error from 1st command(NO .conf file)
         await exec(`sudo cp -f ${confPath} /etc/modprobe.d/; sudo cp -f ${srcPath} ${dstPath}`);
         // update kernel modules mapping
-        await exec(`sudo depmod -a`);
+        await execFile("sudo", ["depmod", "-a"]);
         const koLoaded = await this.kernelModuleLoaded(koName)
         log.debug(`koLoaded is ${koLoaded}`);
         if (koLoaded) {
@@ -115,15 +172,15 @@ class Platform {
     let koReloaded = false;
     let confChanged = false;
     try {
-      await exec(`cmp -s ${srcPath} ${dstPath}`);
+      await execFile("cmp", ["-s", srcPath, dstPath]);
       log.debug(`kernel module ${koName} reload - bypassed due to configuration already up-to-date in ${dstPath}`)
     } catch (err) {
       confChanged = true;
       // copy over .conf
-      await exec(`sudo cp -f ${srcPath} ${dstPath}`);
+      await execFile("sudo", ["cp", "-f", srcPath, dstPath]);
       log.info(`kernel module ${koName} reload - configuration updated in ${dstPath}`);
       // update kernel modules mapping
-      await exec(`sudo depmod -a`);
+      await execFile("sudo", ["depmod", "-a"]);
       log.debug(`kernel module ${koName} reload - kernel modules mapping updated`);
     }
     if (confChanged || forceReload) try {
@@ -149,12 +206,15 @@ class Platform {
   }
 
   async setEthernetOffload(iface,feature,desc,onoff) {
-    await exec(`sudo ethtool -K ${iface} ${feature} ${onoff}`).catch( (err) => {
+    await execFile("sudo", ["ethtool", "-K", iface, feature, onoff]).catch( (err) => {
       log.error(`Failed to turn ${onoff} ${desc} in ${iface}`);
     });
   }
 
   async configEthernet() {
+  }
+
+  async resetEthernet() {
   }
 
   async overrideWLANKernelModule() {
@@ -164,6 +224,96 @@ class Platform {
   }
 
   async installWLANTools() {
+  }
+
+  // Returns true if a WLAN kernel module reload was actually performed, so that
+  // callers know a full reapply of WLAN interfaces is needed.
+  async prepareWLANRegDomainChange(country) {
+    return false;
+  }
+
+  async installKernelModule(module_name) {
+    const koPath = await this.getKoPath(module_name);
+    const koExists = await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch((err) => false);
+    // Prefer the local .ko when present; fall back to system module (e.g. after rollback).
+    const target = koExists ? koPath : module_name;
+    const load = () => koExists
+      ? this.insmodKernelModule(module_name, koPath)
+      : this.modprobeKernelModule(module_name);
+
+    if (!(await this.isKernelModuleLoaded(module_name))) {
+      await load();
+      return;
+    }
+
+    const loadedSrcVersion = await this.getLoadedModuleSrcVersion(module_name);
+    const targetSrcVersion = await this.getModuleSrcVersion(target);
+    if (loadedSrcVersion === targetSrcVersion) return;
+
+    log.info(`Reloading ${module_name}: srcversion changed (${loadedSrcVersion || '<empty>'} -> ${targetSrcVersion || '<empty>'})`);
+    if (!(await this.rmmodKernelModule(module_name))) return;
+    await load();
+  }
+
+  async modprobeKernelModule(module_name) {
+    await execFile("sudo", ["modprobe", module_name]).catch((err) => {
+      log.error(`Failed to modprobe ${module_name}`, err.message);
+    });
+  }
+
+  async rmmodKernelModule(module_name) {
+    return await execFile("sudo", ["rmmod", module_name]).then(() => true).catch((err) => {
+      log.error(`Failed to unload ${module_name} before reload`, err.message);
+      return false;
+    });
+  }
+
+  async insmodKernelModule(module_name, koPath) {
+    await execFile("sudo", ["insmod", koPath]).catch((err) => {
+      log.error(`Failed to install ${module_name}.ko`, err.message);
+    });
+  }
+
+  async isKernelModuleLoaded(module_name) {
+    return await fsp.access(`/sys/module/${module_name}`, fs.constants.F_OK).then(() => true).catch(() => false);
+  }
+
+  async getLoadedModuleSrcVersion(module_name) {
+    return await fsp.readFile(`/sys/module/${module_name}/srcversion`, {encoding: 'utf8'})
+      .then((result) => result.trim())
+      .catch(() => "");
+  }
+
+  async getModuleSrcVersion(moduleOrPath) {
+    return this.getModuleInfoField(moduleOrPath, "srcversion");
+  }
+
+  // Reads a field from the .modinfo section ("key=value\0" entries) of a module file.
+  // Unlike modinfo, this also works on files not named *.ko, e.g. <name>.ko.aarch64-none-linux-gnu-gcc
+  async getModuleInfoField(moduleOrPath, field) {
+    const koPath = moduleOrPath.includes('/')
+      ? moduleOrPath
+      : await execFile("modinfo", ["-n", moduleOrPath]).then((result) => result.stdout.trim()).catch(() => "");
+    if (!koPath) return "";
+    const content = await fsp.readFile(koPath).catch(() => null);
+    if (!content) return "";
+    const key = Buffer.from(`${field}=`);
+    let start = content.indexOf(key);
+    // a real entry starts right after the NUL that ends the previous one
+    while (start > 0 && content[start - 1] !== 0)
+      start = content.indexOf(key, start + 1);
+    if (start < 0) return "";
+    const end = content.indexOf(0, start + key.length);
+    return content.toString('utf8', start + key.length, end < 0 ? content.length : end).trim();
+  }
+
+  async getKernelModulesPath() {
+    const kernelRelease = await execFile("uname", ["-r"]).then(result => result.stdout.trim());
+    return `${r.getFireRouterHome()}/platform/${this.getName()}/files/kernel_modules/${kernelRelease}`;
+  }
+
+  async getKoPath(module_name) {
+    return `${await this.getKernelModulesPath()}/${module_name}.ko`;
   }
 
   getModelName() {
@@ -177,40 +327,53 @@ class Platform {
   }
 
   async setHardwareAddress(iface, hwAddr) {
-    if(!hwAddr) {
+    if(!util.isValidMacAddress(hwAddr)) {
       return; // by default don't reset back when hwAddr is undefined
     }
 
     log.info(`Setting ${iface} hwaddr to`, hwAddr);
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "address", hwAddr]).catch((err) => {
       log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
     });
   }
 
-  async resetHardwareAddress(iface) {
+  async getPermanentMac(iface) {
     const permAddr = await exec(`sudo ethtool -P ${iface} | awk '{print $3}'`, {encoding: "utf8"}).then((result) => result.stdout.trim()).catch((err) => {
       log.error(`Failed to get permanent address of ${iface}`, err.message);
       return null;
     });
 
-    // 00:00:00:00:00:00 is invalid as a device mac addr
-    if (permAddr && permAddr !== "00:00:00:00:00:00") {
-      await exec(`sudo ip link set ${iface} address ${permAddr}`).catch((err) => {
+    if (util.isValidMacAddress(permAddr) && permAddr !== "00:00:00:00:00:00")
+      return permAddr;
+    return null;
+  }
+
+  async resetHardwareAddress(iface) {
+    const permAddr = await this.getPermanentMac(iface);
+    if (permAddr) {
+      await execFile("sudo", ["ip", "link", "set", iface, "address", permAddr]).catch((err) => {
         log.error(`Failed to revert hardware address of ${iface} to ${permAddr}`, err.message);
       });
     }
   }
 
   async installMiniupnpd() {
-    // replace miniupnpd binary if it is using nftables backend,
     // nft-based miniupnpd will create separate table for its chains, need to use in-house miniupnpd to make it use existing chains in filter table
-    const nftUsed = await exec(`ldd $(which miniupnpd) | grep libnftnl`).then(() => true).catch((err) => false);
-    const ubtVersionDir = await this.isUbuntu22() ? "u22" : (await this.isUbuntu20() ? "u20" : ".");
-    if (nftUsed) {
-      log.info(`miniupnpd is using nftables, will replace it with in-house miniupnpd ...`);
-      await exec(`sudo cp -f --preserve=mode ${this.getBinaryPath()}/${ubtVersionDir}/miniupnpd.nft $(which miniupnpd)`).catch((err) => {
-        log.error(`Failed to update miniupnpd with nft support`, err.message);
-      });
+    if (!await this.isMiniupnpdUsingNft()) return;
+    const srcPath = this.getMiniupnpdNftPath();
+    if (!srcPath) {
+      log.debug("miniupnpd nft path is not set on this platform, skipping miniupnpd update");
+      return;
+    }
+    log.info(`Checking if miniupnpd binary needs update, srcPath: ${srcPath}`);
+    // single bash call: source binary exists AND system has miniupnpd AND their sha256sums differ
+    const needsUpdate = await exec(`test -f ${srcPath} && dst=$(which miniupnpd) && [ "$(sha256sum ${srcPath} | awk '{print $1}')" != "$(sha256sum "$dst" | awk '{print $1}')" ]`)
+      .then(() => true).catch(() => false);
+    if (needsUpdate) {
+      log.info(`miniupnpd binary differs from in-house version, replacing ...`);
+      await exec(`sudo cp -f --preserve=mode ${srcPath} $(which miniupnpd)`).catch((err) => {
+        log.error(`Failed to update miniupnpd`, err.message);
+      })
     }
   }
 
@@ -219,9 +382,135 @@ class Platform {
   }
 
   async setMTU(iface, mtu) {
-    await exec(`sudo ip link set ${iface} mtu ${mtu}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "mtu", String(mtu)]).catch((err) => {
       log.error(`Failed to set MTU of ${iface} to ${mtu}`, err.message);
     });
+  }
+
+  async createWLANInterface(wlanIntfPlugin) {
+    const ifaceExists = await execFile("ip", ["link", "show", "dev", wlanIntfPlugin.name]).then(() => true).catch((err) => false);
+    if (!ifaceExists) {
+      const baseIntf = wlanIntfPlugin.getBaseIntf();
+      if (baseIntf) {
+        const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
+        if (baseIntfPlugin) {
+          wlanIntfPlugin.subscribeChangeFrom(baseIntfPlugin);
+          if (await baseIntfPlugin.isInterfacePresent() === false) {
+            wlanIntfPlugin.log.warn(`Base interface ${baseIntf} is not present yet`);
+            return false;
+          }
+        } else {
+          wlanIntfPlugin.fatal(`Lower interface plugin not found ${baseIntf}`);
+        }
+        const type = wlanIntfPlugin.getWlanType();
+        await execFile("sudo", ["iw", "dev", baseIntf, "interface", "add", wlanIntfPlugin.name, "type", type]);
+      }
+    } else {
+      wlanIntfPlugin.log.warn(`Interface ${wlanIntfPlugin.name} already exists`);
+    }
+  }
+
+  async removeWLANInterface(wlanIntfPlugin) {
+    const baseIntf = wlanIntfPlugin.getBaseIntf();
+    if (baseIntf) {
+      const basePhy = await execFile("readlink", ["-f", `/sys/class/net/${baseIntf}/phy80211`], {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      const myPhy = await execFile("readlink", ["-f", `/sys/class/net/${wlanIntfPlugin.name}/phy80211`], {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
+      if (basePhy && myPhy && basePhy === myPhy)
+        await execFile("sudo", ["iw", "dev", wlanIntfPlugin.name, "del"]).catch((err) => {});
+      else
+        wlanIntfPlugin.log.warn(`${wlanIntfPlugin.name} and ${baseIntf} are not pointing to the same wifi phy, interface ${wlanIntfPlugin.name} will not be deleted`);
+    }
+  }
+
+  isWLANManagedByAPC() {
+    return false;
+  }
+
+  // whether installer-provisioned onboard-config.json drives the first network config
+  isOnboardConfigSupported() {
+    return false;
+  }
+
+  isHotplugSupported(intf) {
+    return true;
+  }
+
+  isPDOSupported() {
+    return false;
+  }
+
+  async loadPDOInfo() {
+  }
+
+  getEffectivePowerMode(pdoInfo, configuredPowerMode) {
+  }
+
+  getWpaSupplicantGlobalDefaultConfig() {
+    return {
+      bss_expiration_age: 630,
+      bss_expiration_scan_count: 5,
+
+      // sets freq_list globally limits the frequencies being scaned
+      freq_list: APSafeFreqs,
+      pmf: 1,
+    }
+  }
+
+  getWpaSupplicantNetworkDefaultConfig() {
+    return {
+      // sets freq_list again on each network limits the frequencies being used for connection
+      freq_list: APSafeFreqs,
+    }
+  }
+
+  async enableHostapd(iface, parameters) {
+    await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`, Object.keys(parameters).map(k => `${k}=${parameters[k]}`).join("\n"), {encoding: 'utf8'});
+    await execFile("sudo", ["systemctl", "restart", `firerouter_hostapd@${iface}`]).catch((err) => {});
+  }
+
+  async disableHostapd(iface) {
+    await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@${iface}`]).catch((err) => {});
+    await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/${iface}.conf`).catch((err) => {});
+  }
+
+  async processWpaSupplicantLog(line, config) {
+    // Base implementation - can be overridden by platform-specific implementations
+  }
+
+  needResetLinkBeforeSwitchWifi() {
+    return true;
+  }
+
+  async setDFSScanState(state) {
+
+  }
+
+  async skipDFSCAC() {
+
+  }
+
+  async prepareSwitchWifi() {
+
+  }
+
+  getWpaSupplicantDefaultConfig() {
+    return [];
+  }
+
+  getWpaCliScanResultCommand() {
+    return 'scan_result';
+  }
+
+  isWDSSupported() {
+    return false;
+  }
+
+  async setWifiDynamicDebug() {
+    return;
+  }
+
+  getSSHKeyTypes() {
+    return ['dsa', 'ecdsa', 'ed25519', 'rsa'];
   }
 }
 

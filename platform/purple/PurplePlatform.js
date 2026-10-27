@@ -20,10 +20,11 @@ Promise.promisifyAll(fs);
 const Platform = require('../Platform.js');
 
 const firestatusBaseURL = "http://127.0.0.1:9966";
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
+const rclientDB0 = require('../../util/redis_manager.js').getPrimaryDBRedisClient();
 
 const macCache = {};
 
@@ -31,6 +32,11 @@ let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
 
 class PurplePlatform extends Platform {
+  constructor() {
+    super();
+    this.rejects = [];
+  }
+
   getName() {
     return "purple";
   }
@@ -61,25 +67,25 @@ class PurplePlatform extends Platform {
   }
 
   async ledNormalVisibleStart() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN normal visible");
     });
   }
 
   async ledNormalVisibleStop() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAllNetworkDown() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAnyNetworkUp() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
@@ -94,7 +100,7 @@ class PurplePlatform extends Platform {
       const mac = await this.getMacByIface("eth1");
 
       if (mac) {
-        await exec(`sudo ip link set eth1 address ${mac}`).catch((err) => {
+        await execFile("sudo", ["ip", "link", "set", "eth1", "address", mac]).catch((err) => {
           log.error(`Failed to set MAC address of eth1`, err.message);
         })
       }
@@ -132,27 +138,27 @@ class PurplePlatform extends Platform {
           const ap = this.getWifiAPInterface();
 
           // shutdown dependant services
-          await exec(`sudo systemctl stop firerouter_wpa_supplicant@${client}`).catch((err) => {})
-          await exec(`sudo systemctl stop firerouter_hostapd@${ap}`).catch((err) => {})
+          await execFile("sudo", ["systemctl", "stop", `firerouter_wpa_supplicant@${client}`]).catch((err) => {})
+          await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@${ap}`]).catch((err) => {})
 
           // a hard code 1-second wait for system to release wifi interfaces
           await util.delay(1000);
 
           // force shutdown interfaces
-          await exec(`sudo ip link set ${client} down`).catch((err) => {
+          await execFile("sudo", ["ip", "link", "set", client, "down"]).catch((err) => {
             log.error(`Failed to turn off interface ${client}`, err.message);
           });
 
-          await exec(`sudo ip link set ${ap} down`).catch((err) => {
+          await execFile("sudo", ["ip", "link", "set", ap, "down"]).catch((err) => {
             log.error(`Failed to turn off interface ${ap}`, err.message);
           });
 
           // set mac address
-          await exec(`sudo ip link set ${client} address ${clientMac}`).catch((err) => {
+          await execFile("sudo", ["ip", "link", "set", client, "address", clientMac]).catch((err) => {
             log.error(`Failed to set MAC address of ${client}`, err.message);
           });
 
-          await exec(`sudo ip link set ${ap} address ${apMac}`).catch((err) => {
+          await execFile("sudo", ["ip", "link", "set", ap, "address", apMac]).catch((err) => {
             log.error(`Failed to set MAC address of ${ap}`, err.message);
           });
         }
@@ -242,12 +248,12 @@ class PurplePlatform extends Platform {
     if(ifplug) {
       await ifplug.stopMonitoringInterface(iface);
     }
-    await exec(`sudo ip link set ${iface} down`);
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "down"]);
+    await execFile("sudo", ["ip", "link", "set", iface, "address", hwAddr]).catch((err) => {
       log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
       errCounter++;
     });
-    await exec(`sudo ip link set ${iface} up`);
+    await execFile("sudo", ["ip", "link", "set", iface, "up"]);
     if(ifplug) {
       await ifplug.startMonitoringInterface(iface);
     }
@@ -286,14 +292,41 @@ class PurplePlatform extends Platform {
       if (ifplug) {
         await ifplug.stopMonitoringInterface(iface);
       }
-      await exec(`sudo ip link set ${iface} down`);
+      await execFile("sudo", ["ip", "link", "set", iface, "down"]);
       await super.setMTU(iface, mtu);
-      await exec(`sudo ip link set ${iface} up`);
+      await execFile("sudo", ["ip", "link", "set", iface, "up"]);
       if (ifplug) {
         await ifplug.startMonitoringInterface(iface);
       }
     } else
       await super.setMTU(iface, mtu);
+  }
+
+  async processWpaSupplicantLog(line, config) {
+    // #define WLAN_REASON_UNSPECIFIED 1
+    if (line.includes('CTRL-EVENT-ASSOC-REJECT status_code=1')) {
+      // ignore reject events within a minute as it could coming from multiple SSIDs
+      const now = Date.now() / 1000
+      if (!this.rejects.length || now - this.rejects[this.rejects.length-1] > config.reject_threshold_min_interval) {
+        this.rejects.push(now)
+        log.debug('added reject event', this.rejects)
+        while (this.rejects[0] < now - config.reject_threshold_time_seconds) {
+          const removed = this.rejects.shift()
+          log.debug('removed reject', removed)
+        }
+        if (this.rejects.length >= config.reject_threshold_count) {
+          log.info('Threshold hit, reloading kernel module ...')
+          // sleep to allow IfPresenceSensor to catch the event
+          await exec('sudo rmmod 88x2cs; sleep 3; sudo modprobe 88x2cs')
+          this.rejects = []
+          await rclientDB0.incrAsync('sys:wlan:kernelReload')
+        }
+      }
+    } else if (line.includes('CTRL-EVENT-CONNECTED')) {
+      // reset counter
+      this.rejects = []
+      log.debug('connected event received, rejects cleared', this.rejects)
+    }
   }
 }
 

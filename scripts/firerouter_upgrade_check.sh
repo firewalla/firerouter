@@ -23,8 +23,21 @@ echo $$ > $LOCK_FILE
 
 FRFLAG="/home/pi/.router/config/.no_upgrade_check"
 if [[ -e $FRFLAG ]]; then
-  $FIRELOG -t debug -m "FIREROUTER.UPGRADE.CHECK NO UPGRADE"
+  $FIRELOG -t debug -m "FIREROUTER.UPGRADE.CHECK NO AUTO UPGRADE"
   echo "======= SKIP UPGRADING CHECK BECAUSE OF FLAG $FRFLAG ======="
+  exit 0
+fi
+
+FIREROUTER_CANARY_SCRIPT="${FIREROUTER_HOME}/scripts/firerouter_upgrade_canary.sh"
+FRCANARY_FLAG="/home/pi/.router/config/.no_upgrade_canary"
+
+if [[ -e "$FIREROUTER_CANARY_SCRIPT" ]];then
+  bash $FIREROUTER_CANARY_SCRIPT &> /tmp/firerouter_upgrade_canary.log
+fi
+
+if [[ -e $FRCANARY_FLAG ]]; then
+  $FIRELOG -t debug -m "FIREROUTER.UPGRADE.CHECK NO CANARY UPGRADE"
+  echo "======= SKIP FIREROUTER UPGRADING CHECK BECAUSE OF FLAG $FRCANARY_FLAG ======="
   exit 0
 fi
 
@@ -45,9 +58,8 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   sudo systemctl restart firerouter
   init_network_config
   rm -f /dev/shm/firerouter.upgraded
-  echo "Restarting FireReset ..."
-  sudo systemctl restart firereset
+  if [[ $NEED_FIRERESET != "false" ]]; then
+    echo "Restarting FireReset ..."
+    sudo systemctl restart firereset
+  fi
 fi
-
-
-

@@ -15,6 +15,7 @@
 
 'use strict';
 
+const Plugin = require('./plugin.js');
 const log = require('../util/logger.js')(__filename);
 const config = require('../util/config.js').getConfig();
 const Message = require('../core/Message.js');
@@ -28,8 +29,9 @@ let restartRsyslogTask = null;
 
 const _ = require('lodash');
 const AsyncLock = require('async-lock');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const fwpclient = require('../util/redis_manager.js').getPublishClient();
+const platform = require('../platform/PlatformLoader.js').getPlatform();
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 let applyInProgress = false;
@@ -38,9 +40,10 @@ let lastAppliedTimestamp = null;
 let CHANGE_FLAGS = 0;
 const FLAG_IFACE_CHANGE = 0x1;
 const FLAG_CHANGE = 0x2;
+const FLAG_APC_CHANGE = 0x4;
 
 async function initPlugins() {
-  if(_.isEmpty(config.plugins)) {
+  if (_.isEmpty(config.plugins)) {
     return;
   }
 
@@ -62,14 +65,14 @@ async function initPlugins() {
       log.error("Failed to initialize plugin ", pluginConf, err);
     }
   }
-  await exec(`sudo systemctl daemon-reload`).catch((err) => {
+  await execFile("sudo", ["systemctl", "daemon-reload"]).catch((err) => {
     log.error(`Failed to reload systemctl daemon`, err.message);
   });
 
   log.info("Plugin initialized", pluginConfs);
 }
 
-function createPluginInstance(category, name, constructor, config=null) {
+function createPluginInstance(category, name, constructor, config = null) {
   let instance = pluginCategoryMap[category] && pluginCategoryMap[category][name];
   if (instance)
     return instance;
@@ -115,6 +118,11 @@ function _isConfigEqual(c1, c2) {
     delete c1Copy["extra"];
   if (c2Copy.hasOwnProperty("extra"))
     delete c2Copy["extra"];
+  if (!_.has(c1Copy, ["meta", "type"]) && !_.has(c2Copy, ["meta", "type"])) {
+    // ignore meta if both configs have no type, i.e., different uuids in interface configs are treated as the same config in this case
+    delete c1Copy.meta;
+    delete c2Copy.meta;
+  }
 
   return _.isEqual(c1Copy, c2Copy);
 }
@@ -133,6 +141,13 @@ async function publishIfaceChangeApplied() {
     await fwpclient.publishAsync(Message.MSG_FR_IFACE_CHANGE_APPLIED, "");
   else
     CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+}
+
+async function publishAPCChangeApplied() {
+  if (!isApplyInProgress())
+    await fwpclient.publishAsync(Message.MSG_FR_APC_CHANGE_APPLIED, "");
+  else
+    CHANGE_FLAGS |= FLAG_APC_CHANGE;
 }
 
 function isApplyInProgress() {
@@ -157,12 +172,38 @@ async function reapply(config, dryRun = false) {
     t1 = Date.now() / 1000;
     applyInProgress = true;
     const errors = [];
+
+    const country = _.get(config, ['apc', 'globalSysConfig', 'country']);
+    const wlanReloaded = await platform.prepareWLANRegDomainChange(country).catch((err) => {
+      log.error(`Failed to prepare WLAN reg domain change for country ${country}`, err);
+      errors.push(err.message || err);
+      return false;
+    });
+
     let newPluginCategoryMap = {};
     const reversedPluginConfs = pluginConfs.reverse();
     // if config is not set, simply reapply effective config
     if (config) {
       // remove plugins in descending order by init sequence
+      const remove = async (instance, pluginConf) => {
+        if (!dryRun) {
+          log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
+          await instance.flush();
+          if (pluginConf.category === "apc") {
+            CHANGE_FLAGS |= FLAG_APC_CHANGE;
+          } else {
+            CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+          }
+
+        }
+        instance.propagateConfigChanged(Plugin.CHANGE_FULL);
+        instance.unsubscribeAllChanges();
+        pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
+      };
       for (let pluginConf of reversedPluginConfs) {
+        const concurrent = pluginConf.allow_concurrent;
         newPluginCategoryMap[pluginConf.category] = newPluginCategoryMap[pluginConf.category] || {};
         if (!pluginConf.c)
           continue;
@@ -188,15 +229,19 @@ async function reapply(config, dryRun = false) {
             instance._mark = 1;
             const oldConfig = instance.networkConfig;
             if (oldConfig && !_isConfigEqual(oldConfig, value[name])) {
-              log.info(`Network config of ${pluginConf.category}-->${name} changed`, oldConfig, value[name]);
-              instance.propagateConfigChanged(true);
+              log.info(`Network config of ${pluginConf.category}-->${name} changed`, pluginConf.hide_config_in_log ? "hidden" : oldConfig, pluginConf.hide_config_in_log ? "hidden" : value[name]);
+              const changeType = instance.getConfigChangeType(value[name]);
+              instance.propagateConfigChanged(changeType);
             }
             instance._nextConfig = value[name];
             if (!oldConfig) {
               // initialization of network config, flush instance with new config
-              log.info(`Initial setup of ${pluginConf.category}-->${name}`, value[name]);
-              instance.propagateConfigChanged(true);
+              log.info(`Initial setup of ${pluginConf.category}-->${name}`, pluginConf.hide_config_in_log ? "hidden" : value[name]);
+              instance.propagateConfigChanged(Plugin.CHANGE_FULL);
               instance.unsubscribeAllChanges();
+            }
+            if (wlanReloaded && pluginConf.config_path === "interface.wlan") {
+              instance.propagateConfigChanged(Plugin.CHANGE_FULL);
             }
             newInstances[name] = instance;
           }
@@ -204,17 +249,18 @@ async function reapply(config, dryRun = false) {
 
         if (instances) {
           const removedInstances = instances.filter(i => i._mark == 0);
+          const promises = [];
           for (let instance of removedInstances) {
-            if (!dryRun) {
-              log.info(`Removing plugin ${pluginConf.category}-->${instance.name} ...`);
-              await instance.flush();
-              CHANGE_FLAGS |= FLAG_CHANGE;
-              if (pluginConf.category === "interface")
-                CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+            if (concurrent) {
+              promises.push(remove(instance, pluginConf));
+            } else {
+              await remove(instance, pluginConf);
             }
-            instance.propagateConfigChanged(true);
-            instance.unsubscribeAllChanges();
-            pluginCategoryMap && pluginCategoryMap[pluginConf.category] && delete pluginCategoryMap[pluginConf.category][instance.name];
+          }
+          if (concurrent && !_.isEmpty(promises)) {
+            if (!dryRun)
+              log.info(`Removing ${removedInstances.length} instances of ${pluginConf.category} in concurrent mode`);
+            await Promise.all(promises);
           }
         }
         // merge with new pluginCategoryMap
@@ -224,27 +270,54 @@ async function reapply(config, dryRun = false) {
       newPluginCategoryMap = pluginCategoryMap;
     }
 
+    const flush = async (instance, pluginConf) => {
+      if (!instance.networkConfig) // newly created instance
+        instance.configure(instance._nextConfig);
+      if (instance.isReapplyNeeded()) {
+        if (!dryRun) {
+          if (instance.isFlushNeeded(instance._nextConfig)) {
+            if (instance.isFullFlushNeeded(instance._nextConfig)) {
+              log.info("Flushing old config", pluginConf.category, instance.name);
+              await instance.flush();
+            } else {
+              log.info("Fast flushing old config", pluginConf.category, instance.name);
+              await instance.flushFast();
+            }
+          } else
+            log.info("No need to flush old config", pluginConf.category, instance.name);
+          if (pluginConf.category === "apc") {
+            CHANGE_FLAGS |= FLAG_APC_CHANGE;
+          } else {
+            CHANGE_FLAGS |= FLAG_CHANGE;
+            if (pluginConf.category === "interface")
+              CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+          }
+        }
+        instance.unsubscribeAllChanges();
+      }
+      if (config) {
+        // do not change config if config is not set
+        instance.configure(instance._nextConfig);
+      }
+    };
+
     // flush all changed plugins in descending order by init sequence
     for (let pluginConf of reversedPluginConfs) {
       const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+      const concurrent = pluginConf.allow_concurrent;
       if (instances) {
+        const promises = [];
         for (let instance of instances) {
-          if (!instance.networkConfig) // newly created instance
-            instance.configure(instance._nextConfig);
-          if (instance.isReapplyNeeded()) {
-            if (!dryRun) {
-              log.info("Flushing old config", pluginConf.category, instance.name);
-              await instance.flush();
-              CHANGE_FLAGS |= FLAG_CHANGE;
-              if (pluginConf.category === "interface")
-                CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
-            }
-            instance.unsubscribeAllChanges();
+          if (concurrent) {
+            promises.push(flush(instance, pluginConf));
+          } else {
+            await flush(instance, pluginConf);
           }
-          if (config) {
-            // do not change config if config is not set
-            instance.configure(instance._nextConfig);
-          }
+        }
+        if (concurrent && !_.isEmpty(promises)) {
+          if (!dryRun)
+            log.info(`Flushing instances of ${pluginConf.category} in concurrent mode`);
+          await Promise.all(promises);
         }
       }
     }
@@ -257,23 +330,41 @@ async function reapply(config, dryRun = false) {
       lastAppliedTimestamp = Date.now() / 1000;
       return errors;
     }
-    for (let pluginConf of pluginConfs) {
-      const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
-      if (instances) {
-        for (let instance of instances) {
-          if (instance.isReapplyNeeded()) {
-            log.info("Applying new config", pluginConf.category, instance.name);
-            await instance.apply().catch((err) => {
-              log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
-              errors.push(err.message || err);
-            });
-            CHANGE_FLAGS |= FLAG_CHANGE;
+    const apply = async (instance, pluginConf) => {
+      if (instance.isReapplyNeeded()) {
+        log.info("Applying new config", pluginConf.category, instance.name);
+        await instance.apply().catch((err) => {
+          log.error(`Failed to apply config of ${pluginConf.category}-->${instance.name}`, instance.networkConfig, err);
+          errors.push(err.message || err);
+        });
+        if (pluginConf.category === "apc") {
+          CHANGE_FLAGS |= FLAG_APC_CHANGE;
+        } else {
+          CHANGE_FLAGS |= FLAG_CHANGE;
             if (pluginConf.category === "interface")
               CHANGE_FLAGS |= FLAG_IFACE_CHANGE;
+        }
+
+      } else {
+        log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
+      }
+      instance.propagateConfigChanged(Plugin.CHANGE_NONE);
+    };
+    for (let pluginConf of pluginConfs) {
+      const concurrent = pluginConf.allow_concurrent;
+      const instances = Object.values(newPluginCategoryMap[pluginConf.category]).filter(i => i.constructor.name === pluginConf.c.name);
+      if (instances) {
+        const promises = [];
+        for (let instance of instances) {
+          if (concurrent) {
+            promises.push(apply(instance, pluginConf));
           } else {
-            log.info("Instance config is not changed. No need to apply config", pluginConf.category, instance.name);
+            await apply(instance, pluginConf);
           }
-          instance.propagateConfigChanged(false);
+        }
+        if (concurrent && !_.isEmpty(promises)) {
+          log.info(`Applying instances of ${pluginConf.category} in concurrent mode`);
+          await Promise.all(promises);
         }
       }
     }
@@ -284,6 +375,8 @@ async function reapply(config, dryRun = false) {
       await publishChangeApplied();
     if (CHANGE_FLAGS & FLAG_IFACE_CHANGE)
       await publishIfaceChangeApplied();
+    if (CHANGE_FLAGS & FLAG_APC_CHANGE)
+      await publishAPCChangeApplied();
     CHANGE_FLAGS = 0;
     lastAppliedTimestamp = Date.now() / 1000;
     return errors;
@@ -314,14 +407,14 @@ function scheduleRestartRsyslog() {
   if (restartRsyslogTask)
     clearTimeout(restartRsyslogTask);
   restartRsyslogTask = setTimeout(() => {
-    exec(`sudo systemctl restart rsyslog`).catch((err) => {
+    execFile("sudo", ["systemctl", "restart", "rsyslog"]).catch((err) => {
       log.error("Failed to restart rsyslog", err.message);
     });
   }, 5000);
 }
 
 module.exports = {
-  initPlugins:initPlugins,
+  initPlugins: initPlugins,
   getPluginInstance: getPluginInstance,
   getPluginInstances: getPluginInstances,
   acquireApplyLock: acquireApplyLock,

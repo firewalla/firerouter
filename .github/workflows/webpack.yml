@@ -32,6 +32,6 @@ jobs:
           node-version: '16'
 
       - run: npm i -g yarn
-      - run: yarn global add webpack-cli
+      - run: yarn global add webpack-cli@5.1.4
       - run: mkdir -p webpack; cd webpack; yarn add webpack webpack-cli || true
       - run: $(yarn global bin)/webpack-cli -c .webpack/config.js

@@ -1,0 +1,116 @@
+# Feed NTP servers announced by the DHCP server to ntpd.
+#
+# This differs from the stock Debian hook in three ways, so that ntp behaves like the
+# chrony hook does on platforms running chrony:
+#
+#   - servers are recorded per interface under $NTP_DHCP_SOURCEDIR and $NTP_DHCP_CONF is
+#     regenerated from all of them. This hook is sourced on every dhclient event of every
+#     interface, so with a single global state file an interface whose lease carries no
+#     ntp-servers would wipe out the servers another interface just installed.
+#   - servers from DHCP are appended to the ones already in $NTP_CONF instead of replacing
+#     them, so the distro pools and the local clock fallback stay in the pool and ntpd can
+#     still discard an upstream that turns out to be a falseticker.
+#   - the servers systemd-networkd records in /run/systemd/netif/leases are not picked up.
+#     FireRouter gets its addresses from dhclient and dhcpcd and never runs networkd, and
+#     that source would bypass everything above: it is not attributed to an interface, so
+#     reconcileNTPviaDHCP() cannot revoke it, and it is not subject to the fr_allow_ntp
+#     check in dhclient-script, so it would apply to interfaces that never opted in - it
+#     could even populate $NTP_DHCP_CONF while no interface is allowed to use NTP at all.
+#
+# To revoke interfaces whose dhclient was already killed - dhclient does not run the exit hooks on
+# SIGTERM - FireRouter drops their files itself and then sources this with no interface in the
+# environment, which defines the functions below without doing anything, to call ntp_dhcp_reload on
+# its own. Every hook here has to offer that function under that name. Doing it that way rather
+# than sourcing this once per interface keeps it to a single ntpd restart no matter how many are
+# revoked.
+#
+# This file is sourced, not executed - never call exit here, it would abort dhclient-script.
+
+NTP_CONF=/etc/ntp.conf
+NTP_DHCP_CONF=/run/ntp.conf.dhcp
+NTP_DHCP_SOURCEDIR=/run/ntp-dhcp
+
+
+ntp_server_restart() {
+	invoke-rc.d ntp try-restart
+}
+
+
+ntp_dhcp_reload() {
+	dhcp_ntp=$(cat $NTP_DHCP_SOURCEDIR/*.sources 2>/dev/null | sort -u)
+
+	if [ -z "$dhcp_ntp" ]; then
+		if [ -e $NTP_DHCP_CONF ]; then
+			rm -f $NTP_DHCP_CONF
+			ntp_server_restart
+		fi
+		return
+	fi
+
+	tmp=$(mktemp "$NTP_DHCP_CONF.XXXXXX") || return
+	chmod --reference=$NTP_CONF $tmp
+	chown --reference=$NTP_CONF $tmp
+
+	(
+	  echo "# This file was generated from $NTP_CONF with the NTP servers sent by the"
+	  echo "# DHCP server appended.  Any changes made here will be lost at the next DHCP"
+	  echo "# event.  Edit $NTP_CONF instead."
+	  echo
+	  echo "# NTP server entries received from DHCP server"
+	  for server in $dhcp_ntp; do
+		echo "server $server iburst"
+	  done
+	  echo
+	  cat $NTP_CONF
+	) >>$tmp
+
+	# leave ntpd alone if the effective server list did not actually change
+	if [ -e $NTP_DHCP_CONF ] && cmp -s $tmp $NTP_DHCP_CONF; then
+		rm -f $tmp
+		return
+	fi
+
+	mv $tmp $NTP_DHCP_CONF
+
+	ntp_server_restart
+}
+
+
+ntp_servers_setup_add() {
+	mkdir -p $NTP_DHCP_SOURCEDIR
+	rm -f $SERVERFILE
+	for server in $new_ntp_servers; do
+		echo $server >> $SERVERFILE
+	done
+	ntp_dhcp_reload
+}
+
+
+ntp_servers_setup_remove() {
+	if [ ! -e $SERVERFILE ]; then
+		return
+	fi
+	rm -f $SERVERFILE
+	ntp_dhcp_reload
+}
+
+
+ntp_servers_setup() {
+	# nothing to attribute the servers to if dhclient did not tell us the interface
+	if [ -z "$interface" ]; then
+		return
+	fi
+	SERVERFILE=$NTP_DHCP_SOURCEDIR/$interface.sources
+
+	case $reason in
+		BOUND|RENEW|REBIND|REBOOT)
+			ntp_servers_setup_add
+			;;
+		EXPIRE|FAIL|RELEASE|STOP)
+			ntp_servers_setup_remove
+			;;
+	esac
+}
+
+
+ntp_servers_setup

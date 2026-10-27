@@ -24,7 +24,7 @@ nogateway
 # Rapid commit support.
 # Safe to enable by default because it requires the equivalent option set
 # on the server to actually work.
-option rapid_commit
+%RAPID_COMMIT_OPTS%
 
 # A list of options to request from the DHCP server.
 option domain_name_servers, domain_name, domain_search

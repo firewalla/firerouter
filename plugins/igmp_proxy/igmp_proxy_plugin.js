@@ -1,4 +1,4 @@
-/*    Copyright 2020 Firewalla Inc
+/*    Copyright 2020-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -14,23 +14,24 @@
  */
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
-const ip = require('ip');
+const {Address4, Address6} = require('ip-address');
 const util = require('../../util/util.js');
+const _ = require('lodash');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 
 class IGMPProxyPlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/igmp_proxy`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/igmp_proxy`]);
   }
 
   async flush() {
-    await exec("sudo systemctl stop igmpproxy").catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", "igmpproxy"]).catch((err) => {});
     await exec(util.wrapIptables(`sudo iptables -w -F FR_IGMP`)).catch((err) => {});
   }
 
@@ -68,7 +69,7 @@ class IGMPProxyPlugin extends Plugin {
     }
     lines.push(''); // add empty line at the end of the file;
     await fs.writeFileAsync(`${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, lines.join('\n'), {encoding: 'utf8'});
-    await exec(`sudo cp ${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf /etc/igmpproxy.conf`);
+    await execFile("sudo", ["cp", `${r.getUserConfigFolder()}/igmp_proxy/igmpproxy.conf`, "/etc/igmpproxy.conf"]);
   }
 
   async updateIptables() {
@@ -77,6 +78,12 @@ class IGMPProxyPlugin extends Plugin {
       this.log.error(`Failed to add IGMP accept rule to FR_IGMP in iptables`, err.message);
     });
     for (const altnet of altnets) {
+      // wrapIptables hands the rule to a nested bash -c, so an altnet that is not an address
+      // would be reparsed as shell. mroute_plugin already checks its cidrs the same way
+      if (!_.isString(altnet) || !new Address4(altnet).isValid() && !new Address6(altnet).isValid()) {
+        this.log.error(`Invalid altnet of ${this.name}, ignore`, altnet);
+        continue;
+      }
       await exec(util.wrapIptables(`sudo iptables -w -A FR_IGMP -s ${altnet} -d 224.0.0.0/4 -j ACCEPT`)).catch((err) => {
         this.log.error(`Failed to add altnet ${altnet} to FR_IGMP in iptables`, err.message);
       });
@@ -98,9 +105,9 @@ class IGMPProxyPlugin extends Plugin {
 
     await this.generateConfFile();
     await this.updateIptables();
-    await exec(`sudo systemctl stop igmpproxy`).then(() => {
+    await execFile("sudo", ["systemctl", "stop", "igmpproxy"]).then(() => {
       if (Object.keys(this.networkConfig.downstream).filter(intf => this.networkConfig.downstream[intf]).length > 0)
-        return exec(`sudo systemctl start igmpproxy`);
+        return execFile("sudo", ["systemctl", "start", "igmpproxy"]);
     }).catch((err) => {
       this.log.error("Failed to start igmpproxy", err.message);
     });

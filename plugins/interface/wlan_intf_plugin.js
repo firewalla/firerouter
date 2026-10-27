@@ -1,4 +1,4 @@
-/*    Copyright 2021-2023 Firewalla Inc.
+/*    Copyright 2021-2024 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,7 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const ncm = require('../../core/network_config_mgr')
 const r = require('../../util/firerouter.js');
@@ -30,28 +30,14 @@ const rclientDB0 = require('../../util/redis_manager.js').getPrimaryDBRedisClien
 
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 const GoldPlatform = require('../../platform/gold/GoldPlatform')
+const log = require('../../util/logger.js')(__filename);
 const _ = require('lodash');
 
 const wpaSupplicantServiceFileTemplate = `${r.getFireRouterHome()}/scripts/firerouter_wpa_supplicant@.template.service`;
 const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`;
 
-const APSafeFreqs = [
-  2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
-  5180, 5200, 5220, 5240, 5745, 5765, 5785, 5805, 5825,
-]
-
-const defaultGlobalConfig = {
-  bss_expiration_age: 630,
-  bss_expiration_scan_count: 5,
-
-  // sets freq_list globally limits the frequencies being scaned
-  freq_list: APSafeFreqs,
-}
-
-const defaultNetworkConfig = {
-  // sets freq_list again on each network limits the frequencies being used for connection
-  freq_list: APSafeFreqs,
-}
+const AP_SCAN_RESTORE_DEBOUNCE_MS = 2000;
+const AP_SCAN_RESTORE_WATCHDOG_MS = 35000;
 
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
@@ -59,25 +45,26 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await platform.overrideWLANKernelModule();
     await platform.reloadWLANKernelModule();
     await platform.installWLANTools();
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf /etc/rsyslog.d/`);
+    await platform.setWifiDynamicDebug();
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf`, "/etc/rsyslog.d/"]);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf`, "/etc/rsyslog.d/"]);
     pl.scheduleRestartRsyslog();
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/rtw /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant`, "/etc/logrotate.d/"]);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/rtw`, "/etc/logrotate.d/"]);
     // make crontab persistent, this actually depends on Firewalla code, but that's fine cuz
     // update_crontab.sh exists in both Gold and Purple's base image, and covers ~/.firewalla/config/crontab/
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/crontab`)
+    await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/crontab`])
     await exec(`echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw" > ${r.getFirewallaUserConfigFolder()}/crontab/rtw-logrotate`)
-    await exec(`${r.getFirewallaHome()}/scripts/update_crontab.sh`).catch(()=>{})
+    await execFile(`${r.getFirewallaHome()}/scripts/update_crontab.sh`, []).catch(()=>{})
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/wpa_supplicant`).catch((err) => {});
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/wpa_supplicant`).catch((err) => {});
-    await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/wpa_supplicant`]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getRuntimeFolder()}/wpa_supplicant`]).catch((err) => {});
+    await execFile("mkdir", ["-p", r.getTempFolder()]).catch((err) => {});
   }
 
   static async installSystemService() {
@@ -85,11 +72,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     content = content.replace(/%WPA_SUPPLICANT_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_wpa_supplicant@.service";
     await fs.writeFileAsync(targetFile, content);
-    await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+    await execFile("sudo", ["cp", targetFile, "/etc/systemd/system"]);
   }
 
   static async installWpaSupplicantScript() {
-    await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
+    await execFile("cp", [wpaSupplicantScript, `${r.getTempFolder()}/wpa_supplicant.sh`]);
   }
 
   static async getInstanceWithWpaSupplicant(iwPhy) {
@@ -111,20 +98,153 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return wpa
   }
 
-  static async simpleWpaCommand(iwPhy,  paramString) {
-    if (!_.isString(paramString) || !paramString.trim().length)
+  // args is the wpa_cli command as argv, one element per argument. it is not a command line: a
+  // value is passed through as it stands, so an SSID or a passphrase holding a space stays one
+  // argument rather than being split on whitespace the way a shell would
+  static async simpleWpaCommand(iwPhy, args) {
+    if (!_.isArray(args) || !args.length || !args.every(a => _.isString(a) && a.length))
       throw new Error('Empty command')
 
     const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
       const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
-      return exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${instance.name} ${paramString}`)
+      return execFile("sudo", [wpaCliPath, "-p", ctlSocket, "-i", instance.name].concat(args))
+    }
+  }
+
+
+  static async _setInterfaceLinkState(iface, up) {
+    const isWifiClient = iface === platform.getWifiClientInterface();
+    const wpaService = `firerouter_wpa_supplicant@${iface}`;
+
+    if (!up && isWifiClient) {
+      await execFile("sudo", ["systemctl", "stop", wpaService]).catch((err) => {
+        log.error(`Failed to stop ${wpaService}`, err.message);
+      });
+    }
+
+    await execFile("sudo", ["ip", "link", "set", iface, up ? 'up' : 'down']).catch((err) => {
+      // interface link may not exist, ignore error here
+    });
+
+    if (up && isWifiClient) {
+      await execFile("sudo", ["systemctl", "start", wpaService]).catch((err) => {
+        log.error(`Failed to start ${wpaService}`, err.message);
+      });
+    }
+  }
+
+  static _runExclusiveWLANOp(op) {
+    const result = this._apScanExclusiveOp.then(op);
+    this._apScanExclusiveOp = result.catch((err) => {
+      log.error('Exclusive WLAN operation failed', err.message);
+    });
+    return result;
+  }
+
+  static _cancelAPScanRestoreTimer() {
+    if (this._apScanRestoreTimer) {
+      clearTimeout(this._apScanRestoreTimer);
+      this._apScanRestoreTimer = null;
+    }
+  }
+
+  // Acquire exclusive WLAN for AP scan. Returns true if acquired (caller must release).
+  static async prepareAPScanInterface(apScanInterface) {
+    const sibling = platform.getExclusiveWLANSibling(apScanInterface);
+    if (!sibling) {
+      return false;
+    }
+
+    await this._runExclusiveWLANOp(async () => {
+      this._cancelAPScanRestoreTimer();
+      // _setInterfaceLinkState is an idempotent operation; consider executing it every time to avoid unexpected issues.
+      log.info(`AP scan: ${sibling} down, then ${apScanInterface} up`);
+      await this._setInterfaceLinkState(sibling, false);
+      await this._setInterfaceLinkState(apScanInterface, true);
+      this._apScanRefCount++;
+      this._apScanRestoreArgs = { apScanInterface, sibling };
+      // Watchdog only: restore if release never arrives (e.g. hung wpa_cli).
+      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling, AP_SCAN_RESTORE_WATCHDOG_MS);
+    });
+    return true;
+  }
+
+  // Release after scan completes (success or failure). Debounces restore for back-to-back scans.
+  static releaseAPScanInterface() {
+    if (!this._apScanRestoreArgs) {
+      return;
+    }
+    const { apScanInterface, sibling } = this._apScanRestoreArgs;
+    if (this._apScanRefCount > 0) {
+      this._apScanRefCount--;
+    }
+    if (this._apScanRefCount === 0) {
+      this._scheduleAPScanInterfaceRestore(apScanInterface, sibling, AP_SCAN_RESTORE_DEBOUNCE_MS);
+    }
+  }
+
+  static _scheduleAPScanInterfaceRestore(apScanInterface, sibling, delayMs) {
+    this._cancelAPScanRestoreTimer();
+    this._apScanRestoreTimer = setTimeout(() => {
+      this._apScanRestoreTimer = null;
+      this._runExclusiveWLANOp(async () => {
+        // Clear state even on watchdog path (refcount may have leaked).
+        this._apScanRefCount = 0;
+        this._apScanRestoreArgs = null;
+        await this._restoreExclusiveWLANForAPScan(apScanInterface, sibling);
+      });
+    }, delayMs);
+  }
+
+  static async _restoreExclusiveWLANForAPScan(apScanInterface, sibling) {
+    const siblingPlugin = pl.getPluginInstance('interface', sibling);
+    const siblingShouldUp = siblingPlugin && platform.shouldBringWLANInterfaceUp(siblingPlugin);
+    log.info(`AP scan restore: ${sibling} ${siblingShouldUp ? 'up' : 'down'}, ${apScanInterface} ${!siblingShouldUp ? 'up' : 'down'}`);
+    if (siblingShouldUp) {
+      await this._setInterfaceLinkState(apScanInterface, false);
+      await this._setInterfaceLinkState(sibling, true);
+    } else {
+      await this._setInterfaceLinkState(sibling, false);
+      await this._setInterfaceLinkState(apScanInterface, true);
     }
   }
 
   getDefaultMTU() {
     return 1500;
+  }
+
+  getBaseIntf() {
+    return this.networkConfig.baseIntf || platform.getDefaultBaseIntf(this.name);
+  }
+
+  getWlanType() {
+    return this.networkConfig.type || platform.getDefaultWLanType(this.name);
+  }
+
+  async _downExclusiveWLANSibling() {
+    const sibling = platform.getExclusiveWLANSibling(this.name);
+    if (!sibling) {
+      return;
+    }
+    await execFile("sudo", ["ip", "link", "set", sibling, "down"]).catch((err) => {
+      // interface link may not exist, ignore error here
+    });
+    return;
+  }
+
+  async interfaceUpDown() {
+    if (platform.shouldBringWLANInterfaceUp(this)) {
+      await this._downExclusiveWLANSibling();
+      await execFile("sudo", ["ip", "link", "set", this.name, "up"]).catch((err) => {
+        this.log.error(`Failed to turn on interface ${this.name}`, err.message);
+      });
+    } else {
+      await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {
+        this.log.error(`Failed to turn off interface ${this.name}`, err.message);
+      });
+    }
   }
 
   async readyToConnect() {
@@ -157,21 +277,23 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async flush() {
+    const baseIntf = this.getBaseIntf();
     await super.flush();
 
-    if (this.networkConfig && this.networkConfig.baseIntf) {
-      const baseIntf = this.networkConfig.baseIntf;
-      const basePhy = await exec(`readlink -f /sys/class/net/${baseIntf}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-      const myPhy = await exec(`readlink -f /sys/class/net/${this.name}/phy80211`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-      if (basePhy && myPhy && basePhy === myPhy)
-        await exec(`sudo iw dev ${this.name} del`).catch((err) => {});
-      else
-        this.log.warn(`${this.name} and ${baseIntf} are not pointing to the same wifi phy, interface ${this.name} will not be deleted`);
-    }
+    await platform.removeWLANInterface(this);
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
-      await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {});
       await fs.unlinkAsync(this._getWpaSupplicantConfigPath()).catch((err) => {});
+    }
+
+    if (baseIntf) {
+      const baseExists = await execFile("ip", ["link", "show", "dev", baseIntf]).then(() => true).catch(() => false);
+      if (baseExists) {
+        await execFile("sudo", ["ip", "link", "set", baseIntf, "up"]).catch((err) => {
+          this.log.warn(`Failed to restore base interface ${baseIntf} link up`, err.message);
+        });
+      }
     }
   }
 
@@ -182,12 +304,14 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async writeConfigFile() {
     const entries = []
     entries.push(`ctrl_interface=DIR=${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`);
+    // Seconds to consider old scan results valid for association
+    entries.push(...platform.getWpaSupplicantDefaultConfig());
 
     const wpaSupplicant = JSON.parse(JSON.stringify(this.networkConfig.wpaSupplicant || {}))
     const networks = wpaSupplicant.networks || [];
     delete wpaSupplicant.networks
 
-    const globalConfig = Object.assign({}, defaultGlobalConfig)
+    const globalConfig = Object.assign({}, platform.getWpaSupplicantGlobalDefaultConfig())
     const iwPhy = await fs.readFileAsync(`/sys/class/net/${this.name}/phy80211/name`, {encoding: "utf8"}).catch((err) => null);
     if (iwPhy) {
        // use exponential scan only if WWLAN is configured
@@ -211,7 +335,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     for (const network of networks) {
       entries.push("network={");
-      const networkConfig = Object.assign({}, defaultNetworkConfig, network)
+      const networkConfig = Object.assign({}, platform.getWpaSupplicantNetworkDefaultConfig(), network)
       for (const key in networkConfig) {
         const value = await util.generateWpaSupplicantConfig(key, networkConfig);
         entries.push(`\t${key}=${value}`);
@@ -223,45 +347,44 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async createInterface() {
-    const ifaceExists = await exec(`ip link show dev ${this.name}`).then(() => true).catch((err) => false);
-    if (!ifaceExists) {
-      if (this.networkConfig.baseIntf) {
-        const baseIntf = this.networkConfig.baseIntf;
-        const baseIntfPlugin = pl.getPluginInstance("interface", baseIntf);
-        if (baseIntfPlugin) {
-          this.subscribeChangeFrom(baseIntfPlugin);
-          if (await baseIntfPlugin.isInterfacePresent() === false) {
-            this.log.warn(`Base interface ${baseIntf} is not present yet`);
-            return false;
-          }
-        } else {
-          this.fatal(`Lower interface plugin not found ${baseIntf}`);
-        }
-        const type = this.networkConfig.type || "managed";
-        await exec(`sudo iw dev ${baseIntf} interface add ${this.name} type ${type}`);
+    try {
+      const created = await platform.createWLANInterface(this);
+      if (created === false) {
+        return false;
       }
-    } else {
-      this.log.warn(`Interface ${this.name} already exists`);
+    } catch (err) {
+      this.log.error(`Failed to create wlan interface ${this.name}`, err.message);
+      return false;
     }
 
     // refresh interface state in case something is not relinquished in driver
-    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
+    const shouldUp = platform.shouldBringWLANInterfaceUp(this);
+    if (shouldUp) {
+      await this._downExclusiveWLANSibling();
+      await execFile("sudo", ["ip", "link", "set", this.name, "up"]).catch((err) => {});
+    }
 
     if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
       await exec('echo 4 > /proc/net/rtl8821cu/log_level').catch(()=>{})
+    }
+
+    if (this.networkConfig.wds && platform.isWDSSupported()) {
+      await execFile("sudo", ["iw", "dev", this.name, "set", "4addr", "on"]).catch((err) => {});
+    } else {
+      await execFile("sudo", ["iw", "dev", this.name, "set", "4addr", "off"]).catch((err) => {});
     }
 
     if (this.networkConfig.wpaSupplicant) {
 
       await this.writeConfigFile()
 
-      if (this.networkConfig.enabled) {
-        await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
+      if (shouldUp) {
+        await execFile("sudo", ["systemctl", "start", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
       } else {
-        await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
+        await execFile("sudo", ["systemctl", "stop", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {});
       }
     }
 
@@ -269,45 +392,122 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   }
 
   async getEssid() {
-    const carrier = await this.carrierState();
-    const operstate = await this.operstateState();
-    let essid = null;
-    // iwgetid will still return the essid during authentication process, when operstate is dormant
-    // need to make sure the authentication is passed and operstate is up
-    if (carrier === "1" && operstate === "up") {
-      const iwgetidAvailable = await exec("which iwgetid").then(() => true).catch(() => false);
-      if (iwgetidAvailable) {
-        essid = await exec(`iwgetid -r ${this.name}`, {encoding: "utf8"}).then(result => result.stdout.trim()).catch((err) => null);
-      } else {
-        essid = await exec(`iw dev ${this.name} info | grep "ssid "`)
-          .then(result => {
-            const line = result.stdout.trim();
-            return line.substring(line.indexOf("ssid ") + 5);
-          }).catch(() => null);
-        if (essid && essid.length)
-          essid = util.parseEscapedString(essid);
-      }
-    }
-    return essid;
+    const wpaStatus = await this.getWpaStatus();
+    return wpaStatus.ssid;
   }
 
-  async getFrequency() {
-    const result = await exec(`iwconfig ${this.name} | grep Frequency | tr -s ' ' | cut -d' ' -f3`).catch(() => {})
-    if (!result) return null
-    return Number(result.stdout.substring(10)) * 1000
+  async getWpaStatus() {
+    // wpa_cli is interoperable on both station and ap interface
+    const lines = await execFile("sudo", [await platform.getWpaCliBinPath(), "-p", this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`, "-i", this.name, "status"])
+      .then(result => result.stdout.trim().split('\n')).catch(() => []);
+    const status = {};
+    /*
+      for station interface:
+      bssid=20:6d:31:61:01:98
+      freq=2437
+      ssid=TEST
+      id=0
+      mode=station
+      wifi_generation=4
+      pairwise_cipher=CCMP
+      group_cipher=CCMP
+      key_mgmt=WPA2-PSK
+      wpa_state=COMPLETED
+      ip_address=192.168.242.60
+      address=20:6d:31:fa:2a:90
+      uuid=23c32869-798e-53d8-bfc2-7d611cfc0e47
+      ieee80211ac=1
+
+      for ap interface:
+      state=ENABLED
+      phy=phy0
+      freq=5180
+      num_sta_non_erp=0
+      num_sta_no_short_slot_time=0
+      num_sta_no_short_preamble=0
+      olbc=0
+      num_sta_ht_no_gf=0
+      num_sta_no_ht=0
+      num_sta_ht_20_mhz=0
+      num_sta_ht40_intolerant=0
+      olbc_ht=1
+      ht_op_mode=0x11
+      hw_mode=a
+      country_code=US
+      country3=0x20
+      cac_time_seconds=60
+      cac_time_left_seconds=N/A
+      channel=36
+      edmg_enable=0
+      edmg_channel=0
+      secondary_channel=1
+      ieee80211n=1
+      ieee80211ac=1
+      ieee80211ax=1
+      ieee80211be=1
+      beacon_int=100
+      dtim_period=2
+      eht_oper_chwidth=2
+      eht_oper_centr_freq_seg0_idx=50
+      he_oper_chwidth=2
+      he_oper_centr_freq_seg0_idx=50
+      he_oper_centr_freq_seg1_idx=0
+      vht_oper_chwidth=2
+      vht_oper_centr_freq_seg0_idx=50
+      vht_oper_centr_freq_seg1_idx=0
+      vht_caps_info=338979f6
+      rx_vht_mcs_map=fffa
+      tx_vht_mcs_map=fffa
+      ht_caps_info=09ef
+      ht_mcs_bitmask=ffff0000000000000000
+      supported_rates=0c 12 18 24 30 48 60 6c
+      max_txpower=23
+      bss[0]=wlan5g_6f5b51
+      bssid[0]=20:6d:31:80:00:22
+      ssid[0]=o6-5g
+      num_sta[0]=0
+      bss[1]=wlan5g_c5144d
+      bssid[1]=26:6d:31:80:00:22
+      ssid[1]=o6-5g-2
+      num_sta[1]=0
+    */
+    let bssIndex = 0;
+    for (const line of lines) {
+      const sepIndex = line.indexOf('=');
+      if (sepIndex === -1) continue;
+      const key = line.substring(0, sepIndex);
+      const value = line.substring(sepIndex + 1);
+      switch (key) {
+        case "freq":
+          status.freq = Number(value);
+          break;
+        case "ssid":
+          status.ssid = util.parseEscapedString(value);
+          break;
+        default:
+          status[key] = value;
+      }
+      if (key.startsWith('bss[')) {
+        bssIndex = Number(key.substring(4, key.indexOf(']')));
+      }
+    }
+    if (!this.isWAN())
+      status.ssid = util.parseEscapedString(status[`ssid[${bssIndex}]`]);
+    return status;
   }
 
   async state() {
     const state = await super.state();
     const vendor = await platform.getWlanVendor().catch( err => {this.log.error("Failed to get WLAN vendor:",err.message); return '';} );
-    const essid = await this.getEssid();
+    const wpaStatus = await this.getWpaStatus();
+    const essid = wpaStatus.ssid;
     state.essid = essid;
     state.carrier = (this.isWAN()
       ? await this.readyToConnect().catch(() => false)
       : state.essid && state.carrier
     ) ? 1 : 0
     if (state.carrier && state.essid) {
-      state.freq = await this.getFrequency()
+      state.freq = wpaStatus.freq
       state.channel = util.freqToChannel(state.freq)
     }
     state.vendor = vendor;
@@ -349,5 +549,10 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 }
+
+WLANInterfacePlugin._apScanRestoreTimer = null;
+WLANInterfacePlugin._apScanExclusiveOp = Promise.resolve();
+WLANInterfacePlugin._apScanRefCount = 0;
+WLANInterfacePlugin._apScanRestoreArgs = null;
 
 module.exports = WLANInterfacePlugin;

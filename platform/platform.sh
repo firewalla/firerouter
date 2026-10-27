@@ -5,6 +5,7 @@ FW_PLATFORM_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 UNAME=$(uname -m)
 NETWORK_SETUP=yes
 BLUETOOTH_TIMEOUT=3600
+NEED_FIRERESET=true
 
 function run_horse_light {
   return
@@ -36,12 +37,36 @@ function get_dnsmasq_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/dnsmasq"
 }
 
+function get_dhcpcd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/dhcpcd"
+}
+
+function get_ndppd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/ndppd"
+}
+
+function get_mcproxy_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mcproxy"
+}
+
 function get_firereset_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/firereset"
 }
 
 function get_hostapd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/hostapd"
+}
+
+function get_hostapd_options {
+  echo ""
+}
+
+function get_wpa_action_script_path {
+  echo "/home/pi/firerouter/scripts/wpa_action.sh"
+}
+
+function get_hostapd_cli_path {
+  echo ""
 }
 
 function get_wpa_supplicant_path {
@@ -56,6 +81,26 @@ function get_smcrouted_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/smcrouted"
 }
 
+function get_mstpd_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mstpd"
+}
+
+function get_mstpctl_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mstpctl"
+}
+
+function record_eth_interfaces {
+  return
+}
+
+function remap_eth_interfaces {
+  return
+}
+
+function before_firereset {
+  return
+}
+
 case "$UNAME" in
   "x86_64")
     if [[ -e /etc/firewalla-release ]]; then
@@ -67,6 +112,10 @@ case "$UNAME" in
       gold-pro)
         source $FW_PLATFORM_DIR/goldpro/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldpro
+        ;;
+      crystal)
+        source $FW_PLATFORM_DIR/crystal/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/crystal
         ;;
       *)
         source $FW_PLATFORM_DIR/gold/platform.sh
@@ -96,6 +145,14 @@ case "$UNAME" in
       purple)
         source $FW_PLATFORM_DIR/purple/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/purple
+        ;;
+      orange)
+        source $FW_PLATFORM_DIR/orange/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/orange
+        ;;
+      goldplus2)
+        source $FW_PLATFORM_DIR/goldplus2/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldplus2
         ;;
       *)
         unset FW_PLATFORM_CUR_DIR

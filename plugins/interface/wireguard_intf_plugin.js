@@ -1,4 +1,4 @@
-/*    Copyright 2020 Firewalla Inc
+/*    Copyright 2020-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,12 +17,13 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const _ = require('lodash');
 const routing = require('../../util/routing.js');
 const util = require('../../util/util.js');
+const { lastLine } = util;
 const {Address4, Address6} = require('ip-address');
 const pl = require('../plugin_loader.js');
 const event = require('../../core/event.js');
@@ -35,30 +36,47 @@ Promise.promisifyAll(fs);
 
 class WireguardInterfacePlugin extends InterfaceBasePlugin {
 
+  constructor(name) {
+    super(name);
+    this.wireguardType = "wireguard";
+    this.iptablesChainName = "FR_WIREGUARD";
+    this.wgCmd = "wg";
+  }
+
   static async preparePlugin() {
-    await exec(`sudo modprobe wireguard`);
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/wireguard`);
+    await execFile("sudo", ["modprobe", "wireguard"]);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/wireguard`]);
+  }
+
+  isFlushNeeded(newConfig) {
+    if (this.name === "wg_ap") {
+      const c1 = _.pick(this.networkConfig, Object.keys(this.networkConfig).filter(k => k !== "peers" && k !== "extra"));
+      const c2 = _.pick(newConfig, Object.keys(newConfig).filter(k => k !== "peers" && k !== "extra"));
+      return !_.isEqual(c1, c2);
+    }
+    return true;
   }
 
   async flush() {
     await super.flush();
-    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-    await exec(`sudo ip link del dev ${this.name}`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "del", "dev", this.name]).catch((err) => {});
     await fs.unlinkAsync(this._getInterfaceConfPath()).catch((err) => {});
-    if (this.networkConfig.listenPort) {
-      await exec(util.wrapIptables(`sudo iptables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo iptables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});      
+    const listenPort = this._getListenPort();
+    if (listenPort !== null) {
+      await exec(util.wrapIptables(`sudo iptables -w -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo iptables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+      await exec(util.wrapIptables(`sudo ip6tables -w -t nat -D ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
     }
     await this._resetBindIntfRule().catch((err) => {});
+    this._disposeAutomata();
+  }
+
+  _disposeAutomata() {
     if (this._automata) {
       this._automata.stop();
       delete this._automata;
-    }
-    if (this._assetsController) {
-      this._assetsController.stopServer();
-      delete this._assetsController;
     }
   }
 
@@ -73,7 +91,14 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
   }
 
   _getInterfaceConfPath() {
-    return `${r.getUserConfigFolder()}/wireguard/${this.name}.conf`;
+    return `${r.getUserConfigFolder()}/${this.wireguardType}/${this.name}.conf`;
+  }
+
+  // listenPort has historically arrived as a string as well as a number. setup and cleanup both go
+  // through this, otherwise a port accepted when the interface was created would be missed when its
+  // rules are torn down
+  _getListenPort() {
+    return util.toBoundedInt(this.networkConfig.listenPort, 1, 65535);
   }
 
   getDefaultMTU() {
@@ -88,22 +113,32 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     return 1412;
   }
 
+  _addObfuscationOptions(entries, networkConfig) {
+    // for wireguard, no obfuscation options
+    return;
+  }
+
+
   async createInterface() {
-    await exec(`sudo ip link add dev ${this.name} type wireguard`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "add", "dev", this.name, "type", this.wireguardType]).catch((err) => {});
     if (!this.networkConfig.privateKey)
       this.fatal(`Private key is not specified for Wireguard interface ${this.name}`);
     // [Interface] section
     const entries = ["[Interface]"];
     entries.push(`PrivateKey = ${this.networkConfig.privateKey}`);
-    if (this.networkConfig.listenPort) {
-      entries.push(`ListenPort = ${this.networkConfig.listenPort}`);
+    const listenPort = this._getListenPort();
+    if (listenPort !== null) {
+      entries.push(`ListenPort = ${listenPort}`);
       if (this.networkConfig.enabled && this.networkConfig.allowOnFirewall !== false) {
-        await exec(util.wrapIptables(`sudo iptables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-        await exec(util.wrapIptables(`sudo ip6tables -w -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-        await exec(util.wrapIptables(`sudo iptables -w -t nat -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
-        await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A FR_WIREGUARD -p udp --dport ${this.networkConfig.listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo iptables -w -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo iptables -w -t nat -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
+        await exec(util.wrapIptables(`sudo ip6tables -w -t nat -A ${this.iptablesChainName} -p udp --dport ${listenPort} -j ACCEPT`)).catch((err) => {});
       }
     }
+    // for amneziawg, add obfuscation options
+    this._addObfuscationOptions(entries, this.networkConfig);
+
     // add FwMark option in [Interface] config for WAN selection
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
     entries.push(`FwMark = ${rtid}`)
@@ -123,7 +158,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
           endpoint = peer.fqdnEndpoint;
         if (endpoint) {
           const host = endpoint.substring(0, endpoint.lastIndexOf(':'));
-          // do not set Endpoint with domain, dns may be unavailable at the moment, causing wg setconf return error, domain will be resolved later in automata
+          // do not set Endpoint with domain, dns may be unavailable at the moment, causing ${this.wgCmd} setconf return error, domain will be resolved later in automata
           if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
             entries.push(`Endpoint = ${endpoint}`);
         }
@@ -140,27 +175,54 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     await fs.writeFileAsync(this._getInterfaceConfPath(), entries.join('\n'), {encoding: 'utf8'});
-    await exec(`sudo wg setconf ${this.name} ${this._getInterfaceConfPath()}`);
+    // a special handling for wg_ap interface to avoid disrupting existing peer sessions
+    await execFile("sudo", [this.wgCmd, this.name === "wg_ap" ? "syncconf" : "setconf", this.name, this._getInterfaceConfPath()]);
     return true;
+  }
+
+  // normalize allowedIPs CIDR to the network address
+  _normalizeAllowedIpForRoute(allowedIP) {
+    const v4 = new Address4(allowedIP);
+    if (v4.isValid()) {
+      const net = v4.startAddress();
+      return `${net.correctForm()}/${v4.subnetMask}`;
+    }
+    const v6 = new Address6(allowedIP);
+    if (v6.isValid()) {
+      const net = v6.startAddress();
+      return `${net.correctForm()}/${v6.subnetMask}`;
+    }
+    return allowedIP;
   }
 
   async changeRoutingTables() {
     await super.changeRoutingTables();
     const rtid = await routing.createCustomizedRoutingTable(`${this.name}_local`);
+    const v4Subnets = this.networkConfig.ipv4s ? this.networkConfig.ipv4s.map(addr => new Address4(addr)) : [new Address4(this.networkConfig.ipv4)];
+    let v6Subnets = [];
+    if (this.networkConfig.ipv6) {
+      const ipv6 = this.networkConfig.ipv6;
+      v6Subnets.push(...(_.isArray(ipv6) ? ipv6.map(addr => new Address6(addr)) : [new Address6(ipv6)]));
+    }
     if (_.isArray(this.networkConfig.peers)) {
       for (const peer of this.networkConfig.peers) {
         if (peer.allowedIPs) {
           for (const allowedIP of peer.allowedIPs) {
+            const routeCidr = this._normalizeAllowedIpForRoute(allowedIP);
+            const af = new Address4(routeCidr).isValid() ? 4 : 6;
+            // no need to add allowed IP that is in wg interface's cidr, this can reduce cost of executing ip route commands since most peers are in the same IP range
+            if ((af == 4 && v4Subnets.some(subnet => new Address4(routeCidr).isInSubnet(subnet))) || (af == 6 && v6Subnets.some(subnet => new Address6(routeCidr).isInSubnet(subnet))))
+              continue;
             // route for allowed IP has a lower priority, in case there are conflicts between allowedIPs and other LAN IPs
-            await routing.addRouteToTable(allowedIP, null, this.name, "main", rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+            await routing.addRouteToTable(routeCidr, null, this.name, "main", rtid, af).catch((err) => {});
             if (this.isLAN()) {
               // add peer networks to wan_routable and lan_routable
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_LAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
-              await routing.addRouteToTable(allowedIP, null, this.name, routing.RT_WAN_ROUTABLE, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(routeCidr, null, this.name, routing.RT_LAN_ROUTABLE, rtid, af).catch((err) => {});
+              await routing.addRouteToTable(routeCidr, null, this.name, routing.RT_WAN_ROUTABLE, rtid, af).catch((err) => {});
             }
             if (this.isWAN()) {
               // add peer networks to interface default routing table
-              await routing.addRouteToTable(allowedIP, null, this.name, `${this.name}_default`, rtid, new Address4(allowedIP).isValid() ? 4 : 6).catch((err) => {});
+              await routing.addRouteToTable(routeCidr, null, this.name, `${this.name}_default`, rtid, af).catch((err) => {});
             }
           }
         }
@@ -187,7 +249,7 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
       }
     }
     if (bindIntf) {
-      this.log.info(`Wireguard ${this.name} will bind to WAN ${bindIntf}`);
+      this.log.info(`${this.wireguardType} ${this.name} will bind to WAN ${bindIntf}`);
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 4).catch((err) => { });
       await routing.createPolicyRoutingRule("all", "lo", `${bindIntf}_default`, bindIntfRulePriority, `${rtid}/${routing.MASK_REG}`, 6).catch((err) => { });
       this._bindIntf = bindIntf;
@@ -197,19 +259,24 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig.autonomous) {
-      const pubKey = await exec(`echo ${this.networkConfig.privateKey} | wg pubkey`).then(result => result.stdout.trim()).catch((err) => {
-        this.log.error(`Failed to parse private key to public key`);
-        return null;
-      })
-      if (pubKey) {
-        this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig);
-        this._automata.start();
+      const WG_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+      if (!WG_KEY_RE.test(this.networkConfig.privateKey)) {
+        this.log.error('Invalid WireGuard private key format');
+      } else {
+        const pubKey = await exec(`echo ${this.networkConfig.privateKey} | ${this.wgCmd} pubkey`).then(result => result.stdout.trim()).catch((err) => {
+          this.log.error(`Failed to parse private key to public key`);
+          return null;
+        })
+        if (pubKey) {
+          this._disposeAutomata();
+          this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig, {
+            wgCmd: this.wgCmd,
+            wireguardType: this.wireguardType,
+            bindIntf: this._bindIntf,
+          });
+          this._automata.start();
+        }
       }
-    }
-
-    if (this.networkConfig.assetsController) {
-      this._assetsController = require('../../core/assets_controller.js');
-      this._assetsController.startServer(this.networkConfig);
     }
   }
 
@@ -303,7 +370,7 @@ const T1 = 180;
 const T2 = 225;
 
 class WireguardMeshAutomata {
-  constructor(intf, pubKey, config) {
+  constructor(intf, pubKey, config, options = {}) {
     // config should be the network config of the intf
     this.intf = intf;
     this.pubKey = pubKey;
@@ -312,6 +379,9 @@ class WireguardMeshAutomata {
     this.effectiveAllowedIPs = {};
     this.dnsCache = new LRU({ maxAge: 300 * 1000 });
     this.domainZoneCache = new LRU({ maxAge: 3600 * 1000 });
+    this.wireguardType = options.wireguardType || "wireguard";
+    this.wgCmd = options.wgCmd || "wg";
+    this.bindIntf = options.bindIntf || null;
     const ipv4 = this.config.ipv4;
     const cidr = new Address4(ipv4);
     for (const peer of this.config.peers) {
@@ -351,6 +421,13 @@ class WireguardMeshAutomata {
         const from = msg.from;
         if (!from || !this.peerInfo[from]) {
           this.log.error(`Received message from an unknown peer ${from}, ignore`);
+          return;
+        }
+        // 'from' is self declared, bind it to the tunnel address the packet actually came from,
+        // otherwise any peer can submit endpoint and route info on behalf of any other peer
+        const fromIP = this.peerInfo[from].peerIP && this.peerInfo[from].peerIP.split('/')[0];
+        if (!fromIP || fromIP !== info.address) {
+          this.log.error(`Peer ${from} does not match sender ${info.address}, ignore`);
           return;
         }
         switch (msg.type) {
@@ -499,8 +576,8 @@ class WireguardMeshAutomata {
   }
 
   async sendPeerEndpointInfoMsg() {
-    const dumpResult = await exec(`sudo wg show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
-      this.log.error(`Failed to dump wireguard peers on ${this.intf}`, err.message);
+    const dumpResult = await exec(`sudo ${this.wgCmd} show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
+      this.log.error(`Failed to dump ${this.wireguardType} peers on ${this.intf}`, err.message);
       return null;
     });
     const peers = {};
@@ -595,20 +672,26 @@ class WireguardMeshAutomata {
     for (const key of Object.keys(peers)) {
       if (!this.peerInfo[key])
         continue;
-      const v4 = peers[key].v4;
-      const v6 = peers[key].v6;
-      const ts4 = peers[key].ts4 || 0;
-      const ts6 = peers[key].ts6 || 0;
+      // all of these come from a peer over the wire and end up on a wg command line,
+      // keep anything that is not a real address or port out of peerInfo. store correctForm()
+      // rather than the raw value: isValid() also accepts a prefix length, and keeping "1.2.3.4/24"
+      // would later be formatted into an endpoint as "1.2.3.4/24:51820", which wg rejects
+      const addr4 = new Address4(String(peers[key].v4 || ""));
+      const addr6 = new Address6(String(peers[key].v6 || ""));
+      const v4 = addr4.isValid() ? addr4.correctForm() : null;
+      const v6 = addr6.isValid() ? addr6.correctForm() : null;
+      const ts4 = Number(peers[key].ts4) || 0;
+      const ts6 = Number(peers[key].ts6) || 0;
       const oldTs4 = this.peerInfo[key].ts4 || 0;
       const oldTs6 = this.peerInfo[key].ts6 || 0;
-      const port = peers[key].port;
+      const port = Number(peers[key].port);
       let connected = false;
       // update v4/v6 with latest handshake timestamp
       if (v4) {
         if (ts4 > oldTs4) {
           this.peerInfo[key].v4 = v4;
           this.peerInfo[key].ts4 = ts4;
-          if (port)
+          if (Number.isInteger(port) && port > 0 && port < 65536)
             this.peerInfo[key].port4 = port;
         }
         if (now - ts4 <= T1)
@@ -618,7 +701,7 @@ class WireguardMeshAutomata {
         if (ts6 > oldTs6) {
           this.peerInfo[key].v6 = v6;
           this.peerInfo[key].ts6 = ts6;
-          if (port)
+          if (Number.isInteger(port) && port > 0 && port < 65536)
             this.peerInfo[key].port6 = port;
         }
         if (now - ts6 <= T1)
@@ -635,16 +718,24 @@ class WireguardMeshAutomata {
 
   async reapply() {
     let dnsAvailable = true;
-    const dumpResult = await exec(`sudo wg show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
-      this.log.error(`Failed to dump wireguard peers on ${this.intf}`, err.message);
+    const dumpResult = await exec(`sudo ${this.wgCmd} show ${this.intf} dump | tail +2`).then(result => result.stdout.trim().split('\n')).catch((err) => {
+      this.log.error(`Failed to dump ${this.wireguardType} peers on ${this.intf}`, err.message);
       return null;
     });
+
+    const hasUsableIpv6DefaultRoute = (stdout) => {
+      return stdout.trim().split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .some(line => !line.startsWith('unreachable'));
+    }
     const now = Date.now() / 1000;
     let v6Supported = false;
-    if (this.config.bindIntf) {
-      v6Supported = await exec(`ip -6 r show default table ${this.config.bindIntf}_default`).then(result => !_.isEmpty(result.stdout.trim())).catch((err) => false);
+    let bindIntf = this.config.bindIntf || this.bindIntf || null;
+    if (bindIntf) {
+      v6Supported = await execFile("ip", ["-6", "r", "show", "default", "table", `${bindIntf}_default`]).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
     } else {
-      v6Supported = await exec(`ip -6 r show default table global_default`).then(result => !_.isEmpty(result.stdout.trim())).catch((err) => false);
+      v6Supported = await execFile("ip", ["-6", "r", "show", "default", "table", "global_default"]).then(result => hasUsableIpv6DefaultRoute(result.stdout)).catch((err) => false);
     }
     const t0Peers = [];
     const t1Peers = [];
@@ -722,7 +813,7 @@ class WireguardMeshAutomata {
             if (info.useOrigEndpoint) {
               if (endpoint != info.endpoint) {
                 this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
-                await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
+                await execFile("sudo", [this.wgCmd, "set", this.intf, "peer", pubKey, "endpoint", endpoint]).catch((err) => {});
               }
               endpointSet = true;
               info.useOrigEndpoint = false;
@@ -733,7 +824,7 @@ class WireguardMeshAutomata {
               if (info.useOrigEndpoint) {
                 if (endpoint != info.endpoint) {
                   this.log.info(`Changing peer ${pubKey} endpoint to ${endpoint}`);
-                  await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${endpoint}`).catch((err) => {});
+                  await execFile("sudo", [this.wgCmd, "set", this.intf, "peer", pubKey, "endpoint", endpoint]).catch((err) => {});
                 }
                 endpointSet = true;
                 info.useOrigEndpoint = false;
@@ -751,7 +842,7 @@ class WireguardMeshAutomata {
           else {
             if (resolvedEndpoint != info.endpoint) {
               this.log.info(`Set peer ${pubKey} endpoint to original value ${resolvedEndpoint}`);
-              await exec(`sudo wg set ${this.intf} peer ${pubKey} endpoint ${resolvedEndpoint}`).catch((err) => {});
+              await execFile("sudo", [this.wgCmd, "set", this.intf, "peer", pubKey, "endpoint", resolvedEndpoint]).catch((err) => {});
             }
           }
         }
@@ -764,7 +855,7 @@ class WireguardMeshAutomata {
         if (this.pubKey < pubKey && !info.router) {
           const routerPeer = t0Peers.find(k => this.peerInfo[k] && this.peerInfo[k].asRouter && this.peerInfo[k].connected.includes(pubKey));
           if (!routerPeer)
-            this.log.error(`Cannot find a relay node for peer ${pubKey}`);
+            this.log.errorRateLimited(300000, `Cannot find a relay node for peer ${pubKey}`);
           else {
             info.router = routerPeer;
             this.log.info(`Use peer ${routerPeer} as relay node for peer ${pubKey}`);
@@ -801,7 +892,9 @@ class WireguardMeshAutomata {
       if (!_.isEqual(allowedIPs, previousAllowedIPs)) {
         const str = `"${allowedIPs.join(",")}"`;
         this.log.info(`Setting allowed IPs of ${pubKey} to ${str}`);
-        await exec(`sudo wg set ${this.intf} peer ${pubKey} allowed-ips ${str}`).catch((err) => {});
+        // argv, matching the endpoint calls above. wg setconf already rejects a malformed key or
+        // cidr before this runs, so this is consistency rather than a live hole
+        await execFile("sudo", [this.wgCmd, "set", this.intf, "peer", pubKey, "allowed-ips", allowedIPs.join(",")]).catch((err) => {});
       }
     }
     this.effectiveAllowedIPs = effectiveAllowedIPs;
@@ -817,7 +910,18 @@ class WireguardMeshAutomata {
     let zone = this.domainZoneCache.peek(host);
     if (zone)
       return zone;
-    zone = await exec(`dig +time=3 +tries=2 SOA ${host} | grep ";; AUTHORITY SECTION" -A 1 | tail -n 1 | awk '{print $1}'`).then(result => result.stdout.trim()).catch((err) => null);
+    // the reply is remote supplied and is used as a command argument below, so pass names as argv
+    // and pick the field apart in js instead of piping through a shell
+    // +answer covers zone apex; +authority covers hostnames under the zone
+    const soa = await execFile("dig", ["+time=3", "+tries=2", "+noall", "+answer", "+authority", "SOA", host]).then(result => result.stdout).catch((err) => null);
+    if (soa) {
+      const line = lastLine(soa);
+      if (line)
+        zone = line.split(/\s+/)[0];
+    }
+    // dig leaves backtick, '|' and '&' unescaped in presentation format, do not trust the name
+    if (zone && !util.isValidDNSName(zone))
+      zone = null;
     if (zone)
       this.domainZoneCache.set(host, zone);
     return zone;
@@ -828,21 +932,32 @@ class WireguardMeshAutomata {
     // plain IP address, no need to resolve
     if ((host.startsWith('[') && host.endsWith(']') && new Address6(host.substring(1, host.length - 1)).isValid()) || new Address4(host).isValid())
       return endpoint;
+    // host comes from the peer's configured endpoint and is a dig operand in every lookup below,
+    // so it is checked before the first one rather than relying on execFile alone
+    if (!util.isValidDNSName(host)) {
+      this.log.error(`Invalid endpoint host on ${this.intf}, will not resolve`, host);
+      return null;
+    }
     const port = endpoint.substring(endpoint.lastIndexOf(':') + 1);
     const zone = await this.getZone(host);
     let authServers = null;
     // try to use authoritative DNS server if possible
     if (zone)
-      authServers = await exec(`dig +time=3 +tries=2 +short NS ${zone}`).then(result => result.stdout.trim().split('\n').filter(line => !line.startsWith(";;"))).catch((err) => null);
+      // NS targets are remote supplied too and become command arguments below, keep only plain names
+      authServers = await execFile("dig", ["+time=3", "+tries=2", "+short", "NS", zone])
+        .then(result => result.stdout.trim().split('\n')
+          .map(line => line.trim())
+          .filter(line => !line.startsWith(";;") && util.isValidDNSName(line.trim()))
+        ).catch((err) => null);
     if (v6Supported) {
       let v6Addr = this.dnsCache.peek(`v6::${host}`); // peek will not update last used timestamp in LRU
       if (v6Addr) {
         return `[${v6Addr}]:${port}`;
       }
       if (_.isEmpty(authServers))
-        v6Addr = await exec(`dig AAAA +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()).catch((err) => null);
+        v6Addr = await execFile("dig", ["AAAA", "+short", "+time=2", "+tries=2", host]).then((result) => lastLine(result.stdout)).catch((err) => null);
       else
-        v6Addr = await Promise.any(authServers.map(async (server) => exec(`dig AAAA @${server} +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()))).catch((err) => null);
+        v6Addr = await Promise.any(authServers.map(async (server) => execFile("dig", ["AAAA", `@${server}`, "+short", "+time=2", "+tries=2", host]).then((result) => lastLine(result.stdout)))).catch((err) => null);
       if (v6Addr && new Address6(v6Addr).isValid()) {
         this.dnsCache.set(`v6::${host}`, v6Addr);
         return `[${v6Addr}]:${port}`;
@@ -852,9 +967,9 @@ class WireguardMeshAutomata {
     if (v4Addr)
       return `${v4Addr}:${port}`;
     if (_.isEmpty(authServers))
-      v4Addr = await exec(`dig A +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()).catch((err) => null);
+      v4Addr = await execFile("dig", ["A", "+short", "+time=2", "+tries=2", host]).then((result) => lastLine(result.stdout)).catch((err) => null);
     else
-      v4Addr = await Promise.any(authServers.map(async (server) => exec(`dig A @${server} +short +time=2 +tries=2 ${host} | tail -n 1`).then((result) => result.stdout.trim()))).catch((err) => null);
+      v4Addr = await Promise.any(authServers.map(async (server) => execFile("dig", ["A", `@${server}`, "+short", "+time=2", "+tries=2", host]).then((result) => lastLine(result.stdout)))).catch((err) => null);
     if (v4Addr && new Address4(v4Addr).isValid()) {
       this.dnsCache.set(`v4::${host}`, v4Addr);
       return `${v4Addr}:${port}`;

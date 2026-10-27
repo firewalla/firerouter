@@ -17,7 +17,7 @@
 const log = require("./logger.js")(__filename)
 
 const cp = require('child_process');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const util = require('util');
 
 // TODO: Read this from config file
@@ -155,6 +155,10 @@ function getFirewallaUserConfigFolder() {
   return getFirewallaHiddenFolder() + "/config";
 }
 
+function getFwapcExecPath() {
+  return `${getFirewallaHiddenFolder()}/run/assets/fwapc`;
+}
+
 function getInterfaceResolvConfPath(iface) {
   return `${getRuntimeFolder()}/${iface}.resolv.conf`;
 }
@@ -215,18 +219,18 @@ function getProcessName() {
 }
 
 async function switchBranch(targetBranch) {
-  await exec(`${getFireRouterHome()}/scripts/switch_branch.sh ${targetBranch}`);
+  await execFile(`${getFireRouterHome()}/scripts/switch_branch.sh`, [targetBranch]);
 }
 
 function scheduleRestartFireBoot(delay = 10) {
   setTimeout(() => {
-    exec(`sudo systemctl restart fireboot`);
+    execFile("sudo", ["systemctl", "restart", "fireboot"]);
   }, delay * 1000);
 }
 
 // return true if it has valid MAC address, false otherwise. Or return null if permanent MAC cannot be obtained via ethtool -P
 async function verifyPermanentMAC(iface) {
-  const pmac = await exec(`sudo ethtool -P ${iface}`).then(result => result.stdout.substring("Permanent address:".length).trim()).catch((err) => {
+  const pmac = await execFile("sudo", ["ethtool", "-P", iface]).then(result => result.stdout.substring("Permanent address:".length).trim()).catch((err) => {
     log.error(`Failed to get permanent MAC address of ${iface}`, err.message);
     return null;
   });
@@ -259,7 +263,9 @@ module.exports = {
   getLatestCommitHash:getLatestCommitHash,
   getFireRouterHome:getFireRouterHome,
   getFirewallaHome,
+  getFirewallaHiddenFolder,
   getFirewallaUserConfigFolder: getFirewallaUserConfigFolder,
+  getFwapcExecPath,
   getInterfaceResolvConfPath: getInterfaceResolvConfPath,
   getInterfaceDelegatedPrefixPath: getInterfaceDelegatedPrefixPath,
   getInterfacePDCacheDirectory: getInterfacePDCacheDirectory,
