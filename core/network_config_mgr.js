@@ -227,8 +227,14 @@ class NetworkConfigManager {
             await finish([`Invalid wpa_supplicant parameter: ${invalidKey}`]);
             return;
           }
-          // watch the control socket so an attempt rejected for its credentials fails right away
-          let armed = false;
+          // stop any attempt with the old settings, it reports nothing for this network once disabled
+          await wpaCli("disable_network", String(selectedNetwork.id)).catch((err) => { });
+          // a setup error leaves the target as enabled as it was before the disable above
+          // flags is the raw list_networks column, match the exact token so [TEMP-DISABLED] still counts as enabled
+          if (networks.includes(selectedNetwork) && !(selectedNetwork.flags && selectedNetwork.flags.includes("[DISABLED]")))
+            undoDisable = () => wpaCli("enable_network", String(selectedNetwork.id)).catch((err) => { });
+          // watch the control socket so an attempt rejected for its credentials fails right away, attached only
+          // after the disable above: wpa_supplicant sends a monitor only events raised after it attaches
           const attached = await new Promise((resolve) => {
             const timer = setTimeout(() => resolve(false), 2000);
             monitor = spawnWpaCliInteractive({
@@ -240,7 +246,7 @@ class NetworkConfigManager {
                   resolve(true);
                   return;
                 }
-                const event = armed && parseSsidTempDisabled(line);
+                const event = parseSsidTempDisabled(line);
                 if (!event || finished || event.id !== String(selectedNetwork.id))
                   return;
                 log.warn(`wpa_supplicant temporarily disabled ${ssid} on ${intf}, reason ${event.reason}`);
@@ -261,12 +267,6 @@ class NetworkConfigManager {
             monitor.quit();
             monitor = null;
           }
-          // stop any attempt with the old settings so it cannot report a stale failure
-          await wpaCli("disable_network", String(selectedNetwork.id)).catch((err) => { });
-          // a setup error leaves the target as enabled as it was before the disable above
-          // flags is the raw list_networks column, match the exact token so [TEMP-DISABLED] still counts as enabled
-          if (networks.includes(selectedNetwork) && !(selectedNetwork.flags && selectedNetwork.flags.includes("[DISABLED]")))
-            undoDisable = () => wpaCli("enable_network", String(selectedNetwork.id)).catch((err) => { });
           for (const key of Object.keys(params)) {
             const value = await util.generateWpaSupplicantConfig(key, params);
             // the key is allowlisted above but the value is caller supplied, keep it out of a shell
@@ -276,8 +276,6 @@ class NetworkConfigManager {
               return;
             }
           }
-          // events from here on belong to the attempt select_network starts
-          armed = true;
           let error = await wpaCli("select_network", String(selectedNetwork.id)).then(() => null).catch((err) => err.message);
           if (error) {
             await finish([error], undoDisable);

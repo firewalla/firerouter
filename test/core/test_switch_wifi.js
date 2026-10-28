@@ -65,6 +65,7 @@ describe('Test switchWifi early failure', function() {
     };
     wpaCliUtil.spawnWpaCliInteractive = (opts) => {
       const child = new EventEmitter();
+      calls.push('spawn monitor');
       monitor = { opts, child, writes: [], quits: 0 };
       return {
         child,
@@ -132,10 +133,22 @@ describe('Test switchWifi early failure', function() {
     ]);
   });
 
-  it('should ignore stale events and events for other networks', async () => {
+  it('should attach the monitor only after the old attempt is stopped', async () => {
+    hooks.list = '0\tOld\tany\t[CURRENT]\n1\tlab\tany\t\n';
     hooks.onCommand = (cmd) => {
-      if (cmd.endsWith('disable_network 1'))
-        monitor.opts.onLine(EVENT(1, 'CONN_FAILED')); // before select_network: an older attempt
+      if (cmd.endsWith('select_network 1'))
+        emitLater(EVENT(1, 'WRONG_KEY'));
+    };
+    const result = await ncm.switchWifi('wlan0', 'lab', { key_mgmt: 'NONE' });
+    expect(result).to.eql(['WRONG_KEY']);
+    // a failure the old attempt raised before the disable never reaches a monitor attached after it
+    const disableAt = calls.findIndex(c => c.endsWith('disable_network 1'));
+    expect(disableAt).to.be.at.least(0);
+    expect(calls.indexOf('spawn monitor')).to.be.above(disableAt);
+  });
+
+  it('should ignore events for other networks', async () => {
+    hooks.onCommand = (cmd) => {
       if (cmd.endsWith('select_network 1')) {
         emitLater(EVENT(0, 'WRONG_KEY'));
         setTimeout(() => monitor.opts.onLine(EVENT(1, 'AUTH_FAILED')), 60);
