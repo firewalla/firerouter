@@ -23,6 +23,7 @@ const exec = require('child-process-promise').exec;
 
 const r = require('../../util/firerouter');
 let log = require('../../util/logger.js')(__filename, 'info');
+const routing = require('../../util/routing.js');
 
 let InterfaceBasePlugin = require('../../plugins/interface/intf_base_plugin.js');
 
@@ -150,5 +151,66 @@ describe('Test interface base dhcp6', function(){
       log.debug("dig dns result:", results);
       // expect(result).to.be.equal(["95.217.163.246","95.217.163.246"]);
     });
-  });
 
+    it('should preserve link-local ipv6 dns in the general helper', async() => {
+      const plugin = new InterfaceBasePlugin("wlan0");
+      plugin.configure({ dhcp: true, dhcp6: {} });
+
+      const originalGetDNSNameservers = plugin.getDNSNameservers;
+      plugin.getDNSNameservers = async () => ([
+        'fe80::6057:c8ff:fe51:5764%wlan0',
+        '2606:4700:4700::1111',
+        'not-an-ip'
+      ]);
+
+      try {
+        expect(await plugin.getDns6Nameservers()).to.deep.equal([
+          'fe80::6057:c8ff:fe51:5764%wlan0',
+          '2606:4700:4700::1111'
+        ]);
+      } finally {
+        plugin.getDNSNameservers = originalGetDNSNameservers;
+      }
+    });
+
+    it('should ignore scoped link-local ipv6 dns when updating dns routes', async() => {
+      const plugin = new InterfaceBasePlugin("wlan0");
+      plugin.configure({ dhcp: true, dhcp6: {} });
+
+      const originalRemoveOldRouteForDNS = plugin._removeOldRouteForDNS;
+      const originalUpdateDnsRouteCache = plugin._updateDnsRouteCache;
+      const originalGetDns4Nameservers = plugin.getDns4Nameservers;
+      const originalGetRoutableDns6Nameservers = plugin.getRoutableDns6Nameservers;
+      const originalGetInterfaceGWIP = routing.getInterfaceGWIP;
+      const originalAddRouteToTable = routing.addRouteToTable;
+
+      const routeCalls = [];
+      plugin._removeOldRouteForDNS = async () => {};
+      plugin._updateDnsRouteCache = () => {};
+      plugin.getDns4Nameservers = async () => ['172.20.10.1'];
+      plugin.getRoutableDns6Nameservers = async () => ['2606:4700:4700::1111'];
+      routing.getInterfaceGWIP = async (intf, af) => {
+        expect(intf).to.equal('wlan0');
+        return af === 4 ? '172.20.10.254' : 'fe80::1';
+      };
+      routing.addRouteToTable = async (...args) => {
+        routeCalls.push(args);
+      };
+
+      try {
+        await plugin.updateRouteForDNS();
+      } finally {
+        plugin._removeOldRouteForDNS = originalRemoveOldRouteForDNS;
+        plugin._updateDnsRouteCache = originalUpdateDnsRouteCache;
+        plugin.getDns4Nameservers = originalGetDns4Nameservers;
+        plugin.getRoutableDns6Nameservers = originalGetRoutableDns6Nameservers;
+        routing.getInterfaceGWIP = originalGetInterfaceGWIP;
+        routing.addRouteToTable = originalAddRouteToTable;
+      }
+
+      expect(routeCalls).to.deep.equal([
+        ['172.20.10.1', '172.20.10.254', 'wlan0', 'wlan0_default', null, 4, true],
+        ['2606:4700:4700::1111', 'fe80::1', 'wlan0', 'wlan0_default', null, 6, true]
+      ]);
+    });
+  });
