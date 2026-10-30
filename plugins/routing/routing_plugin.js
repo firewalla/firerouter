@@ -234,8 +234,8 @@ class RoutingPlugin extends Plugin {
       this._dnsRoutes[viaIntf] = [];
     }
     for (const dns of this._dnsRoutes[viaIntf]) {
-      if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.metric == metric && dns.tableName == tableName) {
-        // ensure no duplicates
+      if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.metric == metric && dns.tableName == tableName && dns.af == af) {
+        // ensure no duplicates, a load_balance apply for one family must still record its af for the flush
         return;
       }
     }
