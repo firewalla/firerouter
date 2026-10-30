@@ -49,6 +49,7 @@ const STATE_NORMAL = "STATE_NORMAL";
 
 const BAND_24G = "2.4g";
 const BAND_5G = "5g";
+const MAX_ATTEMPTED_SSIDS = 128;
 
 const LOG_TAG_STA_AP = "[STA_AP]";
 
@@ -80,6 +81,22 @@ class OrangePlatform extends Platform {
         log.error("Failed to check AP state automata", err.message);
       });
     }, 2000);
+  }
+
+  _rememberAttemptedSSID(stateAutomata, ssid) {
+    const normalizedSSID = `${ssid}`;
+    if (stateAutomata.attemptedSSIDs.has(normalizedSSID)) {
+      return;
+    }
+
+    if (stateAutomata.attemptedSSIDs.size >= MAX_ATTEMPTED_SSIDS) {
+      const oldestSSID = stateAutomata.attemptedSSIDs.values().next().value;
+      if (oldestSSID !== undefined) {
+        stateAutomata.attemptedSSIDs.delete(oldestSSID);
+      }
+    }
+
+    stateAutomata.attemptedSSIDs.add(normalizedSSID);
   }
 
   getName() {
@@ -860,7 +877,7 @@ class OrangePlatform extends Platform {
                 log.info(`${LOG_TAG_STA_AP} Extending silence period on band ${band} by 45 seconds for SSID ${ssid} authentication attempt`);
                 stateAutomata.silenceEndTs = Date.now() + 45000;
               }
-              stateAutomata.attemptedSSIDs.add(`${ssid}`);
+              this._rememberAttemptedSSID(stateAutomata, ssid);
               break;
             }
             case STATE_NORMAL: {
