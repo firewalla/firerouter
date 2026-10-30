@@ -15,7 +15,7 @@
 
 'use strict';
 
-const { exec } = require('child-process-promise');
+const { execFile } = require('child-process-promise');
 const log = require('../util/logger.js')('util');
 
 class SysCtl {
@@ -30,7 +30,7 @@ class SysCtl {
     }
 
     try {
-      const result = await exec(`sudo sysctl -n ${parameter}`);
+      const result = await execFile("sudo", ["sysctl", "-n", parameter]);
       return result.stdout.trim();
     } catch (err) {
       log.error(`Failed to get sysctl value for ${parameter}:`, err.message);
@@ -50,7 +50,7 @@ class SysCtl {
     }
 
     try {
-      await exec(`sudo sysctl -w ${parameter}=${value}`);
+      await execFile("sudo", ["sysctl", "-w", `${parameter}=${value}`]);
       log.debug(`Set sysctl ${parameter}=${value}`);
     } catch (err) {
       log.error(`Failed to set sysctl value for ${parameter}=${value}:`, err);

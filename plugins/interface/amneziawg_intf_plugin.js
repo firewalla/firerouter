@@ -17,7 +17,7 @@
 
 const WireguardInterfacePlugin = require('./wireguard_intf_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 
@@ -35,14 +35,15 @@ class AmneziawgInterfacePlugin extends WireguardInterfacePlugin {
     super(name);
     this.wireguardType = AMNEZIAWG_NAME;
     this.iptablesChainName = "FR_AMNEZIA_WG";
-    this.wgCmd = `${platform.getBinaryPath()}/awg`;
+    this.wgCmd = platform.getAwgBinPath();
   }
  
   static async preparePlugin() {
     // wireguard module will help to load all dependency module
-    await exec("sudo modprobe wireguard");
+    await execFile("sudo", ["modprobe", "wireguard"]);
     await platform.installKernelModule(AMNEZIAWG_NAME);
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/${AMNEZIAWG_NAME}`);
+    await platform.resolveAwgBinPath();
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/${AMNEZIAWG_NAME}`]);
   }
 
   isFlushNeeded(newConfig) {

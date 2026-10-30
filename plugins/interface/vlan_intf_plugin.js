@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,28 +17,31 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 
 class VLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
-    await exec(`sudo modprobe 8021q`);
+    await execFile("sudo", ["modprobe", "8021q"]);
   }
   
   async flush() {
     await super.flush();
 
     if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
-      await exec(`sudo ip link delete ${this.name}`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "delete", this.name]).catch((err) => {});
     }
   }
 
   async createInterface() {
     const intf = this.networkConfig.intf;
-    const vid = this.networkConfig.vid;
-    await exec(`sudo ip link add link ${intf} name ${this.name} type vlan id ${vid} protocol 802.1Q`).catch((err) => {
+    // vid is interpolated into the command below, 802.1Q only defines 1-4094
+    const vid = Number(this.networkConfig.vid);
+    if (!Number.isInteger(vid) || vid < 1 || vid > 4094)
+      this.fatal(`Invalid vlan id for ${this.name} ${this.networkConfig.vid}`);
+    await execFile("sudo", ["ip", "link", "add", "link", intf, "name", this.name, "type", "vlan", "id", String(vid), "protocol", "802.1Q"]).catch((err) => {
       this.log.debug(`Failed to create vlan interface ${this.name}`, err.message);
     });
     const intfPlugin = pl.getPluginInstance("interface", this.networkConfig.intf);

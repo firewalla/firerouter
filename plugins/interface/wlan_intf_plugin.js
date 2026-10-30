@@ -17,7 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const ncm = require('../../core/network_config_mgr')
 const r = require('../../util/firerouter.js');
@@ -46,25 +46,25 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await platform.reloadWLANKernelModule();
     await platform.installWLANTools();
     await platform.setWifiDynamicDebug();
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf /etc/rsyslog.d/`);
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/14-wpa_supplicant.conf`, "/etc/rsyslog.d/"]);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/13-rtw.conf`, "/etc/rsyslog.d/"]);
     pl.scheduleRestartRsyslog();
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant /etc/logrotate.d/`);
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/rtw /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/wpa_supplicant`, "/etc/logrotate.d/"]);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/rtw`, "/etc/logrotate.d/"]);
     // make crontab persistent, this actually depends on Firewalla code, but that's fine cuz
     // update_crontab.sh exists in both Gold and Purple's base image, and covers ~/.firewalla/config/crontab/
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/crontab`)
+    await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/crontab`])
     await exec(`echo "*/10 * * * * sudo logrotate /etc/logrotate.d/rtw" > ${r.getFirewallaUserConfigFolder()}/crontab/rtw-logrotate`)
-    await exec(`${r.getFirewallaHome()}/scripts/update_crontab.sh`).catch(()=>{})
+    await execFile(`${r.getFirewallaHome()}/scripts/update_crontab.sh`, []).catch(()=>{})
     await this.createDirectories();
     await this.installWpaSupplicantScript();
     await this.installSystemService();
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/wpa_supplicant`).catch((err) => {});
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/wpa_supplicant`).catch((err) => {});
-    await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/wpa_supplicant`]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getRuntimeFolder()}/wpa_supplicant`]).catch((err) => {});
+    await execFile("mkdir", ["-p", r.getTempFolder()]).catch((err) => {});
   }
 
   static async installSystemService() {
@@ -72,11 +72,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     content = content.replace(/%WPA_SUPPLICANT_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_wpa_supplicant@.service";
     await fs.writeFileAsync(targetFile, content);
-    await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+    await execFile("sudo", ["cp", targetFile, "/etc/systemd/system"]);
   }
 
   static async installWpaSupplicantScript() {
-    await exec(`cp ${wpaSupplicantScript} ${r.getTempFolder()}/wpa_supplicant.sh`);
+    await execFile("cp", [wpaSupplicantScript, `${r.getTempFolder()}/wpa_supplicant.sh`]);
   }
 
   static async getInstanceWithWpaSupplicant(iwPhy) {
@@ -98,15 +98,18 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     return wpa
   }
 
-  static async simpleWpaCommand(iwPhy,  paramString) {
-    if (!_.isString(paramString) || !paramString.trim().length)
+  // args is the wpa_cli command as argv, one element per argument. it is not a command line: a
+  // value is passed through as it stands, so an SSID or a passphrase holding a space stays one
+  // argument rather than being split on whitespace the way a shell would
+  static async simpleWpaCommand(iwPhy, args) {
+    if (!_.isArray(args) || !args.length || !args.every(a => _.isString(a) && a.length))
       throw new Error('Empty command')
 
     const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
       const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
-      return exec(`sudo ${wpaCliPath} -p ${ctlSocket} -i ${instance.name} ${paramString}`)
+      return execFile("sudo", [wpaCliPath, "-p", ctlSocket, "-i", instance.name].concat(args))
     }
   }
 
@@ -116,17 +119,17 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     const wpaService = `firerouter_wpa_supplicant@${iface}`;
 
     if (!up && isWifiClient) {
-      await exec(`sudo systemctl stop ${wpaService}`).catch((err) => {
+      await execFile("sudo", ["systemctl", "stop", wpaService]).catch((err) => {
         log.error(`Failed to stop ${wpaService}`, err.message);
       });
     }
 
-    await exec(`sudo ip link set ${iface} ${up ? 'up' : 'down'}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, up ? 'up' : 'down']).catch((err) => {
       // interface link may not exist, ignore error here
     });
 
     if (up && isWifiClient) {
-      await exec(`sudo systemctl start ${wpaService}`).catch((err) => {
+      await execFile("sudo", ["systemctl", "start", wpaService]).catch((err) => {
         log.error(`Failed to start ${wpaService}`, err.message);
       });
     }
@@ -225,7 +228,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     if (!sibling) {
       return;
     }
-    await exec(`sudo ip link set ${sibling} down`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", sibling, "down"]).catch((err) => {
       // interface link may not exist, ignore error here
     });
     return;
@@ -234,11 +237,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
   async interfaceUpDown() {
     if (platform.shouldBringWLANInterfaceUp(this)) {
       await this._downExclusiveWLANSibling();
-      await exec(`sudo ip link set ${this.name} up`).catch((err) => {
+      await execFile("sudo", ["ip", "link", "set", this.name, "up"]).catch((err) => {
         this.log.error(`Failed to turn on interface ${this.name}`, err.message);
       });
     } else {
-      await exec(`sudo ip link set ${this.name} down`).catch((err) => {
+      await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {
         this.log.error(`Failed to turn off interface ${this.name}`, err.message);
       });
     }
@@ -280,14 +283,14 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     await platform.removeWLANInterface(this);
 
     if (this.networkConfig && this.networkConfig.wpaSupplicant) {
-      await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {});
       await fs.unlinkAsync(this._getWpaSupplicantConfigPath()).catch((err) => {});
     }
 
     if (baseIntf) {
-      const baseExists = await exec(`ip link show dev ${baseIntf}`).then(() => true).catch(() => false);
+      const baseExists = await execFile("ip", ["link", "show", "dev", baseIntf]).then(() => true).catch(() => false);
       if (baseExists) {
-        await exec(`sudo ip link set ${baseIntf} up`).catch((err) => {
+        await execFile("sudo", ["ip", "link", "set", baseIntf, "up"]).catch((err) => {
           this.log.warn(`Failed to restore base interface ${baseIntf} link up`, err.message);
         });
       }
@@ -355,11 +358,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
 
     // refresh interface state in case something is not relinquished in driver
-    await exec(`sudo ip link set ${this.name} down`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", this.name, "down"]).catch((err) => {});
     const shouldUp = platform.shouldBringWLANInterfaceUp(this);
     if (shouldUp) {
       await this._downExclusiveWLANSibling();
-      await exec(`sudo ip link set ${this.name} up`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", this.name, "up"]).catch((err) => {});
     }
 
     if (platform instanceof GoldPlatform && await platform.getWlanVendor() == '8821cu') {
@@ -367,9 +370,9 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig.wds && platform.isWDSSupported()) {
-      await exec(`sudo iw dev ${this.name} set 4addr on`).catch((err) => {});
+      await execFile("sudo", ["iw", "dev", this.name, "set", "4addr", "on"]).catch((err) => {});
     } else {
-      await exec(`sudo iw dev ${this.name} set 4addr off`).catch((err) => {});
+      await execFile("sudo", ["iw", "dev", this.name, "set", "4addr", "off"]).catch((err) => {});
     }
 
     if (this.networkConfig.wpaSupplicant) {
@@ -377,11 +380,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       await this.writeConfigFile()
 
       if (shouldUp) {
-        await exec(`sudo systemctl start firerouter_wpa_supplicant@${this.name}`).catch((err) => {
+        await execFile("sudo", ["systemctl", "start", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });
       } else {
-        await exec(`sudo systemctl stop firerouter_wpa_supplicant@${this.name}`).catch((err) => {});
+        await execFile("sudo", ["systemctl", "stop", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {});
       }
     }
 
@@ -395,7 +398,7 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   async getWpaStatus() {
     // wpa_cli is interoperable on both station and ap interface
-    const lines = await exec(`sudo ${await platform.getWpaCliBinPath()} -p ${this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`} -i ${this.name} status`)
+    const lines = await execFile("sudo", [await platform.getWpaCliBinPath(), "-p", this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`, "-i", this.name, "status"])
       .then(result => result.stdout.trim().split('\n')).catch(() => []);
     const status = {};
     /*

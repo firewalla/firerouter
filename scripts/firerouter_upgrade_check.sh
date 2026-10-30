@@ -58,6 +58,8 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   sudo systemctl restart firerouter
   init_network_config
   rm -f /dev/shm/firerouter.upgraded
-  echo "Restarting FireReset ..."
-  sudo systemctl restart firereset
+  if [[ $NEED_FIRERESET != "false" ]]; then
+    echo "Restarting FireReset ..."
+    sudo systemctl restart firereset
+  fi
 fi

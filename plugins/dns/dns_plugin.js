@@ -24,12 +24,14 @@ const event = require('../../core/event.js');
 const dnsServiceFileTemplate = __dirname + "/firerouter_dns.template.service";
 const dnsScriptTemplate = __dirname + "/dns.template.sh";
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 const r = require('../../util/firerouter');
 const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
+
+const log = require('../../util/logger.js')('DNSPlugin');
 
 let _restartTask = null;
 
@@ -38,12 +40,35 @@ const dnsConfTemplate = r.getFireRouterHome() + "/etc/dnsmasq.dns.conf.template"
 class DNSPlugin extends Plugin {
 
   static async preparePlugin() {
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-dnsmasq.conf /etc/rsyslog.d/`);
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/16-firerouter-dns.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/13-dnsmasq.conf`, "/etc/rsyslog.d/"]);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/16-firerouter-dns.conf`, "/etc/rsyslog.d/"]);
     await this.createDirectories();
     await this.installDNSScript();
     await this.installSystemService();
     await this.cleanupLocalhostDnsConf();
+  }
+
+  // Find a dead localhost upstream in a scanned conf's content, given whether its port is
+  // listening. Returns null when there's nothing to delete, otherwise the port and whether other
+  // directives ride along in the same file.
+  static _findDeadLocalhostUpstream(content, listening) {
+    const match = content.match(/server=127\.0\.0\.1#(\d+)/);
+    if (!match || listening) return null;
+    const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+    return { port: match[1], mixed: lines.length > 1 };
+  }
+
+  static _parseListeningPorts(ssOutput) {
+    const ports = new Set();
+    for (const line of ssOutput.split('\n')) {
+      for (const token of line.trim().split(/\s+/)) {
+        const matched = token.match(/:(\d+)$/);
+        if (!matched) continue;
+        ports.add(matched[1]);
+        break;
+      }
+    }
+    return ports;
   }
 
   // Remove localhost-upstream confs whose port isn't listening yet (boot gap guard).
@@ -54,26 +79,31 @@ class DNSPlugin extends Plugin {
     if (alreadyRun) return;
 
     const confDir = `${r.getFirewallaUserConfigFolder()}/dnsmasq`;
-    const { stdout } = await exec(`grep -rl 'server=127\\.0\\.0\\.1#' '${confDir}'`).catch(() => ({ stdout: '' }));
+    const { stdout } = await execFile("grep", ["-rl", "server=127\\.0\\.0\\.1#", confDir]).catch(() => ({ stdout: '' }));
     const confs = stdout.trim().split('\n').filter(Boolean);
+    const { stdout: ssOutput } = await exec("ss -lntu").catch(() => ({ stdout: '' }));
+    const listeningPorts = this._parseListeningPorts(ssOutput);
     for (const conf of confs) {
       const content = await fs.readFileAsync(conf, 'utf8').catch(() => '');
       const match = content.match(/server=127\.0\.0\.1#(\d+)/);
       if (!match) continue;
-      const port = match[1];
-      const listening = await exec(`ss -lntu | grep -q '127\\.0\\.0\\.1:${port} '`).then(() => true).catch(() => false);
-      if (!listening)
-        await fs.unlinkAsync(conf).catch(() => {});
+      const listening = listeningPorts.has(match[1]);
+      const decision = this._findDeadLocalhostUpstream(content, listening);
+      if (!decision) continue;
+      if (decision.mixed)
+        // deleting anyway per the dead-port rule, but flagged since other directives go with it.
+        log.warn(`${conf} has a dead localhost upstream (port ${decision.port}) mixed with other directives, deleting the whole file - please check manually`);
+      await fs.unlinkAsync(conf).catch(() => {});
     }
 
     await fs.writeFileAsync(marker, '').catch(() => {});
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/dnsmasq`).catch((err) => {});
-    await exec(`mkdir -p ${r.getRuntimeFolder()}/dnsmasq`).catch((err) => {});
-    await exec(`mkdir -p ${r.getTempFolder()}`).catch((err) => {});
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq_local`).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/dnsmasq`]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getRuntimeFolder()}/dnsmasq`]).catch((err) => {});
+    await execFile("mkdir", ["-p", r.getTempFolder()]).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/dnsmasq_local`]).catch((err) => {});
   } 
 
   static async installSystemService() {
@@ -82,7 +112,7 @@ class DNSPlugin extends Plugin {
     content = content.replace(/%DNS_DIRECTORY%/g, r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_dns.service";
     await fs.writeFileAsync(targetFile, content);
-    await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+    await execFile("sudo", ["cp", targetFile, "/etc/systemd/system"]);
   }
 
   static async installDNSScript() {
@@ -109,7 +139,7 @@ class DNSPlugin extends Plugin {
   }
 
   async prepareEnvironment() {
-    await exec(`mkdir -p ${r.getFirewallaUserConfigFolder()}/dnsmasq/${this._intfUuid}`).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/dnsmasq/${this._intfUuid}`]).catch((err) => {});
   }
 
   async writeDNSConfFile() {
@@ -249,8 +279,8 @@ class DNSPlugin extends Plugin {
         }
       }
     }
-    await exec(`sudo rm -f /etc/resolv.conf`);
-    await exec(`sudo ln -s ${this._getResolvFilePath()} /etc/resolv.conf`);
+    await execFile("sudo", ["rm", "-f", "/etc/resolv.conf"]);
+    await execFile("sudo", ["ln", "-s", this._getResolvFilePath(), "/etc/resolv.conf"]);
   }
 
   _restartService() {

@@ -193,6 +193,7 @@ update_timezone() {
   FW_ACTUAL_TIMEZONE=$(cat /etc/timezone)
   if [[ "x$FW_TIMEZONE" != "x" && "x$FW_TIMEZONE" != "x$FW_ACTUAL_TIMEZONE" ]]; then
     sudo timedatectl set-timezone $FW_TIMEZONE
+    echo "$FW_TIMEZONE" | sudo tee /etc/timezone > /dev/null
     sudo systemctl restart cron.service # this is to ensure cron jobs are set to the right timezone
     sudo systemctl restart rsyslog
   fi

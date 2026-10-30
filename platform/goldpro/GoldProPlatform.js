@@ -15,7 +15,7 @@
 
 const Platform = require('../Platform.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
@@ -69,25 +69,25 @@ class GoldProPlatform extends Platform {
   }
 
   async ledNormalVisibleStart() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN normal visible");
     });
   }
 
   async ledNormalVisibleStop() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAllNetworkDown() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAnyNetworkUp() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
@@ -205,12 +205,12 @@ class GoldProPlatform extends Platform {
     await util.delay(1000);
 
     // force shutdown interfaces
-    await exec(`sudo ip link set ${iface} down`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "down"]).catch((err) => {
       log.error(`Failed to turn off interface ${iface}`, err.message);
     });
 
     // set mac address
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "address", hwAddr]).catch((err) => {
       log.error(`Failed to set MAC address of ${iface}`, err.message);
       errCounter++;
     });

@@ -1,4 +1,4 @@
-/*    Copyright 2019 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -20,6 +20,7 @@ const exec = require('child-process-promise').exec;
 const util = require('../../util/util.js');
 const pl = require('../plugin_loader.js');
 const _  = require('lodash');
+const {Address4, Address6} = require('ip-address');
 
 class NatPlugin extends Plugin {
 
@@ -46,6 +47,12 @@ class NatPlugin extends Plugin {
 
     if (!_.isEmpty(ips)) {
       for (const ip of ips) {
+        // ip comes from srcSubnets in the config and wrapIptables hands the rule to a nested
+        // bash -c, so anything that is not an address would be reparsed as shell
+        if (!_.isString(ip) || !new Address4(ip).isValid() && !new Address6(ip).isValid()) {
+          this.log.error(`Invalid srcSubnet of ${this.name}, ignore`, ip);
+          continue;
+        }
         await exec(util.wrapIptables(`sudo ${cmd} -w -t nat ${flag} FR_SNAT -s ${ip} -o ${oif}${comment} -j MASQUERADE`)).catch((err) => { });
       }
     }

@@ -1,0 +1,375 @@
+/*    Copyright 2016-2026 Firewalla Inc.
+ *
+ *    This program is free software: you can redistribute it and/or modify
+ *    it under the terms of the GNU Affero General Public License, version 3,
+ *    as published by the Free Software Foundation.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU Affero General Public License for more details.
+ *
+ *    You should have received a copy of the GNU Affero General Public License
+ *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+'use strict';
+
+// Expands the compact onboard "network profile" into a full FireRouter network config.
+//
+// The cloud cannot know how many ports a box has, so for the "adaptive" profile it only states the
+// WAN connection method and the LAN subnet, and the box fills in the ports at boot: the installer's
+// WAN port is always eth0 (pinned to its MAC by crystal-ifmap on every boot, see the installer's
+// lib/ifmap.sh), and every other ethernet port joins the LAN bridge.
+//
+// Compact form:
+//   { "profile": "adaptive",
+//     "wan": { "type": "dhcp" }
+//        | { "type": "pppoe", "username": "user@isp", "password": "secret" }
+//        | { "type": "static", "ip": ..., "mask": ..., "gateway": ..., "dns": ... },
+//     "lan": { "ip": "192.168.49.1", "mask": "255.255.255.0" } }
+
+const _ = require('lodash');
+const log = require('../util/logger.js')(__filename);
+
+const PROFILE_ADAPTIVE = "adaptive";
+const WAN_PHY = "eth0";          // crystal-ifmap guarantees this is the installer's WAN port
+const PPPOE_INTF = "ppp0";
+const LAN_BRIDGE = "br0";
+const ETH_NAME = /^eth\d+$/;     // wlan/usb interfaces are owned by other plugins, never bridged here
+const DHCP_LEASE = 86400;
+const WAN_DHCP6 = {};
+
+// WAN connectivity check, same shape the app writes for a normal box
+const WAN_EXTRA = {
+  pingTestIP: ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
+  pingTestCount: 8,
+  pingSuccessRate: 0.5,
+  pingTestEnabled: true,
+  dnsTestEnabled: true,
+  dnsTestDomain: "github.com"
+};
+
+function ipToInt(ip) {
+  const parts = String(ip).split(".");
+  if (parts.length !== 4)
+    return null;
+  let n = 0;
+  for (const p of parts) {
+    const o = Number(p);
+    if (!Number.isInteger(o) || o < 0 || o > 255 || !/^\d+$/.test(p))
+      return null;
+    n = n * 256 + o;
+  }
+  return n;
+}
+
+function intToIp(n) {
+  return [n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255].join(".");
+}
+
+// "255.255.255.0" -> 24, null if the mask is not a valid contiguous netmask
+function maskToPrefix(mask) {
+  const n = ipToInt(mask);
+  if (n === null)
+    return null;
+  // a netmask is a run of ones followed by a run of zeros: ~n + 1 must be a power of two
+  const inverted = (~n >>> 0) + 1;
+  if (inverted !== 0 && (inverted & (inverted - 1)) !== 0)
+    return null;
+  let prefix = 0;
+  for (let i = 31; i >= 0 && (n & (1 << i)); i--)
+    prefix++;
+  return prefix;
+}
+
+function toCidr(ip, mask, label) {
+  const prefix = maskToPrefix(mask);
+  if (ipToInt(ip) === null)
+    throw new Error(`${label} ip is not a valid IPv4 address: ${ip}`);
+  if (prefix === null)
+    throw new Error(`${label} mask is not a valid netmask: ${mask}`);
+  return `${ip}/${prefix}`;
+}
+
+// dns may be a single address, a comma separated list, or an array
+function toNameservers(dns) {
+  if (_.isArray(dns))
+    return dns.filter(d => _.isString(d) && d.length > 0);
+  if (_.isString(dns))
+    return dns.split(",").map(d => d.trim()).filter(d => d.length > 0);
+  return [];
+}
+
+// Usable DHCP pool inside the LAN subnet, keeping the low addresses free for static assignments.
+// Mirrors the stock 10.10.0.10-10.10.0.250 layout of network/default_setup.json for a /24.
+function dhcpRange(lanIp, prefix) {
+  const ip = ipToInt(lanIp);
+  const size = 2 ** (32 - prefix);
+  const network = ip - (ip % size);
+  const broadcast = network + size - 1;
+  const from = network + 10;
+  const to = broadcast - 5;
+  if (from >= to)
+    throw new Error(`lan subnet /${prefix} is too small to hand out a DHCP range`);
+  return {from: intToIp(from), to: intToIp(to)};
+}
+
+function toVlanId(vlanId) {
+  if (vlanId === undefined || vlanId === null || vlanId === "")
+    return null;
+  if ((_.isNumber(vlanId) || _.isString(vlanId)) && /^\d+$/.test(String(vlanId))) {
+    const vid = Number(vlanId);
+    if (vid >= 1 && vid <= 4094)
+      return vid;
+  }
+  log.error(`wan vlanId is not a valid vlan id: ${JSON.stringify(vlanId)}, wan will run without vlan`);
+  return null;
+}
+
+function placeWan(wanConfig, vid) {
+  if (!vid)
+    return {wanIntf: WAN_PHY, phy: wanConfig};
+  const vlanIntf = `${WAN_PHY}.${vid}`;
+  return {
+    wanIntf: vlanIntf,
+    phy: {enabled: true},
+    vlan: {[vlanIntf]: {...wanConfig, intf: WAN_PHY, vid}}
+  };
+}
+
+function buildWan(wan) {
+  const type = _.get(wan, "type");
+  const vid = toVlanId(_.get(wan, "vlanId"));
+  switch (type) {
+    case "dhcp":
+      return {
+        ipv6: true,
+        ...placeWan({
+          meta: {name: "WAN", type: "wan"},
+          enabled: true,
+          dhcp: true,
+          dhcp6: _.cloneDeep(WAN_DHCP6),
+          extra: _.cloneDeep(WAN_EXTRA)
+        }, vid)
+      };
+    case "static": {
+      const nameservers = toNameservers(wan.dns);
+      if (ipToInt(wan.gateway) === null)
+        throw new Error(`wan gateway is not a valid IPv4 address: ${wan.gateway}`);
+      if (_.isEmpty(nameservers))
+        throw new Error("wan dns is required for a static wan");
+      return {
+        ipv6: false,
+        ...placeWan({
+          meta: {name: "WAN", type: "wan"},
+          enabled: true,
+          ipv4: toCidr(wan.ip, wan.mask, "wan"),
+          gateway: wan.gateway,
+          nameservers,
+          extra: _.cloneDeep(WAN_EXTRA)
+        }, vid)
+      };
+    }
+    case "pppoe": {
+      if (!_.isString(wan.username) || !_.isString(wan.password) || !wan.username || !wan.password)
+        throw new Error("wan username and password are required for pppoe");
+      const pppoeLower = vid ? `${WAN_PHY}.${vid}` : WAN_PHY;
+      return {
+        wanIntf: PPPOE_INTF,
+        ipv6: true,
+        phy: {enabled: true},
+        ...(vid ? {vlan: {[pppoeLower]: {enabled: true, intf: WAN_PHY, vid}}} : {}),
+        pppoe: {
+          [PPPOE_INTF]: {
+            meta: {name: "WAN", type: "wan"},
+            enabled: true,
+            intf: pppoeLower,
+            username: wan.username,
+            password: wan.password,
+            dhcp6: _.cloneDeep(WAN_DHCP6),
+            extra: _.cloneDeep(WAN_EXTRA)
+          }
+        }
+      };
+    }
+    default:
+      throw new Error(`unsupported wan type: ${type}`);
+  }
+}
+
+// network: the compact block from onboard-config.json
+// phyNames: physical interface names present on this box, e.g. from getPhyInterfaceNames()
+function expandProfile(network, phyNames) {
+  const profile = _.get(network, "profile");
+  if (profile !== PROFILE_ADAPTIVE)
+    throw new Error(`unsupported network profile: ${profile}`);
+
+  // numeric order, so a 10+ port box lists eth2 before eth10
+  const ethIndex = (n) => Number(n.slice(3));
+  const eths = (phyNames || []).filter(n => ETH_NAME.test(n)).sort((a, b) => ethIndex(a) - ethIndex(b));
+  if (!eths.includes(WAN_PHY))
+    throw new Error(`${WAN_PHY} is not present, cannot tell which port is the wan`);
+
+  const lan = _.get(network, "lan") || {};
+  const lanCidr = toCidr(lan.ip, lan.mask, "lan");
+  const lanPrefix = maskToPrefix(lan.mask);
+  const {wanIntf, phy, vlan, pppoe, ipv6} = buildWan(_.get(network, "wan"));
+
+  // Every port that is not the wan is a LAN member — that is what "adaptive" means.
+  const lanIntfs = eths.filter(n => n !== WAN_PHY);
+  const phyConfigs = {[WAN_PHY]: phy};
+  for (const intf of lanIntfs)
+    phyConfigs[intf] = {enabled: true};
+
+  const config = {
+    interface: {
+      phy: phyConfigs,
+      bridge: {
+        [LAN_BRIDGE]: {
+          meta: {name: "LAN", type: "lan"},
+          enabled: true,
+          ipv4: lanCidr,
+          ...(ipv6 ? {ipv6DelegateFrom: wanIntf} : {}),
+          intf: lanIntfs
+        }
+      }
+    },
+    routing: {global: {default: {viaIntf: wanIntf}}},
+    dns: {
+      default: {useNameserversFromWAN: true},
+      [LAN_BRIDGE]: {useNameserversFromWAN: true}
+    },
+    nat: {
+      [`${LAN_BRIDGE}-${wanIntf}`]: {in: LAN_BRIDGE, out: wanIntf}
+    },
+    dhcp: {
+      [LAN_BRIDGE]: {
+        gateway: lan.ip,
+        subnetMask: lan.mask,
+        nameservers: [lan.ip],
+        searchDomain: [".lan"],
+        range: dhcpRange(lan.ip, lanPrefix),
+        lease: DHCP_LEASE
+      }
+    },
+    sshd: {
+      [WAN_PHY]: {enabled: false},
+      [wanIntf]: {enabled: false},
+      [LAN_BRIDGE]: {enabled: true}
+    },
+    icmp: {
+      [wanIntf]: {echoRequest: false},
+      [LAN_BRIDGE]: {echoRequest: true}
+    },
+    mdns_reflector: {
+      [wanIntf]: {enabled: false},
+      [LAN_BRIDGE]: {enabled: true}
+    }
+  };
+  if (vlan)
+    config.interface.vlan = vlan;
+  if (pppoe)
+    config.interface.pppoe = pppoe;
+  if (ipv6)
+    config.dhcp6 = {[LAN_BRIDGE]: {type: "stateless", lease: DHCP_LEASE}};
+  return config;
+}
+
+function isProfileConfig(network) {
+  return _.isObject(network) && _.isString(network.profile);
+}
+
+// Fits a full network config taken from another box (migration) onto the ports this box has.
+// Ports only appear in interface.phy, bridge/bond intf and vlans on a port (ethX.Y), everything
+// else references the bridge/bond/vlan on top or eth0, so only those places are touched.
+function reconcilePorts(network, phyNames) {
+  const config = _.cloneDeep(network);
+  const actions = []; // log
+
+  const intf = config.interface || {};
+
+  const source = intf.phy || {}; // source `frcc` eth
+  const current = (phyNames || []).filter(n => ETH_NAME.test(n)).sort((a, b) => Number(a.slice(3)) - Number(b.slice(3))); // migrate target machine's eth
+  const bridges = intf.bridge || {};
+  const bonds = intf.bond || {};
+  const vlans = intf.vlan || {};
+  const appBonds = _.isArray(_.get(config, ["app", "bond"])) ? config.app.bond : [];
+  const without = (list, drop) => (list || []).filter(n => !drop.includes(n));
+
+  // 1. fewer ports, for each missing ethX:
+  //    - delete interface.phy.ethX and every vlan on it (interface.vlan.ethX.Y)
+  //    - remove ethX and ethX.Y from every bridge
+  //    - remove ethX from every bond and from app.bond
+  for (const port of Object.keys(source).filter(n => ETH_NAME.test(n) && !current.includes(n))) {
+    const subIntfs = Object.keys(vlans).filter(v => vlans[v].intf === port);
+    const gone = [port, ...subIntfs];
+    delete source[port];
+    for (const v of subIntfs)
+      delete vlans[v];
+    for (const conf of Object.values(bridges))
+      conf.intf = without(conf.intf, gone);
+    for (const conf of Object.values(bonds))
+      conf.intf = without(conf.intf, [port]);
+    for (let k = 0; k < appBonds.length; k++)
+      appBonds[k] = without(appBonds[k], [port]);
+    actions.push(`port ${port} is missing, remove ${gone.join(", ")}`);
+  }
+
+  // 2. more ports: add them to a plain bridge (br0 first) and to its vlan bridges,
+  //    or to the first bond if there is no plain bridge, otherwise leave them unused
+  const extra = current.filter(n => n !== WAN_PHY && !source[n]);
+  const isPlainBridge = (conf) => !_.isEmpty(_.get(conf, "intf")) && conf.intf.every(n => ETH_NAME.test(n));
+  const brName = isPlainBridge(bridges[LAN_BRIDGE]) ? LAN_BRIDGE : Object.keys(bridges).find(n => isPlainBridge(bridges[n]));
+  const bondName = Object.keys(bonds)[0];
+  if (extra.length > 0 && brName) {
+    const br = bridges[brName];
+    // a vlan bridge of br is made of ethX.Y sharing one vid, with exactly one ethX.Y per member of
+    // br, a vlan that only covers some of the ports of br or mixes vids is left alone
+    const vlanBridges = Object.keys(bridges).filter(n => {
+      const members = (bridges[n].intf || []).map(m => vlans[m]);
+      const parents = members.map(v => v && v.intf);
+      return n !== brName && members.length > 0 && members.every(Boolean)
+        && _.uniq(members.map(v => v.vid)).length === 1
+        && _.isEqual(_.sortBy(parents), _.sortBy(br.intf));
+    });
+    for (const port of extra) {
+      source[port] = {enabled: true};
+      br.intf.push(port);
+      const added = [];
+      for (const vbName of vlanBridges) {
+        const vid = vlans[bridges[vbName].intf[0]].vid;
+        const subIntf = `${port}.${vid}`;
+        vlans[subIntf] = {enabled: true, intf: port, vid};
+        bridges[vbName].intf.push(subIntf);
+        added.push(`${subIntf} to ${vbName}`);
+      }
+      if (added.length > 0)
+        intf.vlan = vlans;
+      actions.push(`add port ${port} to ${brName}${added.length ? `, ${added.join(", ")}` : ""}`);
+    }
+  } else if (extra.length > 0 && bondName) {
+    const bond = bonds[bondName];
+    const appBond = appBonds.find(g => _.isEqual(_.sortBy(g), _.sortBy(bond.intf || [])));
+    for (const port of extra) {
+      source[port] = {enabled: true};
+      bond.intf = (bond.intf || []).concat(port);
+      if (appBond)
+        appBond.push(port);
+      actions.push(`add port ${port} to ${bondName}`);
+    }
+  }
+
+  for (const action of actions)
+    log.info(`Reconcile onboard network: ${action}`);
+  return config;
+}
+
+module.exports = {
+  expandProfile,
+  isProfileConfig,
+  reconcilePorts,
+  maskToPrefix,
+  PROFILE_ADAPTIVE,
+  WAN_PHY
+};

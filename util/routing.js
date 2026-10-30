@@ -1,4 +1,4 @@
-/*    Copyright 2019 - 2020 Firewalla Inc
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,7 +17,8 @@
 
 const log = require('./logger.js')(__filename);
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
+const fsp = require('fs').promises;
 const _ = require('lodash');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
@@ -38,64 +39,100 @@ const MASK_ALL = "0xffff";
 const LOCK_RT_TABLES = "LOCK_RT_TABLES";
 const LOCK_FILE = "/tmp/rt_tables.lock";
 
+// the table name is interpolated into a command line that is run by root, reject anything that is
+// not a plain name so it cannot end the quoting or start a command substitution. the set is the
+// one INTF_NAME_REGEX allows, since most table names are built from an interface name - ':' and
+// '@' are inert both in the sed address and inside the double quotes of the append script.
+// keep this in step with extension/routing/routing.js in firewalla. that copy also memoises table
+// ids in an rtIdCache; leaving it out here is deliberate, not drift, so do not port it across.
+function isValidTableName(tableName) {
+  return _.isString(tableName) && tableName.length > 0 && !/[^A-Za-z0-9._:@-]/.test(tableName);
+}
+
 async function removeCustomizedRoutingTable(tableName) {
-  let cmd = `sudo bash -c 'flock ${LOCK_FILE} -c "sed -i -e \\"s/^[[:digit:]]\\+\\s\\+${tableName}$//g\\" /etc/iproute2/rt_tables"'`;
-  await exec(cmd);
+  if (!isValidTableName(tableName)) {
+    log.error(`Invalid routing table name: ${tableName}`);
+    throw new Error(`Invalid routing table name: ${tableName}`);
+  }
+  // the name goes into a sed address, where it is a regex rather than a literal. '.' is the only
+  // character isValidTableName admits that a basic regular expression treats specially, so escape
+  // it - without this, removing eth0.100_local would take eth0X100_local with it. widening the
+  // allowlist above means revisiting this line.
+  const pattern = tableName.replace(/\./g, '\\.');
+  await execFile('sudo', ['flock', LOCK_FILE, 'sed', '-i', '-e',
+    `/^[[:digit:]]\\+\\s\\+${pattern}$/d`, '/etc/iproute2/rt_tables']);
 }
 
 async function createCustomizedRoutingTable(tableName, type = RT_TYPE_REG) {
+  if (!isValidTableName(tableName)) {
+    log.error(`Invalid routing table name: ${tableName}`);
+    throw new Error(`Invalid routing table name: ${tableName}`);
+  }
   return new Promise((resolve, reject) => {
+    // async-lock takes this as a callback-style task because of the done argument, so the promise it
+    // returns is discarded: a throw or a rejected await would never release the lock and would leave
+    // the outer promise pending for good, since this lock has no timeout. every path ends in done()
     lock.acquire(LOCK_RT_TABLES, async function(done) {
-      // separate bits in fwmark for vpn client and regular WAN
-      const bitOffset = type === RT_TYPE_VC ? 10 : 0;
-      const maxTableId = type === RT_TYPE_VC ? 64 : 512;
-      let cmd = "cat /etc/iproute2/rt_tables | grep -v '#' | awk '{print $1,\"\\011\",$2}'";
-      let result = await exec(cmd);
-      if (result.stderr !== "") {
-        log.error("Failed to read rt_tables.", result.stderr);
-      }
-      const entries = result.stdout.split('\n');
-      const usedTid = [];
-      for (var i in entries) {
-        const entry = entries[i];
-        const line = entry.split(/\s+/);
-        const tid = line[0];
-        const name = line[1];
-        usedTid.push(tid);
-        if (name === tableName) {
-          if (Number(tid) >>> bitOffset === 0 || Number(tid) >>> bitOffset >= maxTableId) {
-            log.info(`Previous table id of ${tableName} is out of range ${tid}, removing old entry for ${tableName} ...`);
-            await removeCustomizedRoutingTable(tableName);
-          } else {
-            log.debug("Table with same name already exists: " + tid);
-            done(null, Number(tid));
-            return;
+      try {
+        // separate bits in fwmark for vpn client and regular WAN
+        const bitOffset = type === RT_TYPE_VC ? 10 : 0;
+        const maxTableId = type === RT_TYPE_VC ? 64 : 512;
+        // an unreadable rt_tables has to fail the call: with no content every id looks free and the
+        // loop below would hand out one that is already in use
+        const content = await fsp.readFile('/etc/iproute2/rt_tables', 'utf8');
+        const usedTid = [];
+        for (const entry of content.split('\n')) {
+          // a comment can follow an entry, so drop the whole line if it holds a '#' at all, then
+          // take the id and the name from the first two fields
+          if (entry.includes('#')) continue;
+          const line = entry.trim().split(/\s+/);
+          const tid = line[0];
+          const name = line[1];
+          if (!tid) continue;
+          usedTid.push(tid);
+          if (name === tableName) {
+            if (Number(tid) >>> bitOffset === 0 || Number(tid) >>> bitOffset >= maxTableId) {
+              log.info(`Previous table id of ${tableName} is out of range ${tid}, removing old entry for ${tableName} ...`);
+              await removeCustomizedRoutingTable(tableName);
+            } else {
+              log.debug("Table with same name already exists: " + tid);
+              done(null, Number(tid));
+              return;
+            }
           }
         }
-      }
-      // find unoccupied table id between 1 - maxTableId
-      let id = 1;
-      while (id < maxTableId) {
-        if (!usedTid.includes((id << bitOffset) + "")) // convert number to string
-          break;
-        id++;
-      }
-      if (id == maxTableId) {
-        done(`Insufficient space to create routing table for ${tableName}, type ${type}`, null);
-        return;
-      }
-      cmd = `sudo bash -c 'flock ${LOCK_FILE} -c "echo -e ${id << bitOffset}\\\t${tableName} >> /etc/iproute2/rt_tables; \
+        // find unoccupied table id between 1 - maxTableId
+        let id = 1;
+        while (id < maxTableId) {
+          if (!usedTid.includes((id << bitOffset) + "")) // convert number to string
+            break;
+          id++;
+        }
+        if (id == maxTableId) {
+          done(`Insufficient space to create routing table for ${tableName}, type ${type}`, null);
+          return;
+        }
+        // the redirections and the pipeline need a shell, so flock is given bash directly instead of
+        // being wrapped in one. bash is named rather than using flock's own -c, which picks $SHELL
+        // and falls back to /bin/sh, where the builtin echo has no -e and would emit a literal "-e"
+        // sort | uniq collapses byte-identical lines only, so it is no protection against a duplicate
+        // id under a different name, or the same name twice with different ids
+        const script = `echo -e "${id << bitOffset}\\t${tableName}" >> /etc/iproute2/rt_tables; \
         cat /etc/iproute2/rt_tables | sort | uniq > /etc/iproute2/rt_tables.new; \
         cp /etc/iproute2/rt_tables.new /etc/iproute2/rt_tables; \
-        rm /etc/iproute2/rt_tables.new"'`;
-      log.info("Append new routing table: ", cmd);
-      result = await exec(cmd);
-      if (result.stderr !== "") {
-        log.error("Failed to create customized routing table.", result.stderr);
-        done(result.stderr, null);
-        return;
+        rm /etc/iproute2/rt_tables.new`;
+        log.info("Append new routing table: ", script);
+        const result = await execFile('sudo', ['flock', LOCK_FILE, 'bash', '-c', script]);
+        if (result.stderr !== "") {
+          log.error("Failed to create customized routing table.", result.stderr);
+          done(result.stderr, null);
+          return;
+        }
+        done(null, id << bitOffset);
+      } catch (err) {
+        log.error(`Failed to create routing table ${tableName}`, err.message);
+        done(err, null);
       }
-      done(null, id << bitOffset);
     }, function(err, ret) {
       if (err)
         reject(err);
@@ -167,21 +204,22 @@ async function removePolicyRoutingRule(from, iif, tableName, priority, fwmark, a
 
 async function addRouteToTable(dest, gateway, intf, tableName, preference, af = 4, replace = false, type = "unicast") {
   dest = dest || "default";
-  let cmd = `sudo ip -${af} route ${replace ? 'replace' : 'add'} ${type} ${dest}`;
+  // pass argv explicitly, dest/gateway/intf/tableName come from network config and must not reach a shell
+  const args = ["ip", `-${af}`, "route", replace ? 'replace' : 'add', type, String(dest)];
   tableName = tableName || "main";
   if (intf) {
     if (gateway) {
-      cmd = `${cmd} via ${gateway} dev ${intf}`;
+      args.push("via", String(gateway), "dev", String(intf));
     } else {
-      cmd = `${cmd} dev ${intf}`;
+      args.push("dev", String(intf));
     }
   }
-  cmd = `${cmd} table ${tableName}`;
+  args.push("table", String(tableName));
   if (preference)
-    cmd = `${cmd} preference ${preference}`;
+    args.push("preference", String(preference));
 
-  log.debug('[routing] add route to table:', cmd);
-  let result = await exec(cmd);
+  log.debug('[routing] add route to table:', args.join(' '));
+  let result = await execFile("sudo", args);
   if (result.stderr !== "") {
     log.error("Failed to add route to table.", result.stderr);
     throw result.stderr;
@@ -217,33 +255,37 @@ async function searchRouteRules(dest, gateway, intf, tableName, metric=null, af=
 }
 
 async function removeDeviceRouteRule(intf, tableName, af = 4) {
-  const cmd=`sudo ip -${af} route flush table ${tableName} dev ${intf}`;
-  log.debug('[routing] flush device route rule:', cmd);
-  const result = await exec(cmd);
+  const args = [`-${af}`, "route", "flush", "table", tableName, "dev", intf];
+  log.debug('[routing] flush device route rule:', "sudo ip", args.join(" "));
+  const result = await execFile("sudo", ["ip"].concat(args));
   if (result.stderr !== "") {
-    log.error(`Failed to exec ${cmd}, err`, result.stderr);
+    log.error(`Failed to exec sudo ip ${args.join(" ")}, err`, result.stderr);
     throw result.stderr;
   }
 }
 
 async function addMultiPathRouteToTable(dest, tableName, af = 4, metric, ...multipathDesc) {
-  let cmd = null;
   dest = dest || "default";
-  cmd =  `sudo ip -${af} route add ${dest}`;
+  // pass argv explicitly, weight comes straight from the nextHops config and must not reach a shell
+  const args = ["ip", `-${af}`, "route", "add", String(dest)];
   tableName = tableName || "main";
-  cmd = `${cmd} table ${tableName} metric ${metric}`;
+  args.push("table", String(tableName), "metric", String(metric));
   for (let desc of multipathDesc) {
     const nextHop = desc.nextHop;
     const dev = desc.dev;
-    const weight = desc.weight;
-    if (!nextHop || !weight)
+    const weight = Number(desc.weight);
+    if (!nextHop || !Number.isInteger(weight) || weight < 1 || weight > 255) {
+      if (desc.weight !== undefined && !Number.isInteger(weight))
+        log.error("Invalid nextHop weight, skip", desc.weight);
       continue;
-    cmd = `${cmd} nexthop via ${nextHop}`;
+    }
+    args.push("nexthop", "via", String(nextHop));
     if (dev)
-      cmd = `${cmd} dev ${dev}`;
-    cmd = `${cmd} weight ${weight}`;
+      args.push("dev", String(dev));
+    args.push("weight", String(weight));
   }
-  let result = await exec(cmd);
+  log.debug('[routing] add multipath route to table:', args.join(' '));
+  let result = await execFile("sudo", args);
   if (result.stderr !== "") {
     log.error("Failed to add multipath route to table.", result.stderr);
     throw result.stderr
@@ -276,21 +318,21 @@ async function removeRouteFromTable(dest, gateway, intf, tableName, af = 4, type
 async function flushRoutingTable(tableName, af = null) {
   const cmds = [];
   if (!af || af == 4)
-    cmds.push(`sudo ip route flush table ${tableName}`);
+    cmds.push(["ip", "route", "flush", "table", tableName]);
   if (!af || af == 6)
-    cmds.push(`sudo ip -6 route flush table ${tableName}`);
+    cmds.push(["ip", "-6", "route", "flush", "table", tableName]);
   for (const cmd of cmds) {
-    log.debug(`[routing] flush route table: ${cmd}`);
-    await exec(cmd).catch((err) => {
-      log.debug(`Failed to flush routing table using command ${cmd}`, err.message);
+    log.debug(`[routing] flush route table: sudo ${cmd.join(" ")}`);
+    await execFile("sudo", cmd).catch((err) => {
+      log.debug(`Failed to flush routing table using command sudo ${cmd.join(" ")}`, err.message);
     });
   }
 }
 
 async function flushPolicyRoutingRules() {
-  const cmds = [`sudo ip rule flush`, `sudo ip -6 rule flush`];
+  const cmds = [["ip", "rule", "flush"], ["ip", "-6", "rule", "flush"]];
   for (const cmd of cmds) {
-    let result = await exec(cmd);
+    let result = await execFile("sudo", cmd);
     if (result.stderr !== "") {
       log.error("Failed to flush policy routing rules.", result.stderr);
       throw result.stderr;
@@ -359,6 +401,7 @@ async function getInterfaceGWIP(intf, af = 4) {
 }
 
 module.exports = {
+  isValidTableName,
   createCustomizedRoutingTable: createCustomizedRoutingTable,
   removeCustomizedRoutingTable: removeCustomizedRoutingTable,
   createPolicyRoutingRule: createPolicyRoutingRule,
