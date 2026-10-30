@@ -1593,6 +1593,8 @@ class InterfaceBasePlugin extends Plugin {
       if (state){
         result.active = state.active || false;
         result.inUse = state.inUse || false;
+        if (state.backup)
+          result.backup = true;
       }
     }
     return result;
