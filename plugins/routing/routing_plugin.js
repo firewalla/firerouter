@@ -458,6 +458,119 @@ class RoutingPlugin extends Plugin {
       }
   }
 
+  async _removeWanRoutes(intfPlugins, af = null) {
+    await this._removeDeviceRouting(intfPlugins, routing.RT_GLOBAL_DEFAULT, af);
+    await this._removeDeviceRouting(intfPlugins, routing.RT_GLOBAL_LOCAL, af);
+    await this._removeDeviceDnsRouting(intfPlugins, af);
+    await this._removeDeviceDefaultRouting(intfPlugins, routing.RT_MAIN, af);
+  }
+
+  // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
+  _wanMetric(status, carrier) {
+    return status.seq + 1 + (status.ready ? 0 : 100) + (carrier == '1' ? 0 : 10);
+  }
+
+  // in the given order, the first ready WAN becomes active and the others inactive
+  _activateFirstReady(names) {
+    let activeIntf = null;
+    for (const name of names) {
+      this._wanStatus[name].active = this._wanStatus[name].ready && !activeIntf;
+      if (this._wanStatus[name].active)
+        activeIntf = name;
+    }
+    return activeIntf;
+  }
+
+  // a WAN back to ready takes over if nothing is active, or in failback mode if it ranks higher than the active one
+  _failbackSwitchNeeded(status) {
+    const activeWanStatus = Object.values(this._wanStatus).filter(s => s.active).sort((a, b) => a.seq - b.seq);
+    const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
+    return _.isEmpty(activeWanStatus) || (failback && status.seq < activeWanStatus[0].seq);
+  }
+
+  // upsert one WAN's subnet, default and DNS routes in global_local/global_default/main
+  async _installWanRoutes(viaIntf, viaIntfPlugin, state, metric, af, {ipv6, ipv6Default}) {
+    if (!af || af == 4) {
+      if (state && state.ip4s) {
+        for (const ip4 of state.ip4s) {
+          const addr = new Address4(ip4);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric).catch((err) => { });
+          await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric).catch((err) => { });
+        }
+      } else {
+        this.log.error("Failed to get ip4 of global default interface " + viaIntf);
+      }
+    }
+    if ((!af || af == 6) && ipv6) {
+      if (state && state.ip6) {
+        for (const ip6Addr of state.ip6) {
+          const addr = new Address6(ip6Addr);
+          const networkAddr = addr.startAddress();
+          const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
+          await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => { });
+          await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
+        }
+      } else {
+        this.log.info("No ip6 found on global default interface " + viaIntf);
+      }
+    }
+
+    const gw = await routing.getInterfaceGWIP(viaIntf);
+    if (!af || af == 4) {
+      if (gw) { // IPv4 default route for inactive WAN is still required for WAN connectivity check
+        await this.upsertRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
+        await this.upsertRouteToTable("default", gw, viaIntf, routing.RT_MAIN, metric, 4).catch((err) => { });
+        // add route for DNS nameserver IP in global_default table
+        const dns = await viaIntfPlugin.getDns4Nameservers();
+        if (_.isArray(dns) && dns.length !== 0) {
+          for (const dnsIP of dns) {
+            if (dnsIP === gw) continue;
+            await this.upsertRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
+              this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
+            });
+            // update all dns routes via the same interface but with new metrics in main table
+            await this.upsertRouteToTable(dnsIP, gw, viaIntf, routing.RT_MAIN, metric, 4).then(() => {
+              this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, routing.RT_MAIN);
+            }).catch((err) => {
+              this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
+            });
+          }
+        }
+      } else {
+        this.log.error("Failed to get gateway IP of global default interface " + viaIntf);
+      }
+    }
+
+    const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
+    if ((!af || af == 6) && ipv6) {
+      if (gw6 && ipv6Default) {
+        await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
+        await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_MAIN, metric, 6).catch((err) => { });
+        // add route for ipv6 DNS nameserver IP in global_default table
+        const dns6 = await viaIntfPlugin.getRoutableDns6Nameservers();
+        if (_.isArray(dns6) && dns6.length !== 0 ){
+          for (const dns6IP of dns6) {
+            if (dns6IP === gw6) continue;
+            await this.upsertRouteToTable(dns6IP, gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => {
+              this.log.error(`Failed to add route ipv6 to ${routing.RT_GLOBAL_DEFAULT} for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
+            });
+            // update all dns routes via the same interface but with new metrics in main table
+            await this.upsertRouteToTable(dns6IP, gw6, viaIntf, routing.RT_MAIN, metric, 6).then(() => {
+              this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, routing.RT_MAIN, 6);
+            }).catch((err) => {
+              this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
+            });
+          }
+        }
+
+      } else {
+        this.log.info("IPv6 gateway is not defined on global default interface " + viaIntf);
+      }
+    }
+  }
+
   _getActiveWANNames() {
     if (!this._wanStatus)
       return [];
@@ -475,11 +588,7 @@ class RoutingPlugin extends Plugin {
       // flush global default routing table, no need to touch global static routing table here
       const type = this.networkConfig.default.type || "single";
       if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
-        const deadWANIntfs = this.getUnreadyWANPlugins();
-        await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_DEFAULT, af);
-        await this._removeDeviceRouting(deadWANIntfs, routing.RT_GLOBAL_LOCAL, af);
-        await this._removeDeviceDnsRouting(deadWANIntfs, af);
-        await this._removeDeviceDefaultRouting(deadWANIntfs, routing.RT_MAIN, af);
+        await this._removeWanRoutes(this.getUnreadyWANPlugins(), af);
       } else {
         await routing.flushRoutingTable(routing.RT_GLOBAL_DEFAULT, af);
         await routing.flushRoutingTable(routing.RT_GLOBAL_LOCAL, af);
@@ -498,21 +607,17 @@ class RoutingPlugin extends Plugin {
         case "single":
         case "primary_standby": {
           let activeIntfFound = false;
-          let lastActiveIntf = null;
-          let currentActiveIntf = null;
           let inUseIntfFound = false;
-          for (const viaIntf of Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq)) { // sort by seq in ascending order
+          const viaIntfs = Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq); // sort by seq in ascending order
+          const lastActiveIntf = viaIntfs.filter((i) => this._wanStatus[i].active === true).pop() || null;
+          const currentActiveIntf = this._activateFirstReady(viaIntfs);
+          for (const viaIntf of viaIntfs) {
             const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
             const state = await viaIntfPlugin.state();
             const ready = this._wanStatus[viaIntf].ready;
             const carrier = state.carrier || 0;
-            if (this._wanStatus[viaIntf].active === true) {
-              lastActiveIntf = viaIntf;
-            }
-            this._wanStatus[viaIntf].active = ready && !activeIntfFound;
             if (this._wanStatus[viaIntf].active) {
               activeIntfFound = true;
-              currentActiveIntf = viaIntf;
             }
             // the active intf is the inUse intf, if no active intf, the first carrier==1 intf is the inUse intf
             if (activeIntfFound) {
@@ -530,87 +635,13 @@ class RoutingPlugin extends Plugin {
                 inUseIntfFound = true;
               }
             }
-            // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
-            const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0: 10);
-            if (!af || af == 4) {
-              if (state && state.ip4s) {
-                for (const ip4 of state.ip4s) {
-                  const addr = new Address4(ip4);
-                  const networkAddr = addr.startAddress();
-                  const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric).catch((err) => { });
-                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric).catch((err) => { });
-                }
-              } else {
-                this.log.error("Failed to get ip4 of global default interface " + viaIntf);
-              }
-            }
-            if ((!af || af == 6) && (this._wanStatus[viaIntf].active === true || type !== 'primary_standby')) { // only add IPv6 default router for primary WAN for primary_standby mode
-              if (state && state.ip6) {
-                for (const ip6Addr of state.ip6) {
-                  const addr = new Address6(ip6Addr);
-                  const networkAddr = addr.startAddress();
-                  const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_LOCAL, metric, 6).catch((err) => { });
-                  await this.upsertRouteToTable(cidr, null, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
-                }
-              } else {
-                this.log.info("No ip6 found on global default interface " + viaIntf);
-              }
-            }
-
-            const gw = await routing.getInterfaceGWIP(viaIntf);
-            if (!af || af == 4) {
-              if (gw) { // IPv4 default route for inactive WAN is still required for WAN connectivity check
-                await this.upsertRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
-                await this.upsertRouteToTable("default", gw, viaIntf, routing.RT_MAIN, metric, 4).catch((err) => { });
-                // add route for DNS nameserver IP in global_default table
-                const dns = await viaIntfPlugin.getDns4Nameservers();
-                if (_.isArray(dns) && dns.length !== 0) {
-                  for (const dnsIP of dns) {
-                    if (dnsIP === gw) continue;
-                    await this.upsertRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => {
-                      this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
-                    });
-                    // update all dns routes via the same interface but with new metrics in main table
-                    await this.upsertRouteToTable(dnsIP, gw, viaIntf, routing.RT_MAIN, metric, 4).then(() => {
-                      this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, routing.RT_MAIN);
-                    }).catch((err) => {
-                      this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
-                    });
-                  }
-                }
-              } else {
-                this.log.error("Failed to get gateway IP of global default interface " + viaIntf);
-              }
-            }
-
-            const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
-            if ((!af || af == 6) && (this._wanStatus[viaIntf].active === true || type !== 'primary_standby')) { // only add IPv6 default router for primary WAN for primary_standby mode
-              if (gw6 && (ready || type === "single")) { // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
-                await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => { });
-                await this.upsertRouteToTable("default", gw6, viaIntf, routing.RT_MAIN, metric, 6).catch((err) => { });
-                // add route for ipv6 DNS nameserver IP in global_default table
-                const dns6 = await viaIntfPlugin.getRoutableDns6Nameservers();
-                if (_.isArray(dns6) && dns6.length !== 0 ){
-                  for (const dns6IP of dns6) {
-                    if (dns6IP === gw6) continue;
-                    await this.upsertRouteToTable(dns6IP, gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6).catch((err) => {
-                      this.log.error(`Failed to add route ipv6 to ${routing.RT_GLOBAL_DEFAULT} for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
-                    });
-                    // update all dns routes via the same interface but with new metrics in main table
-                    await this.upsertRouteToTable(dns6IP, gw6, viaIntf, routing.RT_MAIN, metric, 6).then(() => {
-                      this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, routing.RT_MAIN, 6);
-                    }).catch((err) => {
-                      this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
-                    });
-                  }
-                }
-
-              } else {
-                this.log.info("IPv6 gateway is not defined on global default interface " + viaIntf);
-              }
-            }
+            const metric = this._wanMetric(this._wanStatus[viaIntf], carrier);
+            // only add IPv6 routes for primary WAN for primary_standby mode
+            // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
+            await this._installWanRoutes(viaIntf, viaIntfPlugin, state, metric, af, {
+              ipv6: this._wanStatus[viaIntf].active === true || type !== 'primary_standby',
+              ipv6Default: ready || type === "single"
+            });
           }
 
           if (!inUseIntfFound) {
@@ -642,7 +673,7 @@ class RoutingPlugin extends Plugin {
             this._wanStatus[viaIntf].carrier = carrier;
             this._wanStatus[viaIntf].inUse = (this._wanStatus[viaIntf].active === true);
 
-            const metric = this._wanStatus[viaIntf].seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0: 10);
+            const metric = this._wanMetric(this._wanStatus[viaIntf], carrier);
             if (!af || af == 4) {
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
@@ -1175,11 +1206,7 @@ class RoutingPlugin extends Plugin {
               break;
             }
             case "primary_standby": {
-              const activeWanStatus = Object.values(this._wanStatus).filter(status => status.active).sort((a, b) => a.seq - b.seq);
-              const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-              if (_.isEmpty(activeWanStatus) || (failback && currentStatus.seq < activeWanStatus[0].seq))
-                // apply WAN settings in failback mode if a WAN with higher rank is back to ready
-                changeActiveWanNeeded = true;
+              changeActiveWanNeeded = this._failbackSwitchNeeded(currentStatus);
               break;
             }
             default:
