@@ -421,6 +421,29 @@ describe('Test global routing plugin', function() {
       expect(plugin.published[0].currentStatus.eth0.backup).to.be.undefined;
     });
 
+    it('moves only the standby backup default route to its new metric when its ready state changes', async() => {
+      const {plugin, intfs} = setup(LB_BACKUP, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      const ownRoutesOnly = () => {
+        expect(stub.calls.filter(c => /route flush table \S+$/.test(c))).to.be.empty;
+        expect(stub.calls.filter(c => (c.includes(' route ') || c.includes(' r show ')) && !c.includes('wlan0'))).to.be.empty;
+        expect(stub.matching('10.0.3.53')).to.be.empty;
+        expect(stub.matching('2001:db8:3:')).to.be.empty;
+      };
+      for (const [ready, metric] of [[false, 103], [true, 3]]) {
+        stub.calls.length = 0;
+        intfs.wlan0.o.ready = ready;
+        connCheck(plugin, 'wlan0');
+        await settle();
+        ownRoutesOnly();
+        expect(stub.calls).to.include(`sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference ${metric}`);
+        expect(stub.calls).to.include(`sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table global_default preference ${metric}`);
+      }
+      expect(plugin.scheduled).to.be.empty;
+      expect(reapplies).to.be.equal(0);
+      expect(plugin.published.map(d => [d.intf, d.ready, d.wanSwitched])).to.deep.equal([['wlan0', false, false], ['wlan0', true, false]]);
+    });
+
     it('schedules an apply when a backup comes back and nothing is active', async() => {
       const {plugin, intfs} = setup(LB_BACKUP, [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0', ready: false}]);
       await plugin.apply();

@@ -591,7 +591,7 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  // a standby backup's address change only touches its own routes, no flush of the global tables
+  // a standby backup's address or ready change only touches its own routes, no flush of the global tables
   async _refreshStandbyBackupRoutes(intf, af) {
     await lock.acquire(LOCK_SHARED, async () => {
       const status = this._wanStatus[intf];
@@ -1285,6 +1285,12 @@ class RoutingPlugin extends Plugin {
           if (changeActiveWanNeeded) {
             this.scheduleApplyActiveGlobalDefaultRouting(changeDesc);
           } else {
+            // move a standby backup's default route to its new ready/unready metric right away
+            if (this._isStandbyBackup(intf)) {
+              this._refreshStandbyBackupRoutes(intf, null).catch((err) => {
+                this.log.error(`Failed to refresh routes of standby backup WAN ${intf}`, err.message);
+              });
+            }
             this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
               if (enrichedWanStatus) {
                 changeDesc.currentStatus = enrichedWanStatus;
