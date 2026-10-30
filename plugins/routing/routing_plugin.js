@@ -448,8 +448,14 @@ class RoutingPlugin extends Plugin {
   }
 
   // set a much lower priority for inactive WAN, the minimal metric will be 1 because settings metric to 0 in ipv6 will result in metric falling back to 1024
-  _wanMetric(status, carrier) {
-    return status.seq + 1 + (status.ready ? 0 : 100) + (carrier == '1' ? 0 : 10);
+  _wanMetric(status, carrier, ready = status.ready) {
+    return status.seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0 : 10);
+  }
+
+  // a ready standby backup that outranks the active backup (kept by failback off) must stay below it
+  _backupWanMetric(status, carrier) {
+    const keptBehind = status.active !== true && Object.values(this._wanStatus).some(s => s.backup && s.active === true && s.seq > status.seq);
+    return this._wanMetric(status, carrier, status.ready && !keptBehind);
   }
 
   // in the given order, the first ready WAN becomes active and the others inactive
@@ -577,7 +583,7 @@ class RoutingPlugin extends Plugin {
       // including the DNS routes it left in main as a nextHop
       if (status.active !== true && !_.isEmpty(this._dnsRoutes[viaIntf]))
         await this._removeDeviceDnsRouting([status.plugin], af);
-      await this._installWanRoutes(viaIntf, status.plugin, state, this._wanMetric(status, carrier), af, {
+      await this._installWanRoutes(viaIntf, status.plugin, state, this._backupWanMetric(status, carrier), af, {
         ipv6: status.active === true,
         ipv6Default: status.active === true,
         dns: status.active === true
@@ -594,7 +600,7 @@ class RoutingPlugin extends Plugin {
         return;
       const state = await status.plugin.state();
       await this._removeWanRoutes([status.plugin], af);
-      await this._installWanRoutes(intf, status.plugin, state, this._wanMetric(status, state.carrier || 0), af, {ipv6: false, ipv6Default: false, dns: false});
+      await this._installWanRoutes(intf, status.plugin, state, this._backupWanMetric(status, state.carrier || 0), af, {ipv6: false, ipv6Default: false, dns: false});
       if (af == 4)
         await this._refreshOutputSNATRules(4);
     });
