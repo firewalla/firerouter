@@ -803,6 +803,39 @@ class RoutingPlugin extends Plugin {
     return wanSwitched;
   }
 
+  // a WAN inherits ready/active by seq from the last apply. switchedOnLoss is what a lost interface
+  // reports as wanSwitched, and only if it was active when switchedOnlyIfActive is set
+  async _addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, switchedOnLoss, switchedOnlyIfActive) {
+    this.subscribeChangeFrom(viaIntfPlugin);
+    wanStatus[viaIntf] = {
+      active: false,
+      ready: true
+    };
+    for (const intf of Object.keys(lastWanStatus)) {
+      if (lastWanStatus[intf].seq === seq) {
+        wanStatus[viaIntf].active = lastWanStatus[intf].active;
+        wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
+        break;
+      }
+    }
+    if (await viaIntfPlugin.isInterfacePresent() === false) {
+      // need to publish wan conn change events if it was ready previously
+      if (wanStatus[viaIntf].ready === true) {
+        changeDescs.push({
+          intf: viaIntf,
+          ready: false,
+          wanSwitched: switchedOnLoss && (!switchedOnlyIfActive || wanStatus[viaIntf].active === true),
+          failures: [{type: "carrier"}]
+        });
+      }
+      // directly mark ready to false if interface does not exist at the moment
+      wanStatus[viaIntf].ready = false;
+      wanStatus[viaIntf].active = false;
+    }
+    wanStatus[viaIntf].seq = seq;
+    wanStatus[viaIntf].plugin = viaIntfPlugin;
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -843,34 +876,7 @@ class RoutingPlugin extends Plugin {
                       const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
                       if (!viaIntfPlugin)
                         this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
-                      this.subscribeChangeFrom(viaIntfPlugin);
-                      wanStatus[viaIntf] = {
-                        active: false,
-                        ready: true
-                      };
-                      for (const intf of Object.keys(lastWanStatus)) {
-                        if (lastWanStatus[intf].seq === seq) {
-                          wanStatus[viaIntf].active = lastWanStatus[intf].active;
-                          wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
-                          break;
-                        }
-                      }
-                      if (await viaIntfPlugin.isInterfacePresent() === false) {
-                        // need to publish wan conn change events if it was ready previously
-                        if (wanStatus[viaIntf].ready === true) {
-                          changeDescs.push({
-                            intf: viaIntf,
-                            ready: false,
-                            wanSwitched: wanStatus[viaIntf].active === true && viaIntfs.length > 1 ? true : false,
-                            failures: [{type: "carrier"}]
-                          });
-                        }
-                        // directly mark ready to false if interface does not exist at the moment
-                        wanStatus[viaIntf].ready = false;
-                        wanStatus[viaIntf].active = false;
-                      }
-                      wanStatus[viaIntf].seq = seq;
-                      wanStatus[viaIntf].plugin = viaIntfPlugin;
+                      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, viaIntfs.length > 1, true);
                     }
                     break;
                   }
@@ -880,39 +886,10 @@ class RoutingPlugin extends Plugin {
                     for (let nextHop of nextHops) {
                       const viaIntf = nextHop.viaIntf;
                       const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
-                      if (viaIntfPlugin) {
-                        this.subscribeChangeFrom(viaIntfPlugin);
-                        wanStatus[viaIntf] = {
-                          active: false,
-                          ready: true
-                        };
-                        for (const intf of Object.keys(lastWanStatus)) {
-                          if (lastWanStatus[intf].seq === seq) {
-                            wanStatus[viaIntf].active = lastWanStatus[intf].active;
-                            wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
-                            break;
-                          }
-                        }
-                        if (await viaIntfPlugin.isInterfacePresent() === false) {
-                          // need to publish wan conn change events if it was ready previously
-                          if (wanStatus[viaIntf].ready === true) {
-                            changeDescs.push({
-                              intf: viaIntf,
-                              ready: false,
-                              wanSwitched: true,
-                              failures: [{ type: "carrier" }]
-                            });
-                          }
-                          // directly mark ready to false if interface does not exist at the moment
-                          wanStatus[viaIntf].ready = false;
-                          wanStatus[viaIntf].active = false;
-                        }
-                        wanStatus[viaIntf].seq = seq;
-                        wanStatus[viaIntf].weight = nextHop.weight;
-                        wanStatus[viaIntf].plugin = viaIntfPlugin;
-                      } else {
+                      if (!viaIntfPlugin)
                         this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
-                      }
+                      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, true, false);
+                      wanStatus[viaIntf].weight = nextHop.weight;
                       seq++;
                     }
                     const hashPolicy = settings.hashPolicy || "l3";
