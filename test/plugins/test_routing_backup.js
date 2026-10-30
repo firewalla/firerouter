@@ -390,8 +390,50 @@ describe('Test global routing plugin', function() {
       await plugin.apply();
       await plugin.apply();
       await plugin.apply();
-      expect(stub.calls).to.deep.equal([].concat(GOLDEN.lb_apply, GOLDEN.lb_apply, GOLDEN.lb_apply));
+      // a repeated apply first removes the DNS routes the last one cached in main, by address family
+      const mainDefaultDel = GOLDEN.lb_apply.indexOf('sudo ip -6 route del unicast default table main') + 1;
+      const repeat = [].concat(GOLDEN.lb_apply.slice(0, mainDefaultDel), [
+        'sudo ip -4 route del unicast 10.0.1.53 via 10.0.1.1 dev eth0 table main',
+        'sudo ip -4 route del unicast 10.0.2.53 via 10.0.2.1 dev eth1 table main',
+        'sudo ip -6 route del unicast 2001:db8:1::53 via 2001:db8:1::1 dev eth0 table main',
+        'sudo ip -6 route del unicast 2001:db8:2::53 via 2001:db8:2::1 dev eth1 table main'
+      ], GOLDEN.lb_apply.slice(mainDefaultDel));
+      expect(stub.calls).to.deep.equal([].concat(GOLDEN.lb_apply, repeat, repeat));
       expect(plugin._dnsRoutes.eth0.length).to.be.equal(2);
+    });
+
+    it('records the address family of every load_balance nextHop DNS route', async() => {
+      const {plugin} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}]},
+        [{name: 'eth0'}, {name: 'eth1', ready: false}]);
+      await plugin.apply();
+      const afs = Object.values(plugin._dnsRoutes).flat().map(r => [r.dest, r.af]);
+      expect(afs).to.have.deep.members([['10.0.1.53', 4], ['2001:db8:1::53', 6], ['10.0.2.53', 4], ['2001:db8:2::53', 6]]);
+    });
+
+    it('removes a nextHop IPv6 DNS route in main on a flush after an IPv6 only apply', async() => {
+      const {plugin} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}]},
+        [{name: 'eth0'}, {name: 'eth1'}]);
+      await plugin.apply();
+      // the EVENT_IP6_CHANGE path
+      await plugin.flush(6);
+      await plugin._applyActiveGlobalDefaultRouting(true, 6);
+      stub.calls.length = 0;
+      await plugin.flush(6);
+      expect(stub.calls).to.include('sudo ip -6 route del unicast 2001:db8:1::53 via 2001:db8:1::1 dev eth0 table main');
+      expect(stub.calls).to.include('sudo ip -6 route del unicast 2001:db8:2::53 via 2001:db8:2::1 dev eth1 table main');
+      expect(stub.matching('route del unicast 10.0.')).to.be.empty;
+    });
+
+    it('removes the route to a nextHop DNS server that is gone at the next apply', async() => {
+      const {plugin, intfs} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}]},
+        [{name: 'eth0'}, {name: 'eth1'}]);
+      await plugin.apply();
+      intfs.eth0.getDns4Nameservers = async () => ['10.0.1.54'];
+      stub.calls.length = 0;
+      await plugin.apply();
+      expect(stub.calls).to.include('sudo ip -4 route del unicast 10.0.1.53 via 10.0.1.1 dev eth0 table main');
+      expect(stub.matching('add unicast 10.0.1.53')).to.be.empty;
+      expect(plugin._dnsRoutes.eth0.map(r => r.dest)).to.not.include('10.0.1.53');
     });
 
     it('removes the cached DNS routes in main before a repeated single WAN apply re-adds them', async() => {

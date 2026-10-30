@@ -192,9 +192,7 @@ class RoutingPlugin extends Plugin {
         for (const dnsRoute of this._dnsRoutes[intf.name]) {
           if (!af || (af && dnsRoute.af == af)) {
             applied.push(dnsRoute);
-            // a full load_balance apply caches its nextHop DNS routes without af
-            const routeAf = dnsRoute.af || (dnsRoute.dest.includes(":") ? 6 : 4);
-            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: routing.RT_MAIN, routeAf).catch((err) => {
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: routing.RT_MAIN, dnsRoute.af).catch((err) => {
               this.log.warn(`fail to remove dns route from table ${dnsRoute.tableName || routing.RT_MAIN}, err:`, err.message)
             })
           }
@@ -235,7 +233,7 @@ class RoutingPlugin extends Plugin {
     }
     for (const dns of this._dnsRoutes[viaIntf]) {
       if (dns.dest == dnsIP && dns.gw == gw && dns.viaIntf == viaIntf && dns.metric == metric && dns.tableName == tableName && dns.af == af) {
-        // ensure no duplicates, a load_balance apply for one family must still record its af for the flush
+        // ensure no duplicates
         return;
       }
     }
@@ -424,7 +422,6 @@ class RoutingPlugin extends Plugin {
         await this._removeCachedDnsRoutes(6);
   }
 
-  // entries without af come from a full load_balance apply, whose nextHop loop deletes and re-adds them
   async _removeCachedDnsRoutes(af) {
     if (!_.isObject(this._dnsRoutes)) {
       this._dnsRoutes = {};
@@ -771,7 +768,7 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_MAIN, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, routing.RT_MAIN, af);
+                    this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, routing.RT_MAIN, 4);
                   }
                 }
               } else {
@@ -811,7 +808,7 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dns6IP, gw6, viaIntf, routing.RT_MAIN, metric, 6, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
                     });
-                    this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, routing.RT_MAIN, af);
+                    this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, routing.RT_MAIN, 6);
                   }
                 }
               } else {
