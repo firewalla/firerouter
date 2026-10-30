@@ -340,6 +340,34 @@ describe('Test global routing plugin', function() {
       expect(plugin._dnsRoutes.wlan0).to.be.empty;
     });
 
+    it('reports the takeover by a backup as a WAN switch', async() => {
+      const {plugin} = setup(LB_BACKUP, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.wlan0.active).to.be.false;
+      plugin._wanStatus.eth0.ready = false;
+      plugin._wanStatus.eth1.ready = false;
+      const switched = await plugin._applyActiveGlobalDefaultRouting(true);
+      expect(switched).to.be.true;
+      expect(plugin._wanStatus.wlan0).to.include({active: true, inUse: true});
+      expect(plugin._getActiveWANNames()).to.deep.equal(['wlan0']);
+    });
+
+    it('removes the DNS routes a former nextHop left in main when it becomes a backup', async() => {
+      const {plugin} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}, {viaIntf: 'wlan0', weight: 50}]},
+        [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      const dnsRouteAdds = () => stub.calls.filter(c => /(add|replace) unicast (10\.0\.3\.53|2001:db8:3::53) /.test(c));
+      expect(dnsRouteAdds()).to.not.be.empty;
+      stub.calls.length = 0;
+      plugin.networkConfig = {default: LB_BACKUP};
+      await plugin.apply();
+      expect(plugin._wanStatus.wlan0).to.include({backup: true, active: false});
+      expect(stub.calls).to.include('sudo ip -4 route del unicast 10.0.3.53 via 10.0.3.1 dev wlan0 table main');
+      expect(stub.calls).to.include('sudo ip -6 route del unicast 2001:db8:3::53 via 2001:db8:3::1 dev wlan0 table main');
+      expect(dnsRouteAdds()).to.be.empty;
+      expect(plugin._dnsRoutes.wlan0 || []).to.be.empty;
+    });
+
     it('keeps the backup selection on an apply for one address family', async() => {
       const {plugin} = setup(Object.assign({}, LB_TWO_BACKUPS, {failback: false}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
         {name: 'wlan0', ready: false}, {name: 'wlan1'}]);
@@ -449,6 +477,23 @@ describe('Test global routing plugin', function() {
       expect(stub.calls).to.include('sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference 3');
       expect(stub.matching('10.0.3.53')).to.be.empty;
       expect(stub.calls).to.include('sudo iptables -w -t nat -F FR_OUTPUT_SNAT');
+    });
+
+    it('keeps a ready standby backup below the active lower ranked backup on an IPv4 change', async() => {
+      const {plugin, intfs} = setup(Object.assign({}, LB_TWO_BACKUPS, {failback: false}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
+        {name: 'wlan0', ready: false}, {name: 'wlan1'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.wlan1.active).to.be.true;
+      intfs.wlan0.o.ready = true;
+      plugin._wanStatus.wlan0.ready = true;
+      stub.calls.length = 0;
+      plugin.onEvent(event.buildEvent(event.EVENT_IP_CHANGE, {intf: 'wlan0'}));
+      await settle();
+      expect(reapplies).to.be.equal(0);
+      // wlan1 is active at metric 4, wlan0 stays at its unready metric behind it
+      expect(stub.calls).to.include('sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference 103');
+      expect(stub.matching('dev wlan0 table main preference 3')).to.be.empty;
+      expect(stub.calls.filter(c => (c.includes(' route ') || c.includes(' r show ')) && !c.includes('wlan0'))).to.be.empty;
     });
 
     it('adds no IPv6 route for the standby backup on an IPv6 change', async() => {
