@@ -192,7 +192,9 @@ class RoutingPlugin extends Plugin {
         for (const dnsRoute of this._dnsRoutes[intf.name]) {
           if (!af || (af && dnsRoute.af == af)) {
             applied.push(dnsRoute);
-            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: routing.RT_MAIN, dnsRoute.af).catch((err) => {
+            // a full load_balance apply caches its nextHop DNS routes without af
+            const routeAf = dnsRoute.af || (dnsRoute.dest.includes(":") ? 6 : 4);
+            await routing.removeRouteFromTable(dnsRoute.dest, dnsRoute.gw, dnsRoute.viaIntf, dnsRoute.tableName ? dnsRoute.tableName: routing.RT_MAIN, routeAf).catch((err) => {
               this.log.warn(`fail to remove dns route from table ${dnsRoute.tableName || routing.RT_MAIN}, err:`, err.message)
             })
           }
@@ -422,8 +424,7 @@ class RoutingPlugin extends Plugin {
         await this._removeCachedDnsRoutes(6);
   }
 
-  // entries without af come from a full load_balance apply, which deletes its nextHop DNS routes
-  // itself before adding them, so they are only dropped here, not removed
+  // entries without af come from a full load_balance apply, whose nextHop loop deletes and re-adds them
   async _removeCachedDnsRoutes(af) {
     if (!_.isObject(this._dnsRoutes)) {
       this._dnsRoutes = {};
@@ -435,7 +436,7 @@ class RoutingPlugin extends Plugin {
           this.log.debug(`fail to remove dns route ${dnsRoute.dest} from table ${dnsRoute.tableName || routing.RT_MAIN}, err:`, err.message);
         });
       }
-      this._dnsRoutes[inf] = this._dnsRoutes[inf].filter(i => i.af && i.af != af);
+      this._dnsRoutes[inf] = this._dnsRoutes[inf].filter(i => i.af != af);
     }
   }
 
@@ -572,7 +573,10 @@ class RoutingPlugin extends Plugin {
       const carrier = state.carrier || 0;
       status.carrier = carrier;
       status.inUse = status.active === true;
-      // IPv6 and DNS host routes of a standby backup would take that traffic from the multipath route
+      // IPv6 and DNS host routes of a standby backup would take that traffic from the multipath route,
+      // including the DNS routes it left in main as a nextHop
+      if (status.active !== true && !_.isEmpty(this._dnsRoutes[viaIntf]))
+        await this._removeDeviceDnsRouting([status.plugin], af);
       await this._installWanRoutes(viaIntf, status.plugin, state, this._wanMetric(status, carrier), af, {
         ipv6: status.active === true,
         ipv6Default: status.active === true,
@@ -761,14 +765,7 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_MAIN, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    if (!this._dnsRoutes){
-                      log.warn("should init _dnsRoutes in load_balance mode");
-                      this._dnsRoutes = {}
-                    }
-                    if (!this._dnsRoutes[viaIntf]) {
-                      this._dnsRoutes[viaIntf] = [];
-                    }
-                    this._dnsRoutes[viaIntf].push({dest: dnsIP, gw: gw, viaIntf: viaIntf, metric: metric, tableName: routing.RT_MAIN, af: af});
+                    this._updateDnsRouteCache(dnsIP, gw, viaIntf, metric, routing.RT_MAIN, af);
                   }
                 }
               } else {
@@ -808,14 +805,7 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dns6IP, gw6, viaIntf, routing.RT_MAIN, metric, 6, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
                     });
-                    if (!this._dnsRoutes){
-                      log.warn("should init _dnsRoutes in load_balance mode");
-                      this._dnsRoutes = {}
-                    }
-                    if (!this._dnsRoutes[viaIntf]) {
-                      this._dnsRoutes[viaIntf] = [];
-                    }
-                    this._dnsRoutes[viaIntf].push({dest: dns6IP, gw: gw6, viaIntf: viaIntf, metric: metric, tableName: routing.RT_MAIN, af: af});
+                    this._updateDnsRouteCache(dns6IP, gw6, viaIntf, metric, routing.RT_MAIN, af);
                   }
                 }
               } else {
