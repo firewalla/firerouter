@@ -42,6 +42,8 @@ async function pre_run() {
 
   await pl.initPlugins();
   await sl.initSensors();
+  // consume onboard-config on first boot after flash, no-op once consumed
+  await ncm.consumeOnboardConfig().catch((err) => log.error("Failed to consume onboard config", err.message));
   const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
   await ncm.tryApplyConfig(activeConfig, true);
   await ncm.saveConfig(activeConfig);

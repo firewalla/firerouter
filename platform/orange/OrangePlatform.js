@@ -20,7 +20,7 @@ const Platform = require('../Platform.js');
 const _ = require('lodash');
 const r = require('../../util/firerouter.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const log = require('../../util/logger.js')(__filename);
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
@@ -107,25 +107,25 @@ class OrangePlatform extends Platform {
   }
 
   async ledNormalVisibleStart() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN normal visible");
     });
   }
 
   async ledNormalVisibleStop() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=normal_visible`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAllNetworkDown() {
-    await exec(`curl -s '${firestatusBaseURL}/fire?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/fire?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
 
   async ledAnyNetworkUp() {
-    await exec(`curl -s '${firestatusBaseURL}/resolve?name=firerouter&type=network_down'`).catch( (err) => {
+    await execFile("curl", ["-s", `${firestatusBaseURL}/resolve?name=firerouter&type=network_down`]).catch( (err) => {
       log.error("Failed to set LED as WAN NOT normal visible");
     });
   }
@@ -194,7 +194,7 @@ class OrangePlatform extends Platform {
 
   async _isWorldVersion() {
     try {
-      const { stdout } = await exec(`sudo xxd -u -p -l 1 -s 0x20 /dev/mtdblock2`);
+      const { stdout } = await execFile("sudo", ["xxd", "-u", "-p", "-l", "1", "-s", "0x20", "/dev/mtdblock2"]);
       return stdout.trim() === '77';
     } catch (err) {
       log.error(`Failed to check world version:`, err);
@@ -209,7 +209,7 @@ class OrangePlatform extends Platform {
     for (const file of fileList) {
       try {
         const expectedHash = (await fsp.readFile(`${file.src}.sha256`, 'utf8')).trim();
-        const { stdout } = await exec(`sha256sum ${file.src}`);
+        const { stdout } = await execFile("sha256sum", [file.src]);
         const actualHash = stdout.split(/\s+/)[0];
         if (actualHash !== expectedHash) {
           log.error(`Source file ${file.src} failed integrity check`);
@@ -223,10 +223,10 @@ class OrangePlatform extends Platform {
     const copiedFiles = [];
     for (const file of fileList) {
       try {
-        await exec(`cmp -s ${file.src} ${file.dst}`);
+        await execFile("cmp", ["-s", file.src, file.dst]);
       } catch (err) {
         try {
-          await exec(`sudo cp -f ${file.src} ${file.dst}`);
+          await execFile("sudo", ["cp", "-f", file.src, file.dst]);
           log.info(`Copied ${file.src} to ${file.dst}`);
           copiedFiles.push(file);
         } catch (copyErr) {
@@ -239,7 +239,7 @@ class OrangePlatform extends Platform {
     let integrityOk = true;
     for (const file of copiedFiles) {
       try {
-        const { stdout } = await exec(`sha256sum ${file.src} ${file.dst}`);
+        const { stdout } = await execFile("sha256sum", [file.src, file.dst]);
         const hashes = stdout.trim().split('\n').map(l => l.split(/\s+/)[0]);
         if (hashes[0] !== hashes[1]) {
           log.error(`Integrity check failed for ${file.dst}`);
@@ -255,11 +255,11 @@ class OrangePlatform extends Platform {
     if (!integrityOk) {
       for (const file of copiedFiles) {
         if (file.restore) {
-          await exec(`sudo cp -f ${file.restore} ${file.dst}`).catch(err =>
+          await execFile("sudo", ["cp", "-f", file.restore, file.dst]).catch(err =>
             log.error(`Failed to restore ${file.dst}:`, err)
           );
         } else {
-          await exec(`sudo rm -f ${file.dst}`).catch(err =>
+          await execFile("sudo", ["rm", "-f", file.dst]).catch(err =>
             log.error(`Failed to remove ${file.dst}:`, err)
           );
         }
@@ -269,7 +269,7 @@ class OrangePlatform extends Platform {
     return copiedFiles;
   }
 
-  async _updateWifiKernelModule() {
+  async _updateWifiKernelModule(includeCfg80211 = false) {
     const firerouter = r.getFireRouterHome();
     const kernelVersion = '6.6.104';
     const fileList = [
@@ -289,10 +289,17 @@ class OrangePlatform extends Platform {
         restore: ''
       }
     ];
+    if (includeCfg80211) {
+      fileList.push({
+        src: `${firerouter}/platform/orange/files/kernel_modules/${kernelVersion}/cfg80211.ko`,
+        dst: `/lib/modules/${kernelVersion}/kernel/net/wireless/cfg80211.ko`,
+        restore: `/media/root-ro/lib/modules/${kernelVersion}/kernel/net/wireless/cfg80211.ko`
+      });
+    }
     try {
       const copied = await this._copyFilesWithIntegrity(fileList);
       if (!copied) return [];
-      await exec(`sudo depmod -a`);
+      await execFile("sudo", ["depmod", "-a"]);
       return copied.map(f => f.dst.split('/').pop());
     } catch (err) {
       log.error(`Failed to update WiFi kernel module for world version:`, err);
@@ -300,8 +307,7 @@ class OrangePlatform extends Platform {
     }
   }
 
-  async _reloadWifiKernelModule() {
-    await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
+  async _setNapiPhyCpuAffinity() {
     try {
       const { stdout } = await exec(`ps -axo pid,comm | grep 'napi/phy'`);
       const procs = stdout.trim().split('\n')
@@ -313,17 +319,55 @@ class OrangePlatform extends Platform {
         .sort((a, b) => b.suffix - a.suffix);
       if (procs.length >= 2) {
         log.info(`Assigning CPU 3 to napi/phy process ${procs[0].pid}`);
-        await exec(`sudo taskset -acp 3 ${procs[0].pid}`);
+        await execFile("sudo", ["taskset", "-acp", "3", procs[0].pid]);
         log.info(`Assigning CPU 0 to napi/phy process ${procs[1].pid}`);
-        await exec(`sudo taskset -acp 0 ${procs[1].pid}`);
+        await execFile("sudo", ["taskset", "-acp", "0", procs[1].pid]);
       }
     } catch (err) {
       log.error(`Failed to set CPU affinity for napi/phy processes:`, err);
     }
   }
 
+  async _reloadWifiKernelModule() {
+    await exec(`sudo rmmod mt7996e; sudo modprobe mt7996e`);
+    await this._setNapiPhyCpuAffinity();
+  }
+
   async _reloadMt76KernelModule() {
     await exec(`sudo rmmod mt7996e; sudo rmmod mt76_connac_lib; sudo rmmod mt76; sudo modprobe mt76`);
+  }
+
+  async _reloadCfg80211KernelModule() {
+    for (const mod of ['mt7996e', 'mt76_connac_lib', 'mt76', 'mac80211', 'cfg80211']) {
+      await this.rmmodKernelModule(mod);
+    }
+    // modprobe mt7996e resolves and reloads cfg80211, mac80211, mt76_connac_lib, mt76 automatically
+    await this.modprobeKernelModule('mt7996e');
+    await this._setNapiPhyCpuAffinity();
+  }
+
+  // Only applicable to non-world version boxes with a non-US country selected: swaps in the
+  // world-flavor cfg80211/mt76/mt7996e/DTBO to unlock the regulatory domain, then reloads the
+  // WLAN kernel module chain. Returns true if the kernel modules were actually reloaded.
+  async prepareWLANRegDomainChange(country) {
+    if (!country || country === 'US') {
+      return false;
+    }
+    if (await this._isWorldVersion()) {
+      return false;
+    }
+    try {
+      const updatedKos = await this._updateWifiKernelModule(true);
+      if (!updatedKos.length) {
+        return false;
+      }
+      log.info(`WLAN kernel modules updated for country ${country}, will reload cfg80211 kernel modules`);
+      await this._reloadCfg80211KernelModule();
+      return true;
+    } catch (err) {
+      log.error(`Failed to prepare WLAN regulatory domain change for country ${country}:`, err);
+      return false;
+    }
   }
 
   async overrideWLANKernelModule() {
@@ -381,7 +425,7 @@ class OrangePlatform extends Platform {
       if (!await this._copyFilesWithIntegrity(fileList)) return false;
 
       await fsp.writeFile(`${FIRMWARE_PATCH_RELOAD}.${patchUid}`, '');
-      await exec(`sync`);
+      await execFile("sync", []);
       await this._reloadWifiKernelModule();
       setTimeout(() => {
         fsp.writeFile(`${FIRMWARE_PATCH_SAFE}.${patchUid}`, '').catch(err =>
@@ -453,12 +497,12 @@ class OrangePlatform extends Platform {
     if(ifplug) {
       await ifplug.stopMonitoringInterface(iface);
     }
-    await exec(`sudo ip link set ${iface} down`);
-    await exec(`sudo ip link set ${iface} address ${hwAddr}`).catch((err) => {
+    await execFile("sudo", ["ip", "link", "set", iface, "down"]);
+    await execFile("sudo", ["ip", "link", "set", iface, "address", hwAddr]).catch((err) => {
       log.error(`Failed to set hardware address of ${iface} to ${hwAddr}`, err.message);
       errCounter++;
     });
-    await exec(`sudo ip link set ${iface} up`);
+    await execFile("sudo", ["ip", "link", "set", iface, "up"]);
     if(ifplug) {
       await ifplug.startMonitoringInterface(iface);
     }
@@ -498,14 +542,14 @@ class OrangePlatform extends Platform {
       throw new Error("Failed to get 802.11 phy name");
     }
     if (!await wlanIntfPlugin.isInterfacePresent()) {
-      await exec(`sudo iw phy ${phyName} interface add ${wlanIntfPlugin.name} type ${await this._getWLANInterfaceType(wlanIntfPlugin)}`);
+      await execFile("sudo", ["iw", "phy", phyName, "interface", "add", wlanIntfPlugin.name, "type", await this._getWLANInterfaceType(wlanIntfPlugin)]);
     }
-    await exec(`sudo ip link set ${wlanIntfPlugin.name} down`).catch((err) => {});
-    await exec(`sudo ip link set ${wlanIntfPlugin.name} address ${macAddr}`).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", wlanIntfPlugin.name, "down"]).catch((err) => {});
+    await execFile("sudo", ["ip", "link", "set", wlanIntfPlugin.name, "address", macAddr]).catch((err) => {});
   }
 
   async removeWLANInterface(wlanIntfPlugin) {
-    await exec(`sudo iw dev ${wlanIntfPlugin.name} del`).catch((err) => {});
+    await execFile("sudo", ["iw", "dev", wlanIntfPlugin.name, "del"]).catch((err) => {});
   }
 
   async _getWLANInterfaceType(wlanIntfPlugin) {
@@ -554,7 +598,7 @@ class OrangePlatform extends Platform {
   async _getHexBaseAddress(base) {
     let baseAddress = await rclient.getAsync(`base_mac_address:${base}`);
     if (!baseAddress) {
-      baseAddress = await exec(`sudo xxd -u -p -l 6 -s ${base} /dev/mtdblock2`).then(result => result.stdout.trim().padStart(12, "0").match(/.{1,2}/g).join(":")).catch(() => {
+      baseAddress = await execFile("sudo", ["xxd", "-u", "-p", "-l", "6", "-s", String(base), "/dev/mtdblock2"]).then(result => result.stdout.trim().padStart(12, "0").match(/.{1,2}/g).join(":")).catch(() => {
         return null;
       });
       if (!baseAddress || !baseAddress.startsWith("20:6D:31")) {
@@ -610,7 +654,7 @@ class OrangePlatform extends Platform {
     let pdoInfo = null;
     const fileExists = await fsp.access(pdoInfoFile, fs.constants.F_OK).then(() => true).catch(() => false);
     if (!fileExists) {
-      const output = await exec(`sudo ${this.getFilesPath()}/get_pdo.sh`).then(result => result.stdout).catch(() => null);
+      const output = await execFile("sudo", [`${this.getFilesPath()}/get_pdo.sh`]).then(result => result.stdout).catch(() => null);
       if (!output) {
         log.error("Failed to get PDO info from script");
         return {};
@@ -711,7 +755,7 @@ class OrangePlatform extends Platform {
 
   async disableHostapd(iface) {
     // this is just for backward compatibility, we don't need to stop firerouter_hostapd@${iface} in future releases
-    await exec(`sudo systemctl stop firerouter_hostapd@${iface}`).catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@${iface}`]).catch((err) => {});
     for (const band of [BAND_24G, BAND_5G]) {
       const files = await fsp.readdir(`${r.getUserConfigFolder()}/hostapd/band_${band}`).catch((err) => []);
       if (files.includes(`${iface}.conf`)) {
@@ -732,16 +776,16 @@ class OrangePlatform extends Platform {
       if (_.isEmpty(bssConfigs)) {
         await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
         log.info(`Removed hostapd config on band ${band}, stopping hostapd service`);
-        await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
+        await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${band}`]).catch((err) => {});
       } else {
         await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
         if (this.apPause[band]) {
           log.info(`AP on band ${band} is paused, stop it`);
-          await exec(`sudo systemctl stop firerouter_hostapd@band_${band}`).catch((err) => {});
+          await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${band}`]).catch((err) => {});
           return;
         } else {
           log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
-          await exec(`sudo systemctl restart firerouter_hostapd@band_${band}`).catch((err) => {});
+          await execFile("sudo", ["systemctl", "restart", `firerouter_hostapd@band_${band}`]).catch((err) => {});
         }
       }
     }, 2000);
@@ -987,7 +1031,7 @@ class OrangePlatform extends Platform {
 
   async setWifiDynamicDebug() {
     await exec(`echo -n 'module mac80211 -p' | sudo tee /sys/kernel/debug/dynamic_debug/control`).catch((err) => { });
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/13-mt7996e.conf /etc/rsyslog.d/`).catch((err) => { });
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/13-mt7996e.conf`, "/etc/rsyslog.d/"]).catch((err) => { });
     const pl = require('../../plugins/plugin_loader.js');
     pl.scheduleRestartRsyslog();
   }

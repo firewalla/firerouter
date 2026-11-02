@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+# The image keeps a pristine copy of /home/pi in /media/home-ro (lower layer of the /home overlay)
+# and a factory reset falls back to it. Old copies of firerouter_upgrade.sh only accept HTTP 200 in
+# the network check, which 1.1.1.1 / 1.0.0.1 / 8.8.8.8 no longer answer, so FireRouter never upgrades
+# after a reset. Accept any HTTP status there; nothing else in the copy is touched.
+
+: ${HOME_RO:=/media/home-ro}
+SCRIPT=$HOME_RO/pi/firerouter/scripts/firerouter_upgrade.sh
+OLD_CHECK='\[\[ \$HTTP_STATUS_CODE == "200" \]\]'
+NEW_CHECK='[[ $HTTP_STATUS_CODE =~ ^[1-5][0-9][0-9]$ ]]'
+
+[[ -f $SCRIPT ]] || exit 0
+grep -qE "$OLD_CHECK" $SCRIPT || exit 0
+
+WAS_RO=0
+restore_ro() {
+  # only put back what was there before: a writable layer stays writable
+  [[ $WAS_RO -eq 1 ]] || return 0
+  sudo mount -o remount,ro $HOME_RO || logger "WARN: FIREROUTER.UPGRADE failed to remount $HOME_RO read-only"
+}
+
+if findmnt -no OPTIONS $HOME_RO | tr ',' '\n' | grep -qx ro; then
+  WAS_RO=1
+  # the pristine layer must not stay writable, whatever happens below
+  trap restore_ro EXIT
+  sudo mount -o remount,rw $HOME_RO || { logger "WARN: FIREROUTER.UPGRADE failed to remount $HOME_RO writable"; exit 0; }
+fi
+
+if sudo sed -i -E "s/$OLD_CHECK/$NEW_CHECK/" $SCRIPT; then
+  logger "FIREROUTER.UPGRADE patched network check in $SCRIPT"
+else
+  logger "WARN: FIREROUTER.UPGRADE failed to patch network check in $SCRIPT"
+fi
+
+exit 0

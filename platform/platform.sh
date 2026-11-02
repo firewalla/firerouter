@@ -5,6 +5,7 @@ FW_PLATFORM_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 UNAME=$(uname -m)
 NETWORK_SETUP=yes
 BLUETOOTH_TIMEOUT=3600
+NEED_FIRERESET=true
 
 function run_horse_light {
   return
@@ -42,6 +43,10 @@ function get_dhcpcd_path {
 
 function get_ndppd_path {
   echo "${FW_PLATFORM_CUR_DIR}/bin/ndppd"
+}
+
+function get_mcproxy_path {
+  echo "${FW_PLATFORM_CUR_DIR}/bin/mcproxy"
 }
 
 function get_firereset_path {
@@ -107,6 +112,10 @@ case "$UNAME" in
       gold-pro)
         source $FW_PLATFORM_DIR/goldpro/platform.sh
         FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/goldpro
+        ;;
+      crystal)
+        source $FW_PLATFORM_DIR/crystal/platform.sh
+        FW_PLATFORM_CUR_DIR=$FW_PLATFORM_DIR/crystal
         ;;
       *)
         source $FW_PLATFORM_DIR/gold/platform.sh
