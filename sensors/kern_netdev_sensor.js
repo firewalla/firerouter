@@ -16,7 +16,7 @@
 
 const Sensor = require('./sensor.js');
 const rclient = require('../util/redis_manager.js').getRedisClient()
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const LogReader = require('../util/LogReader')
 
 
@@ -64,7 +64,7 @@ class KernNetDeviceSensor extends Sensor {
   }
 
   async reboot(){
-    await exec(`sudo reboot`)
+    await execFile("sudo", ["reboot"])
   }
 
 }

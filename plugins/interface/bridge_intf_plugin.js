@@ -16,12 +16,17 @@
 'use strict';
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const { spawn } = require('child_process');
 const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
+const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+
+const SEED_INTF = 'eth0';
+
+const mstpctl = (...args) => execFile("sudo", [`${platform.getBinaryPath()}/mstpctl`, ...args]);
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -44,16 +49,16 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     }
     await super.flush();
     if (this.networkConfig && this.networkConfig.enabled) {
-      await exec(`sudo ip link set dev ${this.name} down`).catch((err) => {});
-      await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
-      await exec(`sudo brctl delbr ${this.name}`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "down"]).catch((err) => {});
+      await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
+      await execFile("sudo", ["brctl", "delbr", this.name]).catch((err) => {});
     }
   }
 
   async createInterface() {
     const presentInterfaces = [];
     for (const intf of this.networkConfig.intf) {
-      await exec(`sudo ip addr flush dev ${intf}`).catch((err) => {});
+      await execFile("sudo", ["ip", "addr", "flush", "dev", intf]).catch((err) => {});
       const intfPlugin = pl.getPluginInstance("interface", intf);
       if (intfPlugin) {
         // this is useful if it is a passthrough bridge
@@ -68,19 +73,19 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       }
     }
 
-    await exec(`sudo brctl addbr ${this.name}`).catch((err) => {
+    await execFile("sudo", ["brctl", "addbr", this.name]).catch((err) => {
       this.log.debug(`Failed to create bridge interface ${this.name}`, err.message);
     });
 
     if (this.networkConfig.vlanFiltering) {
-      await exec(`sudo ip link set dev ${this.name} type bridge vlan_default_pvid 1`).catch((err) => {
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "type", "bridge", "vlan_default_pvid", "1"]).catch((err) => {
         this.log.error(`Failed to set default PVID on ${this.name}`, err.message);
       });
-      await exec(`sudo ip link set dev ${this.name} type bridge vlan_filtering 1`).catch((err) => {
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "type", "bridge", "vlan_filtering", "1"]).catch((err) => {
         this.log.error(`Failed to enable VLAN filtering on ${this.name}`, err.message);
       });
     } else {
-      await exec(`sudo ip link set dev ${this.name} type bridge vlan_filtering 0`).catch((err) => {
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "type", "bridge", "vlan_filtering", "0"]).catch((err) => {
         this.log.error(`Failed to disable VLAN filtering on ${this.name}`, err.message);
       });
     }
@@ -88,24 +93,32 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
     if (this.networkConfig.intf.length > 1 && !isVlanBridge) {
       // start mstpd if not already running; no-op if already active
-      await exec(`sudo systemctl start firerouter_mstpd`).catch((err) => {
+      await execFile("sudo", ["systemctl", "start", "firerouter_mstpd"]).catch((err) => {
         this.log.warn(`Failed to start mstpd service`, err.message);
       });
       if (this.networkConfig.stp !== false) {
-        // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
-        // instead of transitioning to stp_state=2 (BR_USER_STP).
-        await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
-        // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
-        // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
-        await exec(`sudo brctl stp ${this.name} on`).catch((err) => {
-          this.log.error(`Failed to enable STP on ${this.name}`, err.message);
+        // toggling on a running bridge makes mstpd recreate it with its ports present, which resets the
+        // tree state and sends BPDUs at the default priority
+        if (!await this.isStpRunning()) {
+          // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
+          // instead of transitioning to stp_state=2 (BR_USER_STP).
+          await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
+          // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
+          // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
+          await execFile("sudo", ["brctl", "stp", this.name, "on"]).catch((err) => {
+            this.log.error(`Failed to enable STP on ${this.name}`, err.message);
+          });
+        }
+        // priority 0 is the only one no other bridge can beat on priority alone, so the box stays root
+        await mstpctl("settreeprio", this.name, "0", "0").catch((err) => {
+          this.log.warn(`Failed to set STP priority on ${this.name}`, err.message);
         });
         if (!this._stateSync)
           this._stateSync = new BridgePortStateSync(this.name, this.log);
         await this._stateSync.startMonitor(this.networkConfig.intf);
       } else {
         // brctl stp off invokes /sbin/bridge-stp stop → mstpctl delbridge, stp_state=0
-        await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
+        await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
         if (this._stateSync)
           await this._stateSync.stopMonitor();
         // STP is no longer controlling port states; reset VLAN ports to forwarding
@@ -114,13 +127,13 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       }
     } else {
       // VLAN bridges should always have STP disabled; clear any stale kernel STP state
-      await exec(`sudo brctl stp ${this.name} off`).catch((err) => {});
+      await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
     }
 
     const existingIntf = await fsp.readdir(`/sys/class/net/${this.name}/brif`);
     for (const intf of existingIntf) {
       if (!presentInterfaces.includes(intf)) {
-        await exec(`sudo brctl delif ${this.name} ${intf}`).catch((err) => {
+        await execFile("sudo", ["brctl", "delif", this.name, intf]).catch((err) => {
           this.log.error(`Failed to remove interface ${intf} from bridge ${this.name}`, err.message);
         });
       }
@@ -131,14 +144,14 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
       for (const iface of presentInterfaces) {
         if (existingIntf.includes(iface))
           continue;
-        await exec(`sudo brctl addif ${this.name} ${iface}`).catch((err) => {
+        await execFile("sudo", ["brctl", "addif", this.name, iface]).catch((err) => {
           this.log.error(`Failed to add interface ${iface} to bridge ${this.name}`, err.message);
         })
       }
 
     // prevent port state from being reset by a later ifup.
     if (this.networkConfig.enabled)
-      await exec(`sudo ip link set dev ${this.name} up`).catch((err) => {
+      await execFile("sudo", ["ip", "link", "set", "dev", this.name, "up"]).catch((err) => {
         this.log.error(`Failed to bring up bridge interface ${this.name}`, err.message);
       });
 
@@ -149,6 +162,14 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     }
 
     return true;
+  }
+
+  // true only if the kernel hands the bridge to mstpd (stp_state=2) and mstpd has it enabled; any failed read is false
+  async isStpRunning() {
+    if (await this._getSysFSClassNetValueOf(this.name, "bridge/stp_state") !== "2")
+      return false;
+    const result = await mstpctl("showbridge", this.name, "enabled").catch(() => null);
+    return result !== null && result.stdout.trim() === "yes";
   }
 
   getDefaultMTU() {
@@ -168,6 +189,35 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async resetHardwareAddress() {
+    const members = await fsp.readdir(`/sys/class/net/${this.name}/brif`).catch(() => null);
+    if (members === null)
+      return;
+
+    if (members.length > 0) {
+      const memberMacs = [];
+      for (const member of members) {
+        const mac = await fsp.readFile(`/sys/class/net/${member}/address`, 'utf8')
+          .then(s => s.trim().toUpperCase()).catch(() => null);
+        if (mac)
+          memberMacs.push(mac);
+      }
+      if (memberMacs.length === 0)
+        return;
+      memberMacs.sort();
+      await platform.setHardwareAddress(this.name, memberMacs[0]);
+      return;
+    }
+
+    const seedMac = await platform.getPermanentMac(SEED_INTF);
+    if (!seedMac) {
+      this.log.warn(`Failed to get permanent MAC of ${SEED_INTF}, cannot derive a deterministic MAC for empty bridge ${this.name}`);
+      return;
+    }
+    const mac = util.generateDeterministicMacAddress(`${seedMac}:${this.name}`);
+    await platform.setHardwareAddress(this.name, mac);
+  }
+
   async state() {
     const s = await super.state();
     s.stpPorts = await this.getStpPortStatus();
@@ -181,8 +231,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
     if (this.networkConfig.intf.length <= 1 || isVlanBridge || this.networkConfig.stp === false)
       return null;
-    const mstpctl = `${platform.getBinaryPath()}/mstpctl`;
-    const result = await exec(`sudo ${mstpctl} showportdetail ${this.name}`).catch((err) => {
+    const result = await mstpctl("showportdetail", this.name).catch((err) => {
       this.log.warn(`Failed to get mstp port status on ${this.name}`, err.message);
       return null;
     });
@@ -214,8 +263,8 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
   static async preparePlugin() {
     await super.preparePlugin();
     const r = require('../../util/firerouter.js');
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/firerouter_mstpd.service /etc/systemd/system/`);
-    await exec(`sudo install -m 755 ${r.getFireRouterHome()}/scripts/bridge-stp.sh /sbin/bridge-stp`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/firerouter_mstpd.service`, "/etc/systemd/system/"]);
+    await execFile("sudo", ["install", "-m", "755", `${r.getFireRouterHome()}/scripts/bridge-stp.sh`, "/sbin/bridge-stp"]);
   }
 }
 
@@ -287,7 +336,7 @@ class BridgePortStateSync {
       const state = await BridgePortStateSync.getNativeBridgePortState(physicalIntf);
       if (state === undefined) continue;
       const targetState = (state === null || state === 3) ? 'forwarding' : 'disabled';
-      await exec(`sudo bridge link set dev ${vlanIntf} state ${targetState}`)
+      await execFile("sudo", ["bridge", "link", "set", "dev", vlanIntf, "state", targetState])
         .catch(err => this._log.debug(`syncInitialPortStates: bridge link set failed for ${vlanIntf}`, err.message));
     }
   }
@@ -379,7 +428,7 @@ class BridgePortStateSync {
         ? await fsp.readFile(`/sys/class/net/${vlanMaster}/brif/${vlanIntf}/state`, 'utf8').then(s => parseInt(s.trim(), 10)).catch(() => undefined)
         : undefined;
       if (current === targetNum) continue;
-      await exec(`sudo bridge link set dev ${vlanIntf} state ${targetState}`)
+      await execFile("sudo", ["bridge", "link", "set", "dev", vlanIntf, "state", targetState])
         .catch(err => { if (log) log.warn(`applyVlanPortStates: bridge link set dev ${vlanIntf} state ${targetState} failed`, err.message); });
     }
   }

@@ -1,4 +1,4 @@
-/*    Copyright 2019-2021 Firewalla Inc.
+/*    Copyright 2019-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -19,7 +19,7 @@ let instance = null;
 const log = require('../util/logger.js')(__filename);
 const rclient = require('../util/redis_manager').getRedisClient();
 const ns = require('./network_setup.js');
-const { exec } = require('child-process-promise');
+const { exec, execFile } = require('child-process-promise');
 const { spawn } = require('child_process')
 const readline = require('readline');
 const {Address4, Address6} = require('ip-address');
@@ -28,14 +28,21 @@ const uuid = require('uuid');
 const pl = require('../platform/PlatformLoader.js');
 const platform = pl.getPlatform();
 const r = require('../util/firerouter.js');
+const op = require('./onboard_profile.js');
 const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 
 const fsp = require('fs').promises;
+const crypto = require('crypto');
 const util = require('../util/util.js');
+const { spawnWpaCliInteractive, parseSsidTempDisabled } = require('../util/wpa_cli.js');
+const pluginConfig = require('../util/config.js').getConfig();
 
 const LOCK_SWITCH_WIFI = "LOCK_SWITCH_WIFI";
 const LOCK_CONFIG_RW = "LOCK_CONFIG_RW";
+
+// TEMP-DISABLED reasons that mean the credentials were rejected, wpa_supplicant's retry won't help
+const EARLY_FAIL_REASONS = new Set(['WRONG_KEY', 'AUTH_FAILED']);
 
 const WPA_ALLOWED_KEYS = new Set([
   'ssid', 'psk', 'key_mgmt', 'eap', 'identity', 'password',
@@ -43,6 +50,13 @@ const WPA_ALLOWED_KEYS = new Set([
   'bssid', 'priority', 'scan_ssid', 'proto', 'pairwise', 'group',
   'anonymous_identity', 'domain_suffix_match', 'altsubject_match',
 ]);
+
+// linux caps interface names at IFNAMSIZ-1 and forbids '/' and whitespace, this is that set
+// minus every shell metacharacter
+const INTF_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,15}$/;
+// keys of the non-interface plugin sections are free form labels rather than kernel interface
+// names, so keep the same charset but do not impose IFNAMSIZ on them
+const PLUGIN_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,64}$/;
 
 const Promise = require('bluebird');
 
@@ -100,30 +114,54 @@ class NetworkConfigManager {
   async switchWifi(intf, ssid, params = {}, testOnly = false) {
     return new Promise((resolve, reject) => {
       lock.acquire(LOCK_SWITCH_WIFI, async (done) => {
+        let checkTask = null;
+        let monitor = null;
+        let finished = false;
+        // every exit goes through here so the lock is released once, cleanup runs after claiming the exit
+        const finish = async (errors, cleanup) => {
+          if (finished)
+            return;
+          finished = true;
+          clearInterval(checkTask);
+          if (monitor)
+            monitor.quit();
+          if (cleanup)
+            await cleanup();
+          done(null, errors);
+        };
+        let undoDisable = null;
         try {
           const iface = await ns.getInterface(intf);
           const ssidHex = util.getHexStrArray(ssid).map(hex => `\\x${hex}`).join("");
           if (!iface) {
-            done(null, [`Interface ${intf} is not found`]);
+            await finish([`Interface ${intf} is not found`]);
             return;
           }
           const config = iface.config;
           if (config.enabled !== true) {
-            done(null, [`Interface ${intf} is not enabled`]);
+            await finish([`Interface ${intf} is not enabled`]);
             return;
           }
           if (config.meta.type !== "wan") {
-            done(null, [`Interface ${intf} is not a WAN interface`]);
+            await finish([`Interface ${intf} is not a WAN interface`]);
             return;
           }
           if (!config.wpaSupplicant) {
-            done(null, [`wpa_supplicant is not configured on ${intf}`]);
+            await finish([`wpa_supplicant is not configured on ${intf}`]);
             return;
           }
           const wpaCliPath = await platform.getWpaCliBinPath();
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
+          const wpaCli = (...args) => execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, ...args]);
           const isWPAComplate = async () => {
             return await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
+          };
+          // refresh interface link state to relinquish resources due to potential driver bug
+          const resetLinkIfNeeded = async () => {
+            if (platform.needResetLinkBeforeSwitchWifi()) {
+              await execFile("sudo", ["ip", "link", "set", intf, "down"]).catch((err) => {});
+              await execFile("sudo", ["ip", "link", "set", intf, "up"]).catch((err) => {});
+            }
           };
           const networks = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} list_networks | tail -n +2`).then(result => result.stdout.trim().split('\n').map(line => {
             // TODO: taking care of SSID with '\t'?
@@ -145,93 +183,134 @@ class NetworkConfigManager {
           });
           const currentNetwork = networks.find(n => n.flags && n.flags.includes("CURRENT"));
           const state = await isWPAComplate();
-          if (_.get(currentNetwork, 'ssid') === ssid && state === true) {
+          const isCurrentSsid = currentNetwork && (currentNetwork.ssid === ssid || currentNetwork.ssidHex === ssidHex);
+          if (isCurrentSsid && state === true) {
             log.info(`WPA state is already complete on current SSID ${ssid}, no need to switch`);
-            done(null, []);
+            await finish([]);
             return;
           }
           await platform.prepareSwitchWifi();
-          // refresh interface link state to relinquish resources due to potential driver bug
-          if (platform.needResetLinkBeforeSwitchWifi()) {
-            await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-            await exec(`sudo ip link set ${intf} up`).catch((err) => {});
-          }
+          await resetLinkIfNeeded();
           let selectedNetwork = networks.find(n => n.ssid === ssid || n.ssidHex === ssidHex); // in case of non-ascii characters, need to compare with hex string
           if (!selectedNetwork) {
             log.info(`ssid ${ssid} is not configured in ${intf} settings yet, will try to add a new network ...`);
-            const networkId = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} add_network`).then((result) => result.stdout.trim()).catch((err) => null);
+            const networkId = await wpaCli("add_network").then((result) => result.stdout.trim()).catch((err) => null);
             if (networkId === null) {
-              done(null, [`Failed to add new network ${ssid}`]);
+              await finish([`Failed to add new network ${ssid}`]);
               return;
             }
             selectedNetwork = {id: networkId, ssid: ssid, bssid: params.bssid, flags: null};
           }
+          // select_network disables all other networks, re-enable the ones that were enabled
+          const enableOthers = async (keptId) => {
+            for (const network of networks) {
+              if (network.id !== keptId && (!network.flags || !network.flags.includes("DISABLED")))
+                await wpaCli("enable_network", String(network.id)).catch((err) => { });
+            }
+          };
+          // switch back to the previous setup
+          const restorePrevious = async () => {
+            await resetLinkIfNeeded();
+            // restore config from configuration file
+            await wpaCli("reconfigure").catch((err) => { });
+            if (currentNetwork) // switch back to previous ssid
+              await wpaCli("select_network", String(currentNetwork.id)).catch((err) => { });
+            else // deselect ssid
+              await wpaCli("disable_network", String(selectedNetwork.id)).catch((err) => { });
+            await enableOthers(currentNetwork ? currentNetwork.id : undefined);
+          };
           if (!params.hasOwnProperty("ssid"))
             params.ssid = ssid;
-          for (const key of Object.keys(params)) {
-            if (!WPA_ALLOWED_KEYS.has(key)) {
-              done(null, [`Invalid wpa_supplicant parameter: ${key}`]);
-              return;
-            }
-            const value = await util.generateWpaSupplicantConfig(key, params);
-            const error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} set_network ${selectedNetwork.id} ${key} ${value}`).then(() => null).catch((err) => err.message);
-            if (error) {
-              done(null, [error]);
-              return;
-            }
-          }
-          let error = await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} select_network ${selectedNetwork.id}`).then(() => null).catch((err) => err.message);
-          if (error) {
-            done(null, [error]);
+          const invalidKey = Object.keys(params).find(key => !WPA_ALLOWED_KEYS.has(key));
+          // an empty key is itself invalid, so compare with undefined rather than test truthiness
+          if (invalidKey !== undefined) {
+            await finish([`Invalid wpa_supplicant parameter: ${invalidKey}`]);
             return;
           }
+          // stop any attempt with the old settings, it reports nothing for this network once disabled
+          await wpaCli("disable_network", String(selectedNetwork.id)).catch((err) => { });
+          // a setup error leaves the target as enabled as it was before the disable above
+          // flags is the raw list_networks column, match the exact token so [TEMP-DISABLED] still counts as enabled
+          if (networks.includes(selectedNetwork) && !(selectedNetwork.flags && selectedNetwork.flags.includes("[DISABLED]")))
+            undoDisable = () => wpaCli("enable_network", String(selectedNetwork.id)).catch((err) => { });
+          // watch the control socket so an attempt rejected for its credentials fails right away, attached only
+          // after the disable above: wpa_supplicant sends a monitor only events raised after it attaches
+          const attached = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), 2000);
+            monitor = spawnWpaCliInteractive({
+              wpaCliPath, socketDir, intf, timeout: '45s', completeLines: true,
+              onLine: (line) => {
+                // PONG means the monitor connection is attached, wpa_cli reads stdin only after that
+                if (/(^|> )PONG$/.test(line)) {
+                  clearTimeout(timer);
+                  resolve(true);
+                  return;
+                }
+                const event = parseSsidTempDisabled(line);
+                if (!event || finished || event.id !== String(selectedNetwork.id))
+                  return;
+                log.warn(`wpa_supplicant temporarily disabled ${ssid} on ${intf}, reason ${event.reason}`);
+                // other reasons such as CONN_FAILED can be transient and wpa_supplicant retries, keep polling
+                if (EARLY_FAIL_REASONS.has(event.reason))
+                  finish([event.reason], restorePrevious);
+              }
+            });
+            monitor.child.on('error', (err) => {
+              log.warn(`Failed to run wpa_cli monitor on ${intf}`, err.message);
+              resolve(false);
+            });
+            monitor.child.on('exit', () => resolve(false));
+            monitor.write('ping');
+          });
+          if (!attached) {
+            log.warn(`wpa_cli monitor is not attached on ${intf}, will only poll the connection state`);
+            monitor.quit();
+            monitor = null;
+          }
+          for (const key of Object.keys(params)) {
+            const value = await util.generateWpaSupplicantConfig(key, params);
+            // the key is allowlisted above but the value is caller supplied, keep it out of a shell
+            const error = await wpaCli("set_network", String(selectedNetwork.id), key, String(value)).then(() => null).catch((err) => err.message);
+            if (error) {
+              await finish([error], undoDisable);
+              return;
+            }
+          }
+          let error = await wpaCli("select_network", String(selectedNetwork.id)).then(() => null).catch((err) => err.message);
+          if (error) {
+            await finish([error], undoDisable);
+            return;
+          }
+          // the attempt may already have failed while select_network was returning
+          if (finished)
+            return;
           const t1 = Date.now() / 1000;
           let t2 = null;
-          const checkTask = setInterval(async () => {
+          checkTask = setInterval(async () => {
+            if (finished)
+              return;
             const state = await isWPAComplate();
+            if (finished)
+              return;
             if (state === true) {
               if (!testOnly) {
-                clearInterval(checkTask);
                 log.info(`WPA state complete on new SSID ${ssid}, enabling other networks`);
-                for (const network of networks) {
-                  // select_network will disable all other ssids, re-enable other ssid
-                  if (network.id !== selectedNetwork.id && (!network.flags || !network.flags.includes("DISABLED")))
-                    await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
-                }
-                done(null, []);
+                await finish([], () => enableOthers(selectedNetwork.id));
                 return;
               }
             } else {
               t2 = Date.now() / 1000;
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} bssid_ignore clear`).catch((err) => { });
+              await wpaCli("bssid_ignore", "clear").catch((err) => { });
+              if (finished)
+                return;
             }
             // if timeout exceeded or test only is set and connection is successful, switch back to previous setup
             if (t2 - t1 > 30 || state === true && testOnly) {
-              clearInterval(checkTask);
-              // refresh interface link state to relinquish resources due to potential driver bug
-              if (platform.needResetLinkBeforeSwitchWifi()) {
-                await exec(`sudo ip link set ${intf} down`).catch((err) => {});
-                await exec(`sudo ip link set ${intf} up`).catch((err) => {});
-              }
-              // restore config from configuration file
-              await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} reconfigure`).catch((err) => { });
-              if (currentNetwork) // switch back to previous ssid
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} select_network ${currentNetwork.id}`).catch((err) => { });
-              else // deselect ssid
-                await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} disable_network ${selectedNetwork.id}`).catch((err) => { });
-              for (const network of networks) {
-                // select_network will disable all other ssids, re-enable other ssid
-                if ((!currentNetwork || network.id !== currentNetwork.id) && (!network.flags || !network.flags.includes("DISABLED")))
-                  await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} enable_network ${network.id}`).catch((err) => { });
-              }
-              if (state === true)
-                done(null, []);
-              else
-                done(null, [`Failed to switch to ${ssid}`]);
+              await finish(state === true ? [] : [`Failed to switch to ${ssid}`], restorePrevious);
             }
           }, 3000);
         } catch(err) {
-          done(null, [err])
+          await finish([err], undoDisable)
         }
       }, (err, ret) => {
         platform.setDFSScanState(false);
@@ -476,36 +555,14 @@ class NetworkConfigManager {
       })
 
       await platform.setDFSScanState(true);
-      const wpaCli = spawn('sudo', ['timeout', '25s', 'stdbuf', '-o0', '-e0', wpaCliPath, '-p', ctlSocket, '-i', apScanInterface])
-      wpaCli.on('error', err => {
-        log.error('Error running wpa_cli', err.message)
-      })
-      wpaCli.on('exit', code => {
-        // if the code is 255, wpa_supplicant is probably not initialized
-        switch(code) {
-          case 124: // timeout
-          case 255: // wpa_supplicant not initialized
-            deferred.reject(new Error(`wpa_cli exited with ${code}`))
-            break;
-          default:
-            log.info('wpa_cli exited with code', code)
-        }
-
-        deferred.resolve()
-      })
       const results = []
 
       let state = 'waitForResult'
       const scanResultCommand = platform.getWpaCliScanResultCommand();
 
-      // not using readline here as the final prompt after result won't be followed by line feed
-      // readline will wait for that and cause a 5s delay
-      wpaCli.stdout.on('data', data => {
-        if (!data) return
-        // Keep trailing spaces: SSID is the last field in scan_result output,
-        // so trim() would corrupt SSIDs like "MyWiFi ".
-        const lines = data.toString().split('\n').map(line => line.replace(/\r$/, '').trimStart())
-        for (const line of lines) try {
+      const { child: wpaCli } = spawnWpaCliInteractive({
+        wpaCliPath, socketDir: ctlSocket, intf: apScanInterface, timeout: '25s',
+        onLine: line => { try {
           log.debug(state, line)
 
           // as stdin and stdout are separate streams, the order between input output streams cannot be guaranteed
@@ -519,7 +576,7 @@ class NetworkConfigManager {
             })
             // reject immediately instead of waiting for timeout
             deferred.reject(new Error('Scan failed', line.substring(line.indexOf('CTRL'))))
-            continue
+            return
           }
           if (waitForScan && line.includes('CTRL-EVENT-SCAN-RESULTS')) {
             waitForScan = false
@@ -527,13 +584,13 @@ class NetworkConfigManager {
             wpaCli.stdin.writable && wpaCli.stdin.write(scanResultCommand + '\n', () => {
               log.verbose(scanResultCommand + ' written')
             })
-            continue
+            return
           }
 
           if (line.match(/^(> )?bssid \/ frequency/)) {
             log.verbose('result header seen, state => parsingResult')
             state = 'parsingResult'
-            continue
+            return
           }
 
           switch (state) {
@@ -580,7 +637,23 @@ class NetworkConfigManager {
           }
         } catch(err) {
           log.error(`Error parsing line \"${line}\"\n`, err)
+        } }
+      })
+      wpaCli.on('error', err => {
+        log.error('Error running wpa_cli', err.message)
+      })
+      wpaCli.on('exit', code => {
+        // if the code is 255, wpa_supplicant is probably not initialized
+        switch(code) {
+          case 124: // timeout
+          case 255: // wpa_supplicant not initialized
+            deferred.reject(new Error(`wpa_cli exited with ${code}`))
+            break;
+          default:
+            log.info('wpa_cli exited with code', code)
         }
+
+        deferred.resolve()
       })
 
       // start scan right away
@@ -652,7 +725,89 @@ class NetworkConfigManager {
     }
   }
 
+  // read onboard-config.json baked by the installer, returns {parsed, raw, path} or null
+  async readOnboardConfig() {
+    const onboardConfigFile = `${r.getFirewallaHiddenFolder()}/onboard-config.json`;
+    try {
+      const raw = await fsp.readFile(onboardConfigFile, {encoding: "utf8"});
+      const parsed = JSON.parse(raw);
+      // either a full network config, or the compact profile the cloud emits when it cannot know
+      // how many ports the box has
+      if (parsed && parsed.network && (parsed.network.interface || op.isProfileConfig(parsed.network)))
+        return {parsed, raw, path: onboardConfigFile};
+    } catch (err) {
+      if (err.code !== "ENOENT")
+        log.error(`Failed to load ${onboardConfigFile}`, err.message);
+    }
+    return null;
+  }
+
+  async resolveOnboardNetwork(network) {
+    if (!op.isProfileConfig(network)) {
+      // frcc config, from the migrate source or expanded by the crystal iso installer, follow the ports of this box
+      try {
+        const phyNames = await this.getPhyInterfaceNames();
+        return op.reconcilePorts(_.omit(network, ["ncid", "reqId"]), phyNames);
+      } catch (err) {
+        log.error("Failed to reconcile onboard network with ports on this box", err.message);
+        return null;
+      }
+    } else {
+      // @deprecated
+      // crystal iso installer will expand the adaptive config to frcc config, should not here
+      log.warn(`Deprecated: expanding '${network.profile}' network profile on the box, the installer is expected to expand it`);
+      try {
+        const phyNames = await this.getPhyInterfaceNames();
+        const config = op.expandProfile(network, phyNames);
+        log.info(`Expanded '${network.profile}' network profile over ports ${phyNames.join(", ")}`);
+        return config;
+      } catch (err) {
+        log.error("Failed to expand onboard network profile", err.message);
+        return null;
+      }
+    }
+  }
+
+  // one-shot per flashed config: expand the onboard network and persist it as the active config,
+  // overriding redis leftovers. The file itself is never rewritten — it is the record of intent.
+  async consumeOnboardConfig() {
+    if (!platform.isOnboardConfigSupported())
+      return false;
+    const data = await this.readOnboardConfig();
+    if (!data)
+      return false;
+    const hash = crypto.createHash('sha256').update(data.raw).digest('hex');
+    const consumedHash = await rclient.getAsync("sysdb:onboardConfigHash");
+    if (consumedHash === hash)
+      return false;
+    const config = await this.resolveOnboardNetwork(data.parsed.network);
+    if (!config)
+      return false;
+    const errors = await this.validateConfig(config);
+    if (!_.isEmpty(errors)) {
+      log.error("Invalid onboard network config, keep existing config", errors);
+      return false;
+    }
+    await this.saveConfig(config);
+    await rclient.setAsync("sysdb:onboardConfigHash", hash);
+    log.info("Onboard network config is set as active config");
+    return true;
+  }
+
   async getDefaultConfig() {
+    // use onboard-config.json when first apply network on crystal platform.
+    if (platform.isOnboardConfigSupported()) {
+      const data = await this.readOnboardConfig();
+      if (data) {
+        const config = await this.resolveOnboardNetwork(data.parsed.network);
+        const errors = config ? await this.validateConfig(config) : ["cannot resolve onboard network"];
+        if (_.isEmpty(errors)) {
+          log.info("Using provisioned network config from onboard-config");
+          return config;
+        }
+        log.error("Invalid onboard network config, fall back to default setup", errors);
+      }
+    }
     const defaultConfigJson = platform.getDefaultNetworkJsonFile();
     const config = require(defaultConfigJson);
     return config;
@@ -663,15 +818,79 @@ class NetworkConfigManager {
       return ["config is not defined"];
     if (!config.interface)
       return ["interface is not defined"];
+    // Values from here reach line-oriented config files that root daemons read and command lines
+    // all over the plugins, so a control character in any of them can start a directive or a
+    // command of its own. Reject the whole config here rather than per sink: this runs before
+    // tryApplyConfig, so nothing that fails it ever reaches the network, and it covers the
+    // sections no plugin in this repo parses (apc, the wireguard `extra` tree) as well as the ones
+    // that do. The per sink guards stay as defence in depth. util.findControlChar exempts the ssid
+    // alone, and documents why. This matches what firewalla rejects on its side.
+    const ctrlCharPath = util.findControlChar(config);
+    if (ctrlCharPath)
+      return [`control character in ${ctrlCharPath}`];
+    // plugin_loader creates an instance per key of every registered config_path, and those keys
+    // are interpolated into shell commands and file paths in most plugins. config.interface is
+    // checked separately below against the stricter kernel interface name rules.
+    for (const pluginConf of pluginConfig.plugins || []) {
+      const configPath = pluginConf.config_path;
+      if (!configPath || configPath.startsWith("interface."))
+        continue;
+      const section = _.get(config, configPath.split("."));
+      if (!_.isObject(section))
+        continue;
+      for (const name of Object.keys(section)) {
+        if (!PLUGIN_NAME_REGEX.test(name))
+          return [`${configPath} name is not valid ${name}`];
+        // nat names its egress interface in a value and interpolates it into an iptables rule
+        // without ever resolving it through the plugin registry
+        if (configPath === "nat") {
+          const oif = section[name] && section[name].out;
+          if (oif !== undefined && !INTF_NAME_REGEX.test(oif))
+            return [`out of nat ${name} is not valid ${oif}`];
+        }
+        // a dhcp extraOptions key is a DHCP option code, and dhcp_plugin emits every entry as
+        // `dhcp-option=tag:<iface>,<key>,<value>`. dnsmasq reads an unrecognised leading word as a
+        // tag, so a non-numeric key produces a line it still accepts - and one named `notes` or
+        // `ssid` would reach it carrying the control character exemption those names hold in
+        // util.findControlChar, turning a line break in the value into a directive of its own.
+        // The app already restricts the code to 0-255 in its own editor, so this rejects nothing
+        // it can produce.
+        if (configPath === "dhcp") {
+          const extraOptions = section[name] && section[name].extraOptions;
+          if (_.isObject(extraOptions)) {
+            for (const code of Object.keys(extraOptions)) {
+              // digits only as well as in range: the key is interpolated into the conf line, and
+              // toBoundedInt on its own would accept the surrounding whitespace it trims
+              if (!/^\d+$/.test(code) || util.toBoundedInt(code, 0, 255) === null)
+                return [`extraOptions of dhcp ${name} is not a dhcp option code ${code}`];
+            }
+          }
+        }
+      }
+    }
     const ifaceIp4PrefixMap = {};
     const wanIntfs = [];
     for (const ifaceType in config.interface) {
       const ifaces = config.interface[ifaceType];
       for (const name in ifaces) {
+        // interface names are interpolated into shell commands all over the plugins, reject
+        // anything that could not be a real kernel interface name in the first place
+        if (!INTF_NAME_REGEX.test(name))
+          return [`interface name is not valid ${name}`];
         const iface = ifaces[name];
+        // vlan/bond/pppoe name their lower interface here and it is interpolated into ip commands
+        // before the plugin looks it up, so hold references to the same rules as the keys
+        const lowerIntfs = _.isArray(iface.intf) ? iface.intf : (_.isString(iface.intf) ? [iface.intf] : []);
+        for (const lowerIntf of lowerIntfs) {
+          if (!INTF_NAME_REGEX.test(lowerIntf))
+            return [`intf of ${name} is not valid ${lowerIntf}`];
+        }
         const meta = iface.meta || {};
         if (!meta.uuid)
           meta.uuid = uuid.v4();
+        // reject a malformed caller supplied uuid rather than regenerating it silently
+        else if (!util.isValidUUID(meta.uuid))
+          return [`meta.uuid of ${name} is not valid ${meta.uuid}`];
         iface.meta = meta;
         const wanType = meta.type;
         if (wanType === "wan")
@@ -748,11 +967,15 @@ class NetworkConfigManager {
     }
     const fwapcExecPath = r.getFwapcExecPath();
     const tempFile = `/dev/shm/fr_orig_config_${util.generateUUID()}.json`;
-    await fsp.writeFile(tempFile, JSON.stringify(config));
-    // turn off log output on stdout to avoid inteference with JSON parsing
-    const response = await exec(`FW_LOG=OFF ${fwapcExecPath} ciap ${tempFile}`);
-    const data = JSON.parse(response.stdout);
-    await fsp.unlink(tempFile).catch((err) => {});
+    let data;
+    try {
+      await fsp.writeFile(tempFile, JSON.stringify(config));
+      // turn off log output on stdout to avoid inteference with JSON parsing
+      const response = await execFile(fwapcExecPath, ["ciap", tempFile], {env: Object.assign({}, process.env, {FW_LOG: "OFF"})});
+      data = JSON.parse(response.stdout);
+    } finally {
+      await fsp.unlink(tempFile).catch((err) => {});
+    }
     log.debug(`Converted effective config`, data);
     return data;
   }
@@ -786,7 +1009,7 @@ class NetworkConfigManager {
     if (this.bgsaveTask)
       clearTimeout(this.bgsaveTask);
     this.bgsaveTask = setTimeout(() => {
-      rclient.bgsaveAsync().then(() => exec("sync")).catch((err) => {
+      rclient.bgsaveAsync().then(() => execFile("sync", [])).catch((err) => {
         log.error("Redis background save returns error", err.message);
       });
     }, 3000);

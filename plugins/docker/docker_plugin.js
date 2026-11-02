@@ -16,7 +16,7 @@
 'use strict';
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter.js');
 const event = require('../../core/event.js');
@@ -29,9 +29,9 @@ const _ = require('lodash');
 
 class DockerPlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/docker`);
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/docker_compose`)
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_docker_compose@.service /etc/systemd/system/`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/docker`]);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/docker_compose`])
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_docker_compose@.service`, "/etc/systemd/system/"]);
   }
 
   _getConvertedComposeFilePath() {
@@ -43,7 +43,7 @@ class DockerPlugin extends Plugin {
   }
 
   async flush() {
-    await exec(`sudo systemctl stop firerouter_docker_compose@${this.name}`).catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", `firerouter_docker_compose@${this.name}`]).catch((err) => {});
   }
 
   async _fetchConfigAndFiles() {
@@ -52,9 +52,9 @@ class DockerPlugin extends Plugin {
   }
 
   async _testAndStartDocker() {
-    const active = await exec(`sudo systemctl -q is-active docker`).then(() => true).catch((err) => false);
+    const active = await execFile("sudo", ["systemctl", "-q", "is-active", "docker"]).then(() => true).catch((err) => false);
     if (!active)
-      await exec(`sudo systemctl start docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "start", "docker"]).catch((err) => {});
   }
 
   async apply() {
@@ -102,16 +102,16 @@ class DockerPlugin extends Plugin {
         }
       }
     }
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/docker_compose/${this.name}`);
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/docker_compose/${this.name}`]);
     await fsp.writeFile(this._getConvertedComposeFilePath(), YAML.stringify(composeConfig), {encoding: 'utf8'}).catch((err) => {
       this.log.error(`Failed to write converted docker compose file for ${this.name}, ${this._getConvertedComposeFilePath()}`, err.message);
     });
     if (this.networkConfig.enabled)
-      await exec(`sudo systemctl start firerouter_docker_compose@${this.name}`).catch((err) => {
+      await execFile("sudo", ["systemctl", "start", `firerouter_docker_compose@${this.name}`]).catch((err) => {
         this.log.error(`Failed to start firerouter_docker_compose@${this.name}`, err.message);
       });
     else
-      await exec(`sudo systemctl stop firerouter_docker_compose@${this.name}`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", `firerouter_docker_compose@${this.name}`]).catch((err) => {});
   }
 }
 
