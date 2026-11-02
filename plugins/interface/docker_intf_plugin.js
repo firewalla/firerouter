@@ -1,4 +1,4 @@
-/*    Copyright 2021 Firewalla Inc
+/*    Copyright 2021-2026 Firewalla Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the GNU Affero General Public License, version 3,
@@ -17,36 +17,45 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const _ = require('lodash');
 const {Address4, Address6} = require('ip-address');
 
 class DockerInterfacePlugin extends InterfaceBasePlugin {
 
+  /*
+   * Docker bridge interfaces are virtual interfaces managed by Docker.
+   * FireRouter must not attempt physical-interface hardware-address
+   * management on them.
+   */
+  hasHardwareAddress() {
+    return false;
+  }
+
   static async preparePlugin() {
     const hasContainer = await exec(`sudo ls /var/lib/docker/containers -1 | wc -l`).then((result) => result.stdout.trim() !== "0").catch((err) => false);
     if (hasContainer)
-      await exec(`sudo systemctl start docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "start", "docker"]).catch((err) => {});
     else
-      await exec(`sudo systemctl stop docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "stop", "docker"]).catch((err) => {});
   }
 
   async flush() {
     await super.flush();
     await this._testAndStartDocker();
-    await exec(`sudo docker network rm ${this.name}`).catch((err) => {
+    await execFile("sudo", ["docker", "network", "rm", this.name]).catch((err) => {
       this.log.error(`Failed to remove docker network ${this.name}: ${err.message}`);
     });
   }
 
   async _testAndStartDocker() {
-    const active = await exec(`sudo systemctl -q is-active docker`).then(() => true).catch((err) => false);
+    const active = await execFile("sudo", ["systemctl", "-q", "is-active", "docker"]).then(() => true).catch((err) => false);
     if (!active)
-      await exec(`sudo systemctl start docker`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "start", "docker"]).catch((err) => {});
   }
 
   async _checkNetworkExists() {
-    const result = await exec(`sudo docker network ls -f name=${this.name} -q`).then((result) => result.stdout.trim()).catch((err) => "");
+    const result = await execFile("sudo", ["docker", "network", "ls", "-f", `name=${this.name}`, "-q"]).then((result) => result.stdout.trim()).catch((err) => "");
     return result !== "";
   }
 
@@ -62,12 +71,23 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
       return true;
     }
 
-    const driver = this.networkConfig.driver || "bridge";
+    // driver is interpolated into the docker command below, docker's own driver names are plain words
+    const configDriver = this.networkConfig.driver;
+    if (configDriver && !/^[A-Za-z0-9._-]+$/.test(configDriver))
+      this.fatal(`Invalid docker network driver for ${this.name} ${configDriver}`);
+    const driver = configDriver || "bridge";
     const intfName = this.name;
     const subnets = [];
     const opts = this.networkConfig.options || [];
     // make opts immutable
     const optsCopy = JSON.parse(JSON.stringify(opts));
+    // these are docker cli flags and are joined into the command below, so a leading '-' is
+    // expected but nothing a shell would reparse is. checked here, before the entries the code
+    // appends itself
+    for (const opt of optsCopy) {
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/-]+$/.test(opt))
+        this.fatal(`Invalid docker network option for ${this.name} ${opt}`);
+    }
     optsCopy.push(`--driver=${driver}`);
     let ip4s = this.networkConfig.ipv4s || [];
     if (this.networkConfig.ipv4)
@@ -101,12 +121,20 @@ class DockerInterfacePlugin extends InterfaceBasePlugin {
     const driverOpts = this.networkConfig.driverOptions || [];
     // make driverOpts immutable
     const driverOptsCopy = JSON.parse(JSON.stringify(driverOpts));
+    // each option is interpolated into the docker command below, drop anything a shell would
+    // reparse. quotes are excluded too: an unmatched one changes how the rest of the command is
+    // parsed, and docker's own key=value options never need them
+    for (const opt of driverOptsCopy) {
+      if (!_.isString(opt) || !/^[A-Za-z0-9._:=/-]+$/.test(opt))
+        this.fatal(`Invalid docker driver option for ${this.name} ${opt}`);
+    }
 
     if (driver === "bridge") {
-      driverOptsCopy.push(`"com.docker.network.bridge.name"="${intfName}"`);
+      // no quotes around the key/value: the shell used to strip them, execFile passes argv verbatim
+      driverOptsCopy.push(`com.docker.network.bridge.name=${intfName}`);
     }
-    const args = optsCopy.concat(driverOptsCopy.map(opt => `-o ${opt}`));
-    await exec(`sudo docker network create ${args.join(" ")} ${intfName}`).catch((err) => {
+    const args = optsCopy.concat(...driverOptsCopy.map(opt => ["-o", opt]));
+    await execFile("sudo", ["docker", "network", "create"].concat(args, [intfName])).catch((err) => {
       this.fatal(`Failed to create docker network ${this.name}`, err.message);
     });
     return true;

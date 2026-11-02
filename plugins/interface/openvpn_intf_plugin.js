@@ -17,7 +17,7 @@
 
 const InterfaceBasePlugin = require('./intf_base_plugin.js');
 
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const fs = require('fs');
 const Promise = require('bluebird');
 const pl = require('../plugin_loader.js');
@@ -44,7 +44,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async createInterface() {
     // stub implmentation
-    const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
+    const up = await execFile("ip", ["link", "show", "dev", this.name]).then(() => true).catch(() => false);
     // a tricky to change enabled status of networkConfig in memory, other plugins that are dependent on this plugin can read this change
     this.networkConfig.enabled = up;
     return true;
@@ -56,7 +56,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async changeIpv4RoutingTables() {
     if (this.networkConfig.type === "server") {
-      const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
+      const up = await execFile("ip", ["link", "show", "dev", this.name]).then(() => true).catch(() => false);
       if (up) {
         const subnet = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.subnet`, {encoding: "utf8"})
           .then(content => content.trim())
@@ -86,7 +86,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
 
   async changeIpv6RoutingTables() {
     if (this.networkConfig.type === "server") {
-      const up = await exec(`ip -6 link show dev ${this.name}`).then(() => true).catch(() => false);
+      const up = await execFile("ip", ["-6", "link", "show", "dev", this.name]).then(() => true).catch(() => false);
       if (up) {
         const subnet = await fs.readFileAsync(`/etc/openvpn/ovpn_server/${this.networkConfig.instance || "server"}.subnet6`, {encoding: "utf8"})
           .then(content => content.trim())
@@ -191,7 +191,7 @@ class OpenVPNInterfacePlugin extends InterfaceBasePlugin {
   async state() {
     // stub implementation
     const state = await super.state();
-    const up = await exec(`ip link show dev ${this.name}`).then(() => true).catch(() => false);
+    const up = await execFile("ip", ["link", "show", "dev", this.name]).then(() => true).catch(() => false);
     if (up) {
       if (this.networkConfig.type === "server") {
         const ip4s = await this.getIPv4Addresses();

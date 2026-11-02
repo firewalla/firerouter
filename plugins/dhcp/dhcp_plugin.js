@@ -20,7 +20,7 @@ const Plugin = require('../plugin.js');
 const dhcpServiceFileTemplate = __dirname + "/firerouter_dhcp.template.service";
 const dhcpScriptTemplate = __dirname + "/dhcp.template.sh";
 
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
@@ -45,10 +45,10 @@ class DHCPPlugin extends Plugin {
   }
 
   static async createDirectories() {
-    await exec(`mkdir -p ${dhcpConfDir}`);
-    await exec(`mkdir -p ${dhcpHostsDir}`);
-    await exec(`mkdir -p ${dhcpRuntimeDir}`);
-    await exec(`mkdir -p ${r.getTempFolder()}`)
+    await execFile("mkdir", ["-p", dhcpConfDir]);
+    await execFile("mkdir", ["-p", dhcpHostsDir]);
+    await execFile("mkdir", ["-p", dhcpRuntimeDir]);
+    await execFile("mkdir", ["-p", r.getTempFolder()])
   }
 
   static async installSystemService() {
@@ -57,7 +57,7 @@ class DHCPPlugin extends Plugin {
     content = content.replace("%DHCP_DIRECTORY%", r.getTempFolder());
     const targetFile = r.getTempFolder() + "/firerouter_dhcp.service";
     await fs.writeFileAsync(targetFile, content);
-    await exec(`sudo cp ${targetFile} /etc/systemd/system`);
+    await execFile("sudo", ["cp", targetFile, "/etc/systemd/system"]);
   }
 
   static async installDHCPScript() {

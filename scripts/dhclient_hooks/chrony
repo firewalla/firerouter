@@ -1,0 +1,46 @@
+# Feed NTP servers announced by the DHCP server to chronyd, which picks them up through the
+# "sourcedir /run/chrony-dhcp" directive in chrony.conf. Servers are kept per interface so that
+# revoking one interface leaves the ones learnt from the others in place.
+#
+# To revoke interfaces whose dhclient was already killed - dhclient does not run the exit hooks on
+# SIGTERM - FireRouter drops their files itself and then sources this with no interface in the
+# environment, which defines the functions below without doing anything, to call ntp_dhcp_reload on
+# its own. Every hook here has to offer that function under that name. Doing it that way rather
+# than sourcing this once per interface keeps it to a single reload no matter how many are revoked.
+#
+# This file is sourced, not executed - never call exit here, it would abort dhclient-script.
+
+CHRONY_SOURCEDIR=/run/chrony-dhcp
+SERVERFILE=$CHRONY_SOURCEDIR/$interface.sources
+
+ntp_dhcp_reload() {
+    /usr/bin/chronyc reload sources > /dev/null 2>&1 || :
+}
+
+chrony_config() {
+    rm -f "$SERVERFILE"
+    mkdir -p "$CHRONY_SOURCEDIR"
+    for server in $new_ntp_servers; do
+        echo "server $server iburst" >> "$SERVERFILE"
+    done
+    ntp_dhcp_reload
+}
+
+chrony_restore() {
+    if [ -f "$SERVERFILE" ]; then
+        rm -f "$SERVERFILE"
+        ntp_dhcp_reload
+    fi
+}
+
+# nothing to attribute the servers to if we were not told the interface
+if [ -n "$interface" ]; then
+    case $reason in
+        BOUND|RENEW|REBIND|REBOOT)
+            chrony_config
+            ;;
+        EXPIRE|FAIL|RELEASE|STOP)
+            chrony_restore
+            ;;
+    esac
+fi

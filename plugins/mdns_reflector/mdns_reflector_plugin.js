@@ -14,7 +14,7 @@
  */
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { execFile } = require('child-process-promise');
 const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter.js');
 const event = require('../../core/event.js');
@@ -26,13 +26,13 @@ let _reloadTask = null;
 class MDNSReflectorPlugin extends Plugin {
 
   static async preparePlugin() {
-    await exec(`mkdir -p ${r.getUserConfigFolder()}/mdns_reflector`);
-    await exec(`sudo systemctl disable avahi-daemon`).catch((err) => {});
+    await execFile("mkdir", ["-p", `${r.getUserConfigFolder()}/mdns_reflector`]);
+    await execFile("sudo", ["systemctl", "disable", "avahi-daemon"]).catch((err) => {});
     // redirect avahi-daemon log to specific log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/rsyslog.d/11-avahi-daemon.conf /etc/rsyslog.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/rsyslog.d/11-avahi-daemon.conf`, "/etc/rsyslog.d/"]);
     pl.scheduleRestartRsyslog();
     // copy logrotate config for avahi-daemon log file
-    await exec(`sudo cp -f ${r.getFireRouterHome()}/scripts/logrotate.d/avahi-daemon /etc/logrotate.d/`);
+    await execFile("sudo", ["cp", "-f", `${r.getFireRouterHome()}/scripts/logrotate.d/avahi-daemon`, "/etc/logrotate.d/"]);
   }
 
   async flush() {
@@ -46,7 +46,7 @@ class MDNSReflectorPlugin extends Plugin {
     if (_reloadTask)
       clearTimeout(_reloadTask);
     _reloadTask = setTimeout(async () => {
-      await exec(`${__dirname}/reload_mdns_reflector.sh`).catch((err) => {
+      await execFile(`${__dirname}/reload_mdns_reflector.sh`, []).catch((err) => {
         this.log.error(`Failed to reload mdns reflector for ${this.name}`, err.message);
       });
     }, 3000);

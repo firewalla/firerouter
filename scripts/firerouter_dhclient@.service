@@ -4,6 +4,9 @@ After=network.target
 
 [Service]
 Restart=always
-ExecStart=/sbin/dhclient -1 -cf "/home/pi/.router/config/dhclient/%i.conf" -pf "/run/dhclient.%i.pid" -lf "/var/lib/dhcp/dhclient.%i.leases" %i -e rt_tables="main %i_local %i_default" -e default_rt_tables="main %i_default"
+# written together with %i.conf, absent for interfaces configured before this existed, in which
+# case FR_ALLOW_NTP expands to an empty string and dhclient-script keeps NTP via DHCP off
+EnvironmentFile=-/home/pi/.router/config/dhclient/%i.env
+ExecStart=/sbin/dhclient -1 -cf "/home/pi/.router/config/dhclient/%i.conf" -pf "/run/dhclient.%i.pid" -lf "/var/lib/dhcp/dhclient.%i.leases" %i -e rt_tables="main %i_local %i_default" -e default_rt_tables="main %i_default" -e fr_allow_ntp="${FR_ALLOW_NTP}"
 RemainAfterExit=true
 RestartSec=3
