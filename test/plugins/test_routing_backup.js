@@ -309,12 +309,25 @@ describe('Test global routing plugin', function() {
       expect(stub.calls).to.include('sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference 3');
       expect(stub.calls).to.include('sudo ip -4 route add unicast 10.0.3.0/24 dev wlan0 table global_local preference 3');
       // no DNS host route and nothing IPv6 through the standby backup
-      expect(stub.matching('10.0.3.53')).to.be.empty;
-      expect(stub.matching('2001:db8:3:')).to.be.empty;
+      expect(stub.matching('add unicast 10.0.3.53')).to.be.empty;
+      expect(stub.calls.filter(c => c.includes(' add ') && c.includes('2001:db8:3:'))).to.be.empty;
       // the backup is installed only once the multipath route is in place
       const multipath = at('route add default table main metric 1 nexthop');
       expect(multipath).to.be.above(-1);
       expect(at('dev wlan0')).to.be.above(multipath);
+    });
+
+    it('removes DNS routes a standby backup kept in main across a restart, with nothing cached', async() => {
+      // a fresh plugin has an empty cache, the routes of the backup that was active before the restart are only in the kernel
+      const {plugin} = setup(LB_BACKUP, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.wlan0).to.include({active: false});
+      // only the backup's own DNS routes are removed through it
+      expect(stub.calls.filter(c => c.includes(' del ') && c.includes('dev wlan0'))).to.have.members([
+        'sudo ip -4 route del unicast 10.0.3.53 via 10.0.3.1 dev wlan0 table main',
+        'sudo ip -6 route del unicast 2001:db8:3::53 via 2001:db8:3::1 dev wlan0 table main'
+      ]);
+      expect(stub.matching('add unicast 10.0.3.53')).to.be.empty;
     });
 
     it('lets the first ready backup take over when every nextHop is down', async() => {

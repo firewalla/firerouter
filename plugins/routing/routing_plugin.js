@@ -578,13 +578,49 @@ class RoutingPlugin extends Plugin {
       status.inUse = status.active === true;
       // IPv6 and DNS host routes of a standby backup would take that traffic from the multipath route,
       // including the DNS routes it left in main as a nextHop
-      if (status.active !== true && !_.isEmpty(this._dnsRoutes[viaIntf]))
-        await this._removeDeviceDnsRouting([status.plugin], af);
+      if (status.active !== true) {
+        if (!_.isEmpty(this._dnsRoutes[viaIntf]))
+          await this._removeDeviceDnsRouting([status.plugin], af);
+        else
+          // the cache is empty after a restart, but the DNS routes of a backup that was active can survive in the kernel,
+          // e.g., a bridge WAN is not flushed at startup
+          await this._removeUncachedDnsRoutes(viaIntf, status.plugin, af);
+      }
       await this._installWanRoutes(viaIntf, status.plugin, state, this._backupWanMetric(status, carrier), af, {
         ipv6: status.active === true,
         ipv6Default: status.active === true,
         dns: status.active === true
       });
+    }
+  }
+
+  async _removeMainDnsRoutes(dnsIP, gw, viaIntf, af) {
+    let dnsRouteRemoved = false;
+    do {
+      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, routing.RT_MAIN, af).then(() => {
+        dnsRouteRemoved = true;
+      }).catch((err) => {
+        dnsRouteRemoved = false;
+      })
+    } while (dnsRouteRemoved)
+  }
+
+  async _removeUncachedDnsRoutes(viaIntf, viaIntfPlugin, af) {
+    if (!af || af == 4) {
+      const gw = await routing.getInterfaceGWIP(viaIntf);
+      const dns4 = gw ? await viaIntfPlugin.getDns4Nameservers() : null;
+      for (const dnsIP of _.isArray(dns4) ? dns4 : []) {
+        if (dnsIP !== gw)
+          await this._removeMainDnsRoutes(dnsIP, gw, viaIntf, 4);
+      }
+    }
+    if (!af || af == 6) {
+      const gw6 = await routing.getInterfaceGWIP(viaIntf, 6);
+      const dns6 = gw6 ? await viaIntfPlugin.getRoutableDns6Nameservers() : null;
+      for (const dns6IP of _.isArray(dns6) ? dns6 : []) {
+        if (dns6IP !== gw6)
+          await this._removeMainDnsRoutes(dns6IP, gw6, viaIntf, 6);
+      }
     }
   }
 
@@ -757,15 +793,8 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
-                    let dnsRouteRemoved = false;
                     // remove all dns routes via the same interface but with different metrics in main table
-                    do {
-                      await routing.removeRouteFromTable(dnsIP, gw, viaIntf, routing.RT_MAIN).then(() => {
-                        dnsRouteRemoved = true;
-                      }).catch((err) => {
-                        dnsRouteRemoved = false;
-                      })
-                    } while (dnsRouteRemoved)
+                    await this._removeMainDnsRoutes(dnsIP, gw, viaIntf, 4);
                     await routing.addRouteToTable(dnsIP, gw, viaIntf, routing.RT_MAIN, metric, 4, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dnsIP} via ${gw} dev ${viaIntf}`, err.message);
                     });
@@ -797,15 +826,8 @@ class RoutingPlugin extends Plugin {
                     await routing.addRouteToTable(dns6IP, gw6, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 6, true).catch((err) => {
                       this.log.error(`Failed to add route to ${routing.RT_GLOBAL_DEFAULT} for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
                     });
-                    let dnsRouteRemoved = false;
                     // remove all ipv6 dns routes via the same interface but with different metrics in main table
-                    do {
-                      await routing.removeRouteFromTable(dns6IP, gw6, viaIntf, routing.RT_MAIN, 6).then(() => {
-                        dnsRouteRemoved = true;
-                      }).catch((err) => {
-                        dnsRouteRemoved = false;
-                      })
-                    } while (dnsRouteRemoved)
+                    await this._removeMainDnsRoutes(dns6IP, gw6, viaIntf, 6);
                     await routing.addRouteToTable(dns6IP, gw6, viaIntf, routing.RT_MAIN, metric, 6, true).catch((err) => {
                       this.log.error(`Failed to add route to main for dns ${dns6IP} via ${gw6} dev ${viaIntf}`, err.message);
                     });
