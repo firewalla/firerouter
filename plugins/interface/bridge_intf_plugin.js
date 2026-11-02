@@ -21,7 +21,12 @@ const { spawn } = require('child_process');
 const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
+const util = require('../../util/util.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+
+const SEED_INTF = 'eth0';
+
+const mstpctl = (...args) => execFile("sudo", [`${platform.getBinaryPath()}/mstpctl`, ...args]);
 
 class BridgeInterfacePlugin extends InterfaceBasePlugin {
 
@@ -92,13 +97,21 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
         this.log.warn(`Failed to start mstpd service`, err.message);
       });
       if (this.networkConfig.stp !== false) {
-        // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
-        // instead of transitioning to stp_state=2 (BR_USER_STP).
-        await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
-        // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
-        // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
-        await execFile("sudo", ["brctl", "stp", this.name, "on"]).catch((err) => {
-          this.log.error(`Failed to enable STP on ${this.name}`, err.message);
+        // toggling on a running bridge makes mstpd recreate it with its ports present, which resets the
+        // tree state and sends BPDUs at the default priority
+        if (!await this.isStpRunning()) {
+          // a bridge left at stp_state=1 (kernel STP) by a previous firerouter version would silently stay at 1 
+          // instead of transitioning to stp_state=2 (BR_USER_STP).
+          await execFile("sudo", ["brctl", "stp", this.name, "off"]).catch((err) => {});
+          // brctl stp on causes the kernel to invoke /sbin/bridge-stp, which calls mstpctl addbridge
+          // and returns exit 0, so the kernel automatically sets stp_state=2 (BR_USER_STP).
+          await execFile("sudo", ["brctl", "stp", this.name, "on"]).catch((err) => {
+            this.log.error(`Failed to enable STP on ${this.name}`, err.message);
+          });
+        }
+        // priority 0 is the only one no other bridge can beat on priority alone, so the box stays root
+        await mstpctl("settreeprio", this.name, "0", "0").catch((err) => {
+          this.log.warn(`Failed to set STP priority on ${this.name}`, err.message);
         });
         if (!this._stateSync)
           this._stateSync = new BridgePortStateSync(this.name, this.log);
@@ -151,6 +164,14 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  // true only if the kernel hands the bridge to mstpd (stp_state=2) and mstpd has it enabled; any failed read is false
+  async isStpRunning() {
+    if (await this._getSysFSClassNetValueOf(this.name, "bridge/stp_state") !== "2")
+      return false;
+    const result = await mstpctl("showbridge", this.name, "enabled").catch(() => null);
+    return result !== null && result.stdout.trim() === "yes";
+  }
+
   getDefaultMTU() {
     return 1500;
   }
@@ -168,6 +189,35 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     return true;
   }
 
+  async resetHardwareAddress() {
+    const members = await fsp.readdir(`/sys/class/net/${this.name}/brif`).catch(() => null);
+    if (members === null)
+      return;
+
+    if (members.length > 0) {
+      const memberMacs = [];
+      for (const member of members) {
+        const mac = await fsp.readFile(`/sys/class/net/${member}/address`, 'utf8')
+          .then(s => s.trim().toUpperCase()).catch(() => null);
+        if (mac)
+          memberMacs.push(mac);
+      }
+      if (memberMacs.length === 0)
+        return;
+      memberMacs.sort();
+      await platform.setHardwareAddress(this.name, memberMacs[0]);
+      return;
+    }
+
+    const seedMac = await platform.getPermanentMac(SEED_INTF);
+    if (!seedMac) {
+      this.log.warn(`Failed to get permanent MAC of ${SEED_INTF}, cannot derive a deterministic MAC for empty bridge ${this.name}`);
+      return;
+    }
+    const mac = util.generateDeterministicMacAddress(`${seedMac}:${this.name}`);
+    await platform.setHardwareAddress(this.name, mac);
+  }
+
   async state() {
     const s = await super.state();
     s.stpPorts = await this.getStpPortStatus();
@@ -181,8 +231,7 @@ class BridgeInterfacePlugin extends InterfaceBasePlugin {
     const isVlanBridge = this.networkConfig.intf.every(i => i.includes('.'));
     if (this.networkConfig.intf.length <= 1 || isVlanBridge || this.networkConfig.stp === false)
       return null;
-    const mstpctl = `${platform.getBinaryPath()}/mstpctl`;
-    const result = await execFile("sudo", [mstpctl, "showportdetail", this.name]).catch((err) => {
+    const result = await mstpctl("showportdetail", this.name).catch((err) => {
       this.log.warn(`Failed to get mstp port status on ${this.name}`, err.message);
       return null;
     });

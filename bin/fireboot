@@ -13,8 +13,12 @@ source ${FIREROUTER_HOME}/platform/platform.sh
 if [[ $NEED_FIRERESET == "false" && -e /etc/systemd/system/firereset.service ]]; then
   echo "Firereset is not needed on this platform, removing it..."
   sudo systemctl disable --now firereset &>/dev/null
-  sudo rm -f /etc/systemd/system/firereset.service /home/pi/.forever/firereset.log
+  sudo rm -f /etc/systemd/system/firereset.service
   sudo systemctl daemon-reload
+fi
+
+if [[ $NEED_FIRERESET == "false" ]]; then
+  sudo rm -f /home/pi/.forever/firereset.log /home/pi/.forever/firereset_last.log
 fi
 
 NODE_MODULES_PATH=$(get_node_modules_dir)

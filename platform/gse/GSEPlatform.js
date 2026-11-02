@@ -18,6 +18,7 @@ const Platform = require('../Platform.js');
 const firestatusBaseURL = "http://127.0.0.1:9966";
 const { exec, execFile } = require('child-process-promise');
 const log = require('../../util/logger.js')(__filename);
+const r = require('../../util/firerouter.js');
 const util = require('../../util/util.js');
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const WifiSD = require('../WifiSD.js')
@@ -29,6 +30,9 @@ const IF_WLAN0 = "wlan0";
 const IF_WLAN1 = "wlan1";
 let errCounter = 0;
 const maxErrCounter = 100; // do not try to set mac address again if too many errors.
+const R8125 = "r8125";
+// touch this file in the user config folder to keep the r8125 driver shipped in the OS image
+const R8125_OVERRIDE_DISABLE_FLAG = "disable_r8125_override";
 
 class GSEPlatform extends Platform {
   getName() {
@@ -203,6 +207,51 @@ class GSEPlatform extends Platform {
     if(ifplug) {
       await ifplug.startMonitoringInterface(iface);
     }
+  }
+
+  // Replace the r8125 driver from the OS image with the one shipped in firerouter (TX fixes
+  // from fw-gse-bsp#18 and #20). Rootfs is reset on every boot, so this reloads once per boot,
+  // before any interface is configured.
+  async overrideEthernetKernelModule() {
+    const flagPath = `${r.getUserConfigFolder()}/${R8125_OVERRIDE_DISABLE_FLAG}`;
+    if (await fsp.access(flagPath, fs.constants.F_OK).then(() => true).catch(() => false)) {
+      log.info(`Skip overriding ${R8125}, ${flagPath} exists`);
+      return;
+    }
+    const koPath = await this.getKoPath(R8125);
+    if (!await fsp.access(koPath, fs.constants.F_OK).then(() => true).catch(() => false))
+      return;
+
+    // insmod does not reliably reject a module built for another kernel (a 5.10.110 r8125 loads
+    // on 5.10.160 with modversions, then oopses on first xmit), so require the same vermagic
+    // as the r8125 that came with the running kernel
+    const sysKoPath = await execFile("modinfo", ["-n", R8125]).then((result) => result.stdout.trim()).catch(() => "");
+    const koVermagic = await this.getModuleInfoField(koPath, "vermagic");
+    const sysVermagic = sysKoPath ? await this.getModuleInfoField(sysKoPath, "vermagic") : "";
+    if (!koVermagic || koVermagic !== sysVermagic) {
+      log.error(`Skip overriding ${R8125}, vermagic "${koVermagic}" of ${koPath} does not match "${sysVermagic}" of ${sysKoPath || "system module"}`);
+      return;
+    }
+
+    const koSrcVersion = await this.getModuleSrcVersion(koPath);
+    const loadedSrcVersion = await this.getLoadedModuleSrcVersion(R8125);
+    if (koSrcVersion && koSrcVersion === loadedSrcVersion)
+      return;
+
+    log.info(`Overriding ${R8125} with ${koPath}, srcversion ${loadedSrcVersion || "<not loaded>"} -> ${koSrcVersion}`);
+    if (await this.isKernelModuleLoaded(R8125) && !await this.rmmodKernelModule(R8125))
+      return;
+    const loaded = await execFile("sudo", ["insmod", koPath]).then(() => true).catch((err) => {
+      log.error(`Failed to insmod ${koPath}`, err.message);
+      return false;
+    });
+    if (!loaded) {
+      // never leave the box without an ethernet driver
+      log.warn(`Falling back to ${R8125} from OS image`);
+      await this.modprobeKernelModule(R8125);
+      return;
+    }
+    log.info(`${R8125} overridden, srcversion ${await this.getLoadedModuleSrcVersion(R8125)}`);
   }
 
   async overrideWLANKernelModule() {

@@ -4,7 +4,8 @@
   "description": "",
   "main": "run.js",
   "scripts": {
-    "test": "NODE_ENV=test npx mocha --exit --recursive"
+    "test": "NODE_ENV=test npx mocha --exit --recursive",
+    "coverage": "NODE_ENV=test npx nyc mocha --exit --recursive"
   },
   "repository": {
     "type": "git",
@@ -18,7 +19,8 @@
   "homepage": "https://github.com/firewalla/firerouter#readme",
   "devDependencies": {
     "chai": "^4.3.10",
-    "mocha": "^9.2.2"
+    "mocha": "^9.2.2",
+    "nyc": "^15.1.0"
   },
   "dependencies": {
     "async-lock": "^1.2.2",

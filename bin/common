@@ -98,8 +98,9 @@ test_curl_http_code() {
 }
 
 test_any_wan_carrier_connected() {
-  # state.carrier is read from /sys/class/net/<intf>/carrier, "1" means link is up
-  count=$(curl -s -m10 'http://localhost:8837/v1/config/wans' | jq '[.[]? | objects | select(.state.carrier == "1")] | length')
+  # state.carrier is the string "1" from /sys/class/net/<intf>/carrier on wired interfaces, but the number 1
+  # on a wlan WAN (wlan_intf_plugin.js state()), and jq does not match 1 == "1", so compare as strings
+  count=$(curl -s -m10 'http://localhost:8837/v1/config/wans' | jq '[.[]? | objects | select((.state.carrier | tostring) == "1")] | length')
   # count is empty if curl timed out or the API returned an error, do not pass it to test unquoted
   [[ "$count" =~ ^[0-9]+$ ]] || return 1
   test "$count" -gt 0 && return 0
@@ -192,6 +193,7 @@ update_timezone() {
   FW_ACTUAL_TIMEZONE=$(cat /etc/timezone)
   if [[ "x$FW_TIMEZONE" != "x" && "x$FW_TIMEZONE" != "x$FW_ACTUAL_TIMEZONE" ]]; then
     sudo timedatectl set-timezone $FW_TIMEZONE
+    echo "$FW_TIMEZONE" | sudo tee /etc/timezone > /dev/null
     sudo systemctl restart cron.service # this is to ensure cron jobs are set to the right timezone
     sudo systemctl restart rsyslog
   fi

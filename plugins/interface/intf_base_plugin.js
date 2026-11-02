@@ -67,6 +67,15 @@ const PING_RESULT_SUCCESS = 'success';
 const PING_RESULT_FAILED = 'failed';
 const PING_RESULT_ALL_FAILED = 'all_failed';
 
+// Longest a withdrawn prefix is kept as a deprecated address. A host will not honour more than
+// 2 hours anyway (RFC 4862 5.5.3(e)), which is also dnsmasq's own ceiling.
+const MAX_DEPRECATED_PREFIX_LIFETIME = 7200;
+// Floor used when the upstream lease is already fully expired (e.g. a WAN outage outlasted it).
+// LAN clients cache their own, usually much longer, preferred lifetime and have no other way to
+// learn the prefix is gone, so it's still worth one short-lived withdrawal advertisement rather
+// than staying silent.
+const MIN_DEPRECATED_PREFIX_LIFETIME = 120;
+
 const IP6_NUM_DISCARD_DEPRECATED = 100;
 const IP6_NUM_MAX = 1000;
 
@@ -96,12 +105,14 @@ function createAbortController() {
 }
 
 const ndppdConfDir = `${r.getUserConfigFolder()}/ndppd`;
+const mcproxyConfDir = `${r.getUserConfigFolder()}/mcproxy`;
 const dhcpcd6ConfDir = `${r.getUserConfigFolder()}/dhcpcd6`;
 
 class InterfaceBasePlugin extends Plugin {
 
   static async preparePlugin() {
     await fs.mkdirAsync(`${ndppdConfDir}`, { recursive: true }).catch((err) => { });
+    await fs.mkdirAsync(`${mcproxyConfDir}`, { recursive: true }).catch((err) => { });
     await fs.mkdirAsync(`${dhcpcd6ConfDir}`, { recursive: true }).catch((err) => { });
   }
 
@@ -120,6 +131,15 @@ class InterfaceBasePlugin extends Plugin {
       }
     }
     if (!af || af == 6) {
+      // Snapshot before the flush below wipes it, see _deprecateObsoleteIPv6Prefixes: a prefix that
+      // does not come back is a renumbering, and already deprecated ones have to be carried over.
+      if (this.isLAN()) {
+        this._previousIP6s = await this._getGlobalIPv6Addresses(false);
+        const snapshotTs = Date.now() / 1000;
+        this._previousDeprecatedIP6s = (await this._getGlobalIPv6Addresses(true)).map(({addr, validLft}) => ({
+          addr, expiresAt: _.isNumber(validLft) ? snapshotTs + validLft : null
+        }));
+      }
       // make sure to stop dhcpv6 client no matter if dhcp6 is enabled
       if (this.networkConfig.dhcp6) {
         await execFile("sudo", ["systemctl", "stop", `firerouter_dhcpcd6@${this.name}`]).catch((err) => {});
@@ -161,7 +181,9 @@ class InterfaceBasePlugin extends Plugin {
 
       // remove cached router-advertisement ipv6 address file
       if (this.networkConfig.dhcp6) {
-        await exec(`sudo rm /dev/shm/dhcpcd.*.${this.name}`).catch((err) => {});
+        // *_deprecated is spared: it states how long an already withdrawn upstream prefix stays
+        // valid, which a reapply here does not change.
+        await exec(`sudo find /dev/shm -maxdepth 1 -name 'dhcpcd.*.${this.name}' ! -name 'dhcpcd.*_deprecated.${this.name}' -delete`).catch((err) => {});
       }
         
       if (this.isWAN() || this.isLAN()) {
@@ -231,7 +253,8 @@ class InterfaceBasePlugin extends Plugin {
             continue;
           const networkAddr = addr.startAddress();
           const cidr = `${networkAddr.correctForm()}/${addr.subnetMask}`;
-          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, null, 6).catch((err) => {});
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_WAN_ROUTABLE, 6).catch((err) => {});
+          await routing.removeRouteFromTable(cidr, null, this.name, routing.RT_LAN_ROUTABLE, 6).catch((err) => {});
         }
       }
       if (this.networkConfig.ipv6DelegateFrom) {
@@ -241,6 +264,8 @@ class InterfaceBasePlugin extends Plugin {
       if (this.networkConfig.ipv6PassthroughFrom) {
         await execFile("sudo", ["systemctl", "stop", `firerouter_ndppd@${this.name}`]).catch((err) => { });
         await fs.unlinkAsync(`${ndppdConfDir}/${this.name}.conf`).catch((err) => { });
+        await execFile("sudo", ["systemctl", "stop", `firerouter_mcproxy@${this.name}`]).catch((err) => { });
+        await fs.unlinkAsync(`${mcproxyConfDir}/${this.name}.conf`).catch((err) => { });
       }
       if (this.networkConfig.dhcp6) {
         await fs.unlinkAsync(this._getDHCPCD6ConfigPath()).catch((err) => {});
@@ -395,7 +420,8 @@ class InterfaceBasePlugin extends Plugin {
       return null;
     }
     const prefixAddr6 = new Address6(parentPrefix);
-    const subIdAddr6 = new Address6(`0000:0000:0000:${subId}::/64`);
+    const subIdHex = Number(subId).toString(16);
+    const subIdAddr6 = new Address6(`0000:0000:0000:${subIdHex}::/64`);
     const subPrefix = Address6.fromBigInteger(prefixAddr6.bigInteger().add(subIdAddr6.bigInteger()));
     return `${subPrefix.correctForm()}/64`;
   }
@@ -498,6 +524,7 @@ class InterfaceBasePlugin extends Plugin {
       });
 
     if(disabled) {
+      this._previousIP6s = null;
       return;
     }
 
@@ -507,12 +534,27 @@ class InterfaceBasePlugin extends Plugin {
       // add link local route to interface local and default routing table
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_local`, null, 6).catch((err) => {});
       await routing.addRouteToTable("fe80::/64", null, this.name, `${this.name}_default`, null, 6).catch((err) => {});
-      const pdSize = this.networkConfig.dhcp6.pdSize || null;
-      if (pdSize && pdSize > 64)
-        this.fatal(`Prefix delegation size should be no more than 64 on ${this.name}, ${pdSize}`);
+      // pdSize, numOfPDs and pdHints are all written into the dhcpcd.conf below, which is
+      // line-oriented, so a value carrying a control character would add a dhcpcd directive of its
+      // own. numOfPDs also bounds the loop that builds those lines, and "Infinity" is valid json
+      const pdSize = util.toBoundedInt(this.networkConfig.dhcp6.pdSize, 1, 64);
+      if (this.networkConfig.dhcp6.pdSize && !pdSize)
+        this.fatal(`Prefix delegation size should be an integer no more than 64 on ${this.name}, ${this.networkConfig.dhcp6.pdSize}`);
       let content = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhcpcd.conf.template`, {encoding: "utf8"});
-      const numOfPDs = this.networkConfig.dhcp6.numOfPDs || 1;
+      // numOfPDs bounds the generation loop below, so it needs a ceiling - but one that still admits
+      // every count a saved config can carry. The app caps at 8 and nothing else bounds it, so the
+      // limit here is dhcpcd's: it builds one message holding every IA and each needs at least 16
+      // bytes, so a count past a few thousand cannot fit an ordinary UDP datagram however it is
+      // framed. Refuse beyond that instead of quietly asking for one prefix in place of the saved
+      // number - an absent or unparseable value is the only case that falls back
+      const numOfPDs = util.toBoundedInt(this.networkConfig.dhcp6.numOfPDs, 1, Number.MAX_VALUE) || 1;
+      if (numOfPDs > 4096)
+        this.fatal(`Prefix delegation count should be no more than 4096 on ${this.name}, ${this.networkConfig.dhcp6.numOfPDs}`);
       const pdHints = this.networkConfig.dhcp6.pdHints || [];
+      // control characters only: pdHints has no producer in the repo, so the value shape is
+      // unverified and a stricter check (an Address6 parse) risks rejecting what the real caller sends
+      if (pdHints.some(hint => util.REGEX_CONTROL_CHARS.test(String(hint))))
+        this.fatal(`Prefix delegation hint contains a control character on ${this.name}`);
       const rapidCommitOpts = this.networkConfig.dhcp6.rapidCommit === false ? "#option rapid_commit" : "option rapid_commit";
       const ianaOpts = this.networkConfig.dhcp6.iana === false ? "" : "ia_na"; // by default ia_na will be specified unless explicitly disabled
       const pdOpts = [];
@@ -524,7 +566,11 @@ class InterfaceBasePlugin extends Plugin {
       }
       content = content.replace(/%RAPID_COMMIT_OPTS%/g, rapidCommitOpts);
       content = content.replace(/%IA_NA_OPTS%/g, ianaOpts);
-      content = content.replace(/%IA_PD_OPTS%/g, pdOpts.join('\n'));
+      // a function replacement, so the pdHint inside pdOpts is inserted literally. a string
+      // replacement would read $& $` $' in it as substitution patterns and splice parts of this
+      // template back in, newlines and all, which is how a hint with no control character in it
+      // still reaches dhcpcd as a directive of its own
+      content = content.replace(/%IA_PD_OPTS%/g, () => pdOpts.join('\n'));
       await fs.writeFileAsync(this._getDHCPCD6ConfigPath(), content);
       // customize duid type
       if (this.networkConfig.dhcp6.duidType) {
@@ -650,12 +696,26 @@ class InterfaceBasePlugin extends Plugin {
           await execFile("sudo", ["systemctl", "restart", `firerouter_ndppd@${this.name}`]).catch((err) => {
             this.log.error(`Failed to start ndppd service for ${this.name}`, err.message);
           });
+
+          // relay downstream MLD group membership to the WAN side, for gear that needs MLD snooping instead of NDP
+          const tableNum = this._mcproxyTableNumber();
+          if (tableNum !== null) {
+            await this._writeMcproxyConfigFile(fromWANPlugin.name, this.name, tableNum);
+            await execFile("sudo", ["systemctl", "restart", `firerouter_mcproxy@${this.name}`]).catch((err) => {
+              this.log.error(`Failed to start mcproxy service for ${this.name}`, err.message);
+            });
+          }
         } while(0);
       } else {
         await execFile("sudo", ["systemctl", "stop", `firerouter_ndppd@${this.name}`]).catch((err) => { });
+        await execFile("sudo", ["systemctl", "stop", `firerouter_mcproxy@${this.name}`]).catch((err) => { });
       }
       // TODO: do not support static dns nameservers for IPv6 currently
     }
+    // the new addresses are in place now, so this can tell which prefixes are really gone
+    await this._deprecateObsoleteIPv6Prefixes(this._previousIP6s, this._previousDeprecatedIP6s);
+    this._previousIP6s = null;
+    this._previousDeprecatedIP6s = null;
   }
 
   async reapplyIpv6Settings() {
@@ -670,6 +730,136 @@ class InterfaceBasePlugin extends Plugin {
         this.log.error(`Failed to reapply IPv6 settings on ${this.name}`, err.message);
       });
     });
+  }
+
+  _getIPv6PrefixCidr(ip6) {
+    const addr = new Address6(ip6);
+    if (!addr.isValid())
+      return null;
+    return `${addr.startAddress().correctForm()}/${addr.subnetMask}`;
+  }
+
+  async _getGlobalIPv6Addresses(deprecated) {
+    return exec(`ip -6 -o addr show dev ${this.name} scope global ${deprecated ? "deprecated" : "-deprecated"}`, {encoding: "utf8"})
+      .then((result) => this._parseIPv6AddrShow(result.stdout))
+      .catch((err) => {
+        this.log.debug(`Failed to list ipv6 addresses of ${this.name}`, err.message);
+        return [];
+      });
+  }
+
+  _parseIPv6AddrShow(stdout) {
+    return (stdout || "").trim().split("\n").filter(line => line.length > 0).map((line) => {
+      const validLft = line.match(/valid_lft (\d+)sec/);
+      return {addr: line.trim().split(/\s+/)[3], validLft: validLft && Number(validLft[1])};
+    }).filter(a => a.addr && a.addr.includes("/"));
+  }
+
+  async getDeprecatedIPv6Prefixes() {
+    const deprecated = await this._getGlobalIPv6Addresses(true);
+    if (_.isEmpty(deprecated))
+      return [];
+    const livePrefixes = new Set((await this._getGlobalIPv6Addresses(false)).map(a => this._getIPv6PrefixCidr(a.addr)).filter(Boolean));
+    const prefixes = [];
+    for (const {addr, validLft} of deprecated) {
+      const prefix = this._getIPv6PrefixCidr(addr);
+      // a prefix that is live again is not being renumbered away from after all
+      if (!prefix || !validLft || validLft <= 0 || livePrefixes.has(prefix) || prefixes.some(p => p.prefix === prefix))
+        continue;
+      prefixes.push({prefix, validLft});
+    }
+    return prefixes;
+  }
+
+  async _flushDeprecatedIPv6Addresses() {
+    for (const {addr} of await this._getGlobalIPv6Addresses(true)) {
+      await exec(`sudo ip -6 addr del ${addr} dev ${this.name}`).catch((err) => {
+        this.log.debug(`Failed to remove deprecated ipv6 addr ${addr} from ${this.name}`, err.message);
+      });
+    }
+  }
+
+  _selectPrefixesToDeprecate(previousIP6s, previousDeprecatedIP6s, currentPrefixes) {
+    const seen = new Set();
+    const result = [];
+    for (const {addr} of previousIP6s || []) {
+      const prefix = this._getIPv6PrefixCidr(addr);
+      if (!prefix || currentPrefixes.has(prefix) || seen.has(prefix))
+        continue;
+      seen.add(prefix);
+      result.push({addr, prefix});
+    }
+    for (const {addr, expiresAt} of previousDeprecatedIP6s || []) {
+      const prefix = this._getIPv6PrefixCidr(addr);
+      if (!prefix || currentPrefixes.has(prefix) || seen.has(prefix))
+        continue;
+      seen.add(prefix);
+      result.push({addr, prefix, expiresAt});
+    }
+    return result;
+  }
+
+  async _deprecateObsoleteIPv6Prefixes(previousIP6s, previousDeprecatedIP6s) {
+    if (!this.isLAN() || !this.isIPv6Enabled() || (_.isEmpty(previousIP6s) && _.isEmpty(previousDeprecatedIP6s)))
+      return;
+    await this._flushDeprecatedIPv6Addresses();
+    const currentPrefixes = new Set((await this._getGlobalIPv6Addresses(false)).map(a => this._getIPv6PrefixCidr(a.addr)).filter(Boolean));
+    const toDeprecate = this._selectPrefixesToDeprecate(previousIP6s, previousDeprecatedIP6s, currentPrefixes);
+
+    for (const {addr, prefix, expiresAt} of toDeprecate) {
+      let lifetime;
+      if (_.isNumber(expiresAt)) {
+        const remaining = Math.round(expiresAt - Date.now() / 1000);
+        if (remaining <= 0) {
+          this.log.info(`Previous deprecation window for ${prefix} on ${this.name} has run out, not renewing it`);
+          continue;
+        }
+        lifetime = remaining;
+      } else {
+        lifetime = this._clampDeprecationLifetime(await this._getDeprecationLifetime(prefix));
+      }
+      this.log.info(`Deprecating previous ipv6 prefix ${prefix} on ${this.name} for ${lifetime} seconds`);
+      await exec(`sudo ip -6 addr add ${addr} dev ${this.name} preferred_lft 0 valid_lft ${lifetime}`).catch((err) => {
+        this.log.warn(`Failed to deprecate ipv6 addr ${addr} on ${this.name}`, err.message);
+      });
+    }
+  }
+
+  _clampDeprecationLifetime(lifetime) {
+    return _.isNumber(lifetime) && lifetime >= MIN_DEPRECATED_PREFIX_LIFETIME ? lifetime : MIN_DEPRECATED_PREFIX_LIFETIME;
+  }
+
+  // Time left to advertise a withdrawn prefix: what's left of the upstream lease (from the
+  // firerouter_dhcpcd_record_lease hook), capped at MAX_DEPRECATED_PREFIX_LIFETIME, 0 if already
+  // gone. A static prefix has no upstream lease and gets the full ceiling.
+  async _getDeprecationLifetime(prefix) {
+    const fromIface = this.networkConfig.ipv6DelegateFrom || this.networkConfig.ipv6PassthroughFrom;
+    if (!fromIface)
+      return MAX_DEPRECATED_PREFIX_LIFETIME;
+    const path = this.networkConfig.ipv6DelegateFrom
+      ? `/dev/shm/dhcpcd.pd_deprecated.${fromIface}`
+      : `/dev/shm/dhcpcd.ra_deprecated.${fromIface}`;
+    const [content, stat] = await Promise.all([
+      fs.readFileAsync(path, {encoding: "utf8"}).catch((err) => null),
+      fs.statAsync(path).catch((err) => null)
+    ]);
+    const addr = new Address6(prefix);
+    if (!content || !addr.isValid())
+      return MAX_DEPRECATED_PREFIX_LIFETIME;
+    const elapsedSinceWrite = stat ? Math.max(0, Math.floor(Date.now() / 1000) - Math.floor(stat.mtimeMs / 1000)) : 0;
+    for (const entry of content.trim().split(",").filter(e => e.length > 0)) {
+      const [upstreamPrefix, remaining] = entry.split("@", 2);
+      const upstream = new Address6(upstreamPrefix);
+      // entries for other, or no longer relevant, prefixes are simply skipped
+      if (!upstream.isValid() || !addr.isInSubnet(upstream))
+        continue;
+      // empty is unknown, not expired - Number("") is 0, which would read as "already gone"
+      const left = remaining && remaining.length > 0 ? Number(remaining) : NaN;
+      if (!Number.isInteger(left))
+        return MAX_DEPRECATED_PREFIX_LIFETIME;
+      return Math.max(0, Math.min(left - elapsedSinceWrite, MAX_DEPRECATED_PREFIX_LIFETIME));
+    }
+    return MAX_DEPRECATED_PREFIX_LIFETIME;
   }
 
   // return e.g."2001:0db8:0000:0001"
@@ -740,6 +930,48 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`Failed to write ndppd config ${confPath}`, err.message);
     });
     this.log.debug(`Written ndppd config to ${confPath}`);
+  }
+
+  // Each bridge's mcproxy needs its own MRT6 table (a single global slot per netns), or
+  // concurrent instances conflict. Table numbers are derived from the interface name so
+  // the id is stable across restarts with no persisted state. Bridges, VLANs on a bond
+  // (bondM.N), and plain bonds (bondM) each get their own disjoint offset band so none of
+  // these shapes can ever collide: brN -> N+1 (1-999ish); bondM.N -> 2000000+M*10000+N;
+  // bondM -> M+1000000.
+  //
+  // rely on current bridge naming convention.
+  _mcproxyTableNumber() {
+    let m = this.name.match(/^br(\d+)$/);
+    if (m) {
+      return parseInt(m[1], 10) + 1;
+    }
+    m = this.name.match(/^bond(\d+)\.(\d+)$/);
+    if (m) {
+      return parseInt(m[1], 10) * 10000 + parseInt(m[2], 10) + 2000000;
+    }
+    m = this.name.match(/^bond(\d+)$/);
+    if (m) {
+      return parseInt(m[1], 10) + 1000000;
+    }
+    this.log.error(`Cannot derive an mcproxy routing table number from interface name ${this.name}`);
+    return null;
+  }
+
+  // ndppd only proxies NDP; some WAN-side gear instead relies on MLD snooping to learn an
+  // address is reachable. mcproxy acts as a real MLD querier on the LAN side so those
+  // listeners report properly, and relays that membership onto the WAN interface.
+  async _writeMcproxyConfigFile(wanInterface, lanInterface, tableNum) {
+    const confPath = `${mcproxyConfDir}/${lanInterface}.conf`;
+    const content = [
+      `protocol MLDv2;`,
+      `pinstance "${lanInterface}"(${tableNum}): "${wanInterface}" ==> "${lanInterface}";`,
+      ``
+    ].join('\n');
+
+    await fs.writeFileAsync(confPath, content).catch((err) => {
+      this.log.error(`Failed to write mcproxy config ${confPath}`, err.message);
+    });
+    this.log.debug(`Written mcproxy config to ${confPath}`);
   }
 
   // just for readability
@@ -1339,9 +1571,13 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async _getSysFSClassNetValue(key) {
-    const file = `/sys/class/net/${this.name}/${key}`;
+    return this._getSysFSClassNetValueOf(this.name, key);
+  }
+
+  async _getSysFSClassNetValueOf(intf, key) {
+    const file = `/sys/class/net/${intf}/${key}`;
     return fs.readFileAsync(file, "utf8").then(content => content.trim()).catch((err) => {
-      this.log.debug(`Failed to get ${key} of ${this.name}`, err.message);
+      this.log.debug(`Failed to get ${key} of ${intf}`, err.message);
       return null;
     });
   }
@@ -1525,13 +1761,23 @@ class InterfaceBasePlugin extends Plugin {
     // hostname came from the default while the url came from the override, curl would ignore
     // --resolve and do an ordinary lookup instead of the wan specific one
     const extraConf = this.networkConfig && this.networkConfig.extra;
+    // the hostname is a dig operand in getDNSResult below, and execFile keeps it out of a shell but
+    // does not stop dig reading a value like "-felection" as an option. both candidates are caller
+    // supplied - the connectivity API passes its httpSites through as defaultTestURL - so the
+    // fallback has to clear the same bar as the override, and there is nothing left to test if it
+    // does not
+    const usableURL = (parsed) => parsed && parsed.hostname && util.isValidDNSName(parsed.hostname)
+      && (parsed.protocol === "http:" || parsed.protocol === "https:");
     let testURL = (extraConf && extraConf.httpTestURL) || defaultTestURL;
     let u = url.parse(testURL);
-    // an override is caller supplied, fall back rather than reaching curl with an unchecked url
-    if (!u.hostname || (u.protocol !== "http:" && u.protocol !== "https:")) {
+    if (!usableURL(u)) {
       this.log.error(`invalid http test url on ${this.name}:`, testURL);
       testURL = defaultTestURL;
       u = url.parse(testURL);
+      if (!usableURL(u)) {
+        this.log.error(`invalid default http test url on ${this.name}:`, testURL);
+        return null;
+      }
     }
     const hostname = u.hostname;
     const protocol = u.protocol;
@@ -2061,6 +2307,10 @@ class InterfaceBasePlugin extends Plugin {
     return null;
   }
 
+  async getActiveIntfs() {
+    return null;
+  }
+
   async _getRtId() {
     if (!this.isWAN())
       return null;
@@ -2071,7 +2321,7 @@ class InterfaceBasePlugin extends Plugin {
   }
 
   async state() {
-    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs] = await Promise.all([
+    let [mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, rtid, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, present, subIntfs, activeIntfs] = await Promise.all([
       this._getSysFSClassNetValue("address"),
       this._getSysFSClassNetValue("mtu"),
       this._getSysFSClassNetValue("carrier"),
@@ -2092,7 +2342,8 @@ class InterfaceBasePlugin extends Plugin {
       this.getOrigDNS6Nameservers(),
       this.getPrefixDelegations(),
       this.isInterfacePresent(),
-      this.getSubIntfs()
+      this.getSubIntfs(),
+      this.getActiveIntfs()
     ]);
     const ip4 = _.isEmpty(ip4s) ? null : ip4s[0];
     let wanConnState = null;
@@ -2101,7 +2352,7 @@ class InterfaceBasePlugin extends Plugin {
       wanConnState = this.getWANConnState() || {};
       wanTestResult = this._wanStatus; // use a different name to differentiate from existing wanConnState
     }
-    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs};
+    return {mac, mtu, carrier, duplex, speed, operstate, txBytes, rxBytes, ip4, ip4s, routableSubnets, ip6, gateway, gateway6, dns, origDns, dns6, origDns6, pds, rtid, wanConnState, wanTestResult, present, subIntfs, activeIntfs};
   }
 
   onEvent(e) {

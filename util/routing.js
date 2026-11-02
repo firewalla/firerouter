@@ -115,6 +115,8 @@ async function createCustomizedRoutingTable(tableName, type = RT_TYPE_REG) {
         // the redirections and the pipeline need a shell, so flock is given bash directly instead of
         // being wrapped in one. bash is named rather than using flock's own -c, which picks $SHELL
         // and falls back to /bin/sh, where the builtin echo has no -e and would emit a literal "-e"
+        // sort | uniq collapses byte-identical lines only, so it is no protection against a duplicate
+        // id under a different name, or the same name twice with different ids
         const script = `echo -e "${id << bitOffset}\\t${tableName}" >> /etc/iproute2/rt_tables; \
         cat /etc/iproute2/rt_tables | sort | uniq > /etc/iproute2/rt_tables.new; \
         cp /etc/iproute2/rt_tables.new /etc/iproute2/rt_tables; \
