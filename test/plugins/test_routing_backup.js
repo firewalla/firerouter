@@ -157,6 +157,24 @@ describe('Test global routing plugin', function() {
     });
   });
 
+  describe('primary_standby inUse', function() {
+    it('marks only the active WAN in use when an earlier WAN has no carrier', async() => {
+      const {plugin} = setup({type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], failback: true},
+        [{name: 'eth0', ready: false, carrier: 0}, {name: 'eth1'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.eth1).to.include({active: true, inUse: true});
+      expect(plugin._wanStatus.eth0).to.include({active: false, inUse: false});
+    });
+
+    it('marks the first WAN in use when no WAN is active and none has carrier', async() => {
+      const {plugin} = setup({type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], failback: true},
+        [{name: 'eth0', ready: false, carrier: 0}, {name: 'eth1', ready: false, carrier: 0}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.eth0).to.include({active: false, inUse: true});
+      expect(plugin._wanStatus.eth1).to.include({active: false, inUse: false});
+    });
+  });
+
   describe('missing WAN interface at apply', function() {
     it('load_balance reports a lost nextHop as switched', async() => {
       const {plugin} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}]},
@@ -291,12 +309,25 @@ describe('Test global routing plugin', function() {
       expect(stub.calls).to.include('sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference 3');
       expect(stub.calls).to.include('sudo ip -4 route add unicast 10.0.3.0/24 dev wlan0 table global_local preference 3');
       // no DNS host route and nothing IPv6 through the standby backup
-      expect(stub.matching('10.0.3.53')).to.be.empty;
-      expect(stub.matching('2001:db8:3:')).to.be.empty;
+      expect(stub.matching('add unicast 10.0.3.53')).to.be.empty;
+      expect(stub.calls.filter(c => c.includes(' add ') && c.includes('2001:db8:3:'))).to.be.empty;
       // the backup is installed only once the multipath route is in place
       const multipath = at('route add default table main metric 1 nexthop');
       expect(multipath).to.be.above(-1);
       expect(at('dev wlan0')).to.be.above(multipath);
+    });
+
+    it('removes DNS routes a standby backup kept in main across a restart, with nothing cached', async() => {
+      // a fresh plugin has an empty cache, the routes of the backup that was active before the restart are only in the kernel
+      const {plugin} = setup(LB_BACKUP, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.wlan0).to.include({active: false});
+      // only the backup's own DNS routes are removed through it
+      expect(stub.calls.filter(c => c.includes(' del ') && c.includes('dev wlan0'))).to.have.members([
+        'sudo ip -4 route del unicast 10.0.3.53 via 10.0.3.1 dev wlan0 table main',
+        'sudo ip -6 route del unicast 2001:db8:3::53 via 2001:db8:3::1 dev wlan0 table main'
+      ]);
+      expect(stub.matching('add unicast 10.0.3.53')).to.be.empty;
     });
 
     it('lets the first ready backup take over when every nextHop is down', async() => {
