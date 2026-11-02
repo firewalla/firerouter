@@ -663,6 +663,7 @@ class RoutingPlugin extends Plugin {
                   if (k !== viaIntf) this._wanStatus[k].inUse = false;
                 }
                 this._wanStatus[viaIntf].inUse = true;
+                inUseIntfFound = true;
               } else {
                 this._wanStatus[viaIntf].inUse = false;
               }

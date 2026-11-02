@@ -157,6 +157,24 @@ describe('Test global routing plugin', function() {
     });
   });
 
+  describe('primary_standby inUse', function() {
+    it('marks only the active WAN in use when an earlier WAN has no carrier', async() => {
+      const {plugin} = setup({type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], failback: true},
+        [{name: 'eth0', ready: false, carrier: 0}, {name: 'eth1'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.eth1).to.include({active: true, inUse: true});
+      expect(plugin._wanStatus.eth0).to.include({active: false, inUse: false});
+    });
+
+    it('marks the first WAN in use when no WAN is active and none has carrier', async() => {
+      const {plugin} = setup({type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], failback: true},
+        [{name: 'eth0', ready: false, carrier: 0}, {name: 'eth1', ready: false, carrier: 0}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.eth0).to.include({active: false, inUse: true});
+      expect(plugin._wanStatus.eth1).to.include({active: false, inUse: false});
+    });
+  });
+
   describe('missing WAN interface at apply', function() {
     it('load_balance reports a lost nextHop as switched', async() => {
       const {plugin} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}]},
