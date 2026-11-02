@@ -17,7 +17,7 @@
 const Sensor = require("./sensor.js");
 const r = require('../util/firerouter.js');
 const ifupdownPublishScript = `${r.getFireRouterHome()}/scripts/ifupdown_publish`;
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const ncm = require('../core/network_config_mgr.js');
 const pl = require('../plugins/plugin_loader.js');
 const event = require('../core/event.js');
@@ -32,7 +32,7 @@ class IfPlugSensor extends Sensor {
 
   static async prepare() {
     await exec(`sudo rm -rf /etc/ifplugd/action.d/*`).catch((err) => {});
-    await exec(`sudo cp ${ifupdownPublishScript} /etc/ifplugd/action.d/`).catch((err) => {});
+    await execFile("sudo", ["cp", ifupdownPublishScript, "/etc/ifplugd/action.d/"]).catch((err) => {});
   }
 
   async toggleLedNormalVisible() {
@@ -49,14 +49,14 @@ class IfPlugSensor extends Sensor {
   }
 
   async stopMonitoringInterface(iface) {
-      await exec(`sudo ifplugd -pq -k -i ${iface}`).catch((err) => {});
+      await execFile("sudo", ["ifplugd", "-pq", "-k", "-i", iface]).catch((err) => {});
   }
 
   async startMonitoringInterface(iface) {
     const upDelay = this.config.up_delay || 5;
     const downDelay = this.config.down_delay || 5;
     // specify -a so that ifplugd will not automatically enable interface, otherwise may cause trouble while adding slave into bond
-    await exec(`sudo ifplugd -pq -a -i ${iface} -f -u ${upDelay} -d ${downDelay}`).catch((err) => {
+    await execFile("sudo", ["ifplugd", "-pq", "-a", "-i", iface, "-f", "-u", String(upDelay), "-d", String(downDelay)]).catch((err) => {
       this.log.error(`Failed to start ifplugd on ${iface}`);
     });
   }
@@ -65,10 +65,10 @@ class IfPlugSensor extends Sensor {
     const ifaces = await ncm.getPhyInterfaceNames();
     const era = require('../event/EventRequestApi');
     for (const iface of ifaces) {
-      await exec(`sudo ip link set ${iface} up`).catch((err) => {});
+      await execFile("sudo", ["ip", "link", "set", iface, "up"]).catch((err) => {});
       await this.stopMonitoringInterface(iface);
       await this.startMonitoringInterface(iface);
-      ifStates[iface] = await exec(`cat /sys/class/net/${iface}/carrier`).then(r => Number(r.stdout.trim())).catch((err) => 0);
+      ifStates[iface] = await execFile("cat", [`/sys/class/net/${iface}/carrier`]).then(r => Number(r.stdout.trim())).catch((err) => 0);
     }
     this.log.info("initial ifStates:",ifStates);
 

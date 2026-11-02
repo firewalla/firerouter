@@ -16,21 +16,21 @@
 'use strict';
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const util = require('../../util/util.js');
 
 class NATPassthroughPlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`sudo modprobe nf_conntrack`).then(() => {
-      return exec(`sudo sysctl -w net.netfilter.nf_conntrack_helper=1`);
+    await execFile("sudo", ["modprobe", "nf_conntrack"]).then(() => {
+      return execFile("sudo", ["sysctl", "-w", "net.netfilter.nf_conntrack_helper=1"]);
     }).catch((err) => {});
   }
 
   async flush() {
     switch (this.name) {
       case "pptp": {
-        await exec("sudo rmmod nf_nat_pptp").catch((err) => {});
-        await exec("sudo rmmod nf_conntrack_pptp").catch((err) => {});
+        await execFile("sudo", ["rmmod", "nf_nat_pptp"]).catch((err) => {});
+        await execFile("sudo", ["rmmod", "nf_conntrack_pptp"]).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p tcp --dport 1723 -j CT --helper pptp")}`).catch((err) => {});
@@ -51,13 +51,13 @@ class NATPassthroughPlugin extends Plugin {
         break;
       }
       case "h323": {
-        await exec("sudo rmmod nf_nat_h323").catch((err) => {});
-        await exec("sudo rmmod nf_conntrack_h323").catch((err) => {});
+        await execFile("sudo", ["rmmod", "nf_nat_h323"]).catch((err) => {});
+        await execFile("sudo", ["rmmod", "nf_conntrack_h323"]).catch((err) => {});
         break;
       }
       case "sip": {
-        await exec("sudo rmmod nf_nat_sip").catch((err) => {});
-        await exec("sudo rmmod nf_conntrack_sip").catch((err) => {});
+        await execFile("sudo", ["rmmod", "nf_nat_sip"]).catch((err) => {});
+        await execFile("sudo", ["rmmod", "nf_conntrack_sip"]).catch((err) => {});
         await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p udp --dport 5060 -j CT --helper sip")}`).catch((err) => {});
         break;
       }
@@ -70,7 +70,7 @@ class NATPassthroughPlugin extends Plugin {
     switch (this.name) {
       case "pptp": {
         if (enabled) {
-          await exec("sudo modprobe ip_nat_pptp").catch((err) => {}); // this will load nf_nat_pptp and nf_conntrack_pptp
+          await execFile("sudo", ["modprobe", "ip_nat_pptp"]).catch((err) => {}); // this will load nf_nat_pptp and nf_conntrack_pptp
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j DROP")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j DROP")}`).catch((err) => {});
@@ -83,8 +83,8 @@ class NATPassthroughPlugin extends Plugin {
 
           await exec(`${util.wrapIptables("sudo iptables -w -t raw -A PREROUTING -p tcp --dport 1723 -j CT --helper pptp")}`).catch((err) => {});
         } else {
-          await exec("sudo rmmod nf_nat_pptp").catch((err) => {});
-          await exec("sudo rmmod nf_conntrack_pptp").catch((err) => {});
+          await execFile("sudo", ["rmmod", "nf_nat_pptp"]).catch((err) => {});
+          await execFile("sudo", ["rmmod", "nf_conntrack_pptp"]).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p gre -j ACCEPT")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -D FR_PASSTHROUGH -p tcp -m tcp --dport 1723 -j ACCEPT")}`).catch((err) => {});
           await exec(`${util.wrapIptables("sudo ip6tables -w -D FR_PASSTHROUGH -p gre -j ACCEPT")}`).catch((err) => {});
@@ -125,20 +125,20 @@ class NATPassthroughPlugin extends Plugin {
       }
       case "h323": {
         if (enabled) {
-          await exec("sudo modprobe ip_nat_h323").catch((err) => {}); // this will load nf_nat_h323 and nf_conntrack_h323
+          await execFile("sudo", ["modprobe", "ip_nat_h323"]).catch((err) => {}); // this will load nf_nat_h323 and nf_conntrack_h323
         } else {
-          await exec("sudo rmmod nf_nat_h323").catch((err) => {});
-          await exec("sudo rmmod nf_conntrack_h323").catch((err) => {});
+          await execFile("sudo", ["rmmod", "nf_nat_h323"]).catch((err) => {});
+          await execFile("sudo", ["rmmod", "nf_conntrack_h323"]).catch((err) => {});
         }
         break;
       }
       case "sip": {
         if (enabled) {
-          await exec("sudo modprobe ip_nat_sip").catch((err) => {}); // this will load nf_nat_sip and nf_conntrack_sip
+          await execFile("sudo", ["modprobe", "ip_nat_sip"]).catch((err) => {}); // this will load nf_nat_sip and nf_conntrack_sip
           await exec(`${util.wrapIptables("sudo iptables -w -t raw -A PREROUTING -p udp --dport 5060 -j CT --helper sip")}`).catch((err) => {});
         } else {
-          await exec("sudo rmmod nf_nat_sip").catch((err) => {});
-          await exec("sudo rmmod nf_conntrack_sip").catch((err) => {});
+          await execFile("sudo", ["rmmod", "nf_nat_sip"]).catch((err) => {});
+          await execFile("sudo", ["rmmod", "nf_conntrack_sip"]).catch((err) => {});
           await exec(`${util.wrapIptables("sudo iptables -w -t raw -D PREROUTING -p udp --dport 5060 -j CT --helper sip")}`).catch((err) => {});
         }
         break;

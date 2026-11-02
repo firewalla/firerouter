@@ -16,7 +16,7 @@
 'use strict';
 
 const Plugin = require('../plugin.js');
-const exec = require('child-process-promise').exec;
+const { exec, execFile } = require('child-process-promise');
 const r = require('../../util/firerouter.js');
 const fsp = require('fs').promises;
 const util = require('../../util/util.js');
@@ -27,8 +27,8 @@ const _ = require('lodash');
 
 class MRoutePlugin extends Plugin {
   static async preparePlugin() {
-    await exec(`sudo cp ${r.getFireRouterHome()}/scripts/firerouter_smcrouted.service /etc/systemd/system/`);
-    await exec(`mkdir -p ${MRoutePlugin.getConfDir()}`);
+    await execFile("sudo", ["cp", `${r.getFireRouterHome()}/scripts/firerouter_smcrouted.service`, "/etc/systemd/system/"]);
+    await execFile("mkdir", ["-p", MRoutePlugin.getConfDir()]);
     await fsp.writeFile(`${MRoutePlugin.getConfBaseDir()}/smcroute.conf`, `include ${MRoutePlugin.getConfDir()}/*.conf`, {encoding: "utf8"});
   }
 
@@ -63,10 +63,10 @@ class MRoutePlugin extends Plugin {
       }
     }
     this._oifHWAddrs = [];
-    await exec(`sudo systemctl stop firerouter_smcrouted.service`).catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", "firerouter_smcrouted.service"]).catch((err) => {});
     const files = await fsp.readdir(MRoutePlugin.getConfDir());
     if (!_.isEmpty(files))
-      await exec(`sudo systemctl start firerouter_smcrouted.service`).catch((err) => {});
+      await execFile("sudo", ["systemctl", "start", "firerouter_smcrouted.service"]).catch((err) => {});
   }
 
   async apply() {
@@ -132,7 +132,7 @@ class MRoutePlugin extends Plugin {
     await fsp.writeFile(`${MRoutePlugin.getConfDir()}/${this.name}.conf`, content).catch((err) => {
       this.log.error(`Failed to write 01_${this.name}.conf`, err.message);
     });
-    await exec(`sudo systemctl stop firerouter_smcrouted.service`).then(() => exec(`sudo systemctl start firerouter_smcrouted.service`)).catch((err) => {});
+    await execFile("sudo", ["systemctl", "stop", "firerouter_smcrouted.service"]).then(() => execFile("sudo", ["systemctl", "start", "firerouter_smcrouted.service"])).catch((err) => {});
   }
 }
 
