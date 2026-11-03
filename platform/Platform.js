@@ -388,19 +388,31 @@ class Platform {
   }
 
   async setMTU(iface, mtu) {
-    if (this.getIntfsDownForMTU().includes(iface)) {
-      const ifplug = sensorLoader.getSensor("IfPlugSensor");
-      if (ifplug) {
-        await ifplug.stopMonitoringInterface(iface);
-      }
-      await execFile("sudo", ["ip", "link", "set", iface, "down"]);
+    const downIntfs = this.getIntfsDownForMTU();
+    if (downIntfs.length === 0) {
       await this._setMTU(iface, mtu);
-      await execFile("sudo", ["ip", "link", "set", iface, "up"]);
-      if (ifplug) {
-        await ifplug.startMonitoringInterface(iface);
+      return;
+    }
+    // a bond passes its MTU on to its slaves, so those slaves have to be down instead
+    const slaves = await fsp.readFile(`/sys/class/net/${iface}/bonding/slaves`, {encoding: "utf8"})
+      .then(content => content.trim().split(/\s+/).filter(Boolean)).catch((err) => null);
+    const intfs = (slaves || [iface]).filter(intf => downIntfs.includes(intf));
+    const ifplug = intfs.length > 0 && sensorLoader.getSensor("IfPlugSensor");
+    try {
+      for (const intf of intfs) {
+        if (ifplug)
+          await ifplug.stopMonitoringInterface(intf);
+        await execFile("sudo", ["ip", "link", "set", intf, "down"]);
       }
-    } else {
       await this._setMTU(iface, mtu);
+    } finally {
+      for (const intf of intfs) {
+        await execFile("sudo", ["ip", "link", "set", intf, "up"]).catch((err) => {
+          log.error(`Failed to bring up ${intf} after setting MTU of ${iface}`, err.message);
+        });
+        if (ifplug)
+          await ifplug.startMonitoringInterface(intf);
+      }
     }
   }
 
