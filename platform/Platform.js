@@ -22,6 +22,7 @@ const r = require('../util/firerouter')
 const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugins/plugin_loader.js');
 const util = require('../util/util.js');
+const sensorLoader = require('../sensors/sensor_loader.js');
 
 const APSafeFreqs = [
   2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
@@ -381,7 +382,29 @@ class Platform {
 
   }
 
+  // interfaces whose driver rejects an MTU change while the link is up
+  getIntfsDownForMTU() {
+    return [];
+  }
+
   async setMTU(iface, mtu) {
+    if (this.getIntfsDownForMTU().includes(iface)) {
+      const ifplug = sensorLoader.getSensor("IfPlugSensor");
+      if (ifplug) {
+        await ifplug.stopMonitoringInterface(iface);
+      }
+      await execFile("sudo", ["ip", "link", "set", iface, "down"]);
+      await this._setMTU(iface, mtu);
+      await execFile("sudo", ["ip", "link", "set", iface, "up"]);
+      if (ifplug) {
+        await ifplug.startMonitoringInterface(iface);
+      }
+    } else {
+      await this._setMTU(iface, mtu);
+    }
+  }
+
+  async _setMTU(iface, mtu) {
     await execFile("sudo", ["ip", "link", "set", iface, "mtu", String(mtu)]).catch((err) => {
       log.error(`Failed to set MTU of ${iface} to ${mtu}`, err.message);
     });
