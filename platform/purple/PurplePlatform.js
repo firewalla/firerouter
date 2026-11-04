@@ -286,20 +286,8 @@ class PurplePlatform extends Platform {
     }
   }
 
-  async setMTU(iface, mtu) {
-    if (iface === "eth0") {
-      const ifplug = sensorLoader.getSensor("IfPlugSensor");
-      if (ifplug) {
-        await ifplug.stopMonitoringInterface(iface);
-      }
-      await execFile("sudo", ["ip", "link", "set", iface, "down"]);
-      await super.setMTU(iface, mtu);
-      await execFile("sudo", ["ip", "link", "set", iface, "up"]);
-      if (ifplug) {
-        await ifplug.startMonitoringInterface(iface);
-      }
-    } else
-      await super.setMTU(iface, mtu);
+  getIntfsDownForMTU() {
+    return ["eth0"];
   }
 
   async processWpaSupplicantLog(line, config) {

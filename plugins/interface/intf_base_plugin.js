@@ -1499,15 +1499,17 @@ class InterfaceBasePlugin extends Plugin {
 
   async setSysOpts() {
     if (this.networkConfig.sysOpts) {
+      // sysfs links such as device/ and subsystem/ lead out of the interface's directory, so compare resolved paths
+      const base = await fs.realpathAsync(`/sys/class/net/${this.name}`).catch(() => null);
       for (const key of Object.keys(this.networkConfig.sysOpts)) {
         const value = this.networkConfig.sysOpts[key];
-        // key names a file under /sys/class/net/<intf>/, reject anything that could escape it
-        if (!/^[A-Za-z0-9_.-]+$/.test(key)) {
-          this.log.error(`Invalid sys opt name ${key} of ${this.name}, ignore`);
+        const file = base && await fs.realpathAsync(`/sys/class/net/${this.name}/${key}`).catch(() => null);
+        if (!file || !file.startsWith(`${base}/`)) {
+          this.log.error(`Invalid or missing sys opt ${key} of ${this.name}, ignore`);
           continue;
         }
         // the script text is fixed, value and path are passed as positional args so a shell never parses them
-        await execFile("sudo", ["bash", "-c", 'echo "$1" > "$2"', "bash", String(value), `/sys/class/net/${this.name}/${key}`]).catch((err) => {
+        await execFile("sudo", ["bash", "-c", 'echo "$1" > "$2"', "bash", String(value), file]).catch((err) => {
           this.log.error(`Failed to set sys opt ${key} of ${this.name} to ${value}`, err.message);
         });
       }
@@ -1593,6 +1595,8 @@ class InterfaceBasePlugin extends Plugin {
       if (state){
         result.active = state.active || false;
         result.inUse = state.inUse || false;
+        if (state.backup)
+          result.backup = true;
       }
     }
     return result;
