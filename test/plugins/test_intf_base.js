@@ -556,3 +556,63 @@ describe('Test interface base dhcp6', function(){
       expect(cmd).to.contain("captive.example.com");
     });
   });
+
+  describe('Test interface base sys opts', function(){
+    // a model of the sysfs symlinks around bond0, enough for realpath to lead out of its directory
+    const links = {
+      "/sys/class/net/bond0": "/sys/devices/virtual/net/bond0",
+      "/sys/class/net/eth1": "/sys/devices/platform/eth1/net/eth1",
+      "/sys/devices/virtual/net/bond0/subsystem": "/sys/class/net",
+    };
+    const files = [
+      "/sys/devices/virtual/net/bond0/mtu",
+      "/sys/devices/virtual/net/bond0/bonding/xmit_hash_policy",
+      "/sys/devices/platform/eth1/net/eth1/mtu",
+    ];
+    const exists = (p) => files.some(f => f === p || f.startsWith(`${p}/`)) || Object.values(links).includes(p);
+    const fakeRealpath = async (p) => {
+      let cur = "";
+      for (const seg of p.split("/").filter(s => s && s !== ".")) {
+        cur = seg === ".." ? path.posix.dirname(cur || "/") : `${cur}/${seg}`;
+        while (links[cur])
+          cur = links[cur];
+      }
+      if (!exists(cur))
+        throw Object.assign(new Error(`ENOENT: ${p}`), {code: "ENOENT"});
+      return cur;
+    };
+
+    const writes = async (name, sysOpts) => {
+      stub.reset();
+      const plugin = stub.build(StubbedInterfaceBasePlugin, name, {enabled: true, sysOpts});
+      await plugin.setSysOpts();
+      // recorded as `sudo bash -c <script> bash <value> <path>`, keep the value and the path
+      return stub.matching("sudo bash -c").map(c => c.split(" ").slice(-2).join(" "));
+    };
+
+    before(() => {
+      this.origRealpath = fs.realpathAsync;
+      fs.realpathAsync = fakeRealpath;
+    });
+
+    after(() => {
+      fs.realpathAsync = this.origRealpath;
+    });
+
+    it('should write a sys opt in a subdirectory of the interface', async() => {
+      expect(await writes("bond0", {"bonding/xmit_hash_policy": "layer3+4", "mtu": "1500"})).to.deep.equal([
+        "layer3+4 /sys/devices/virtual/net/bond0/bonding/xmit_hash_policy",
+        "1500 /sys/devices/virtual/net/bond0/mtu",
+      ]);
+    });
+
+    it('should not write outside the interface directory', async() => {
+      for (const key of ["../eth1/mtu", "bonding/../../eth1/mtu", "subsystem/eth1/mtu", "/etc/passwd", "bonding/no_such_attr"]) {
+        expect(await writes("bond0", {[key]: "1"}), `${key} was written`).to.deep.equal([]);
+      }
+    });
+
+    it('should write nothing for an interface that is not present', async() => {
+      expect(await writes("bond9", {"mtu": "1500"})).to.deep.equal([]);
+    });
+  });
