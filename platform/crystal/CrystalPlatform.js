@@ -67,6 +67,10 @@ class CrystalPlatform extends Platform {
   getMiniupnpdNftPath() {
     return `${this.getFilesPath()}/miniupnpd.nft`;
   }
+
+  getNtpServiceName() {
+    return "chrony";
+  }
 }
 
 module.exports = CrystalPlatform;

@@ -22,6 +22,7 @@ const r = require('../util/firerouter')
 const { exec, execFile } = require('child-process-promise');
 const pl = require('../plugins/plugin_loader.js');
 const util = require('../util/util.js');
+const sensorLoader = require('../sensors/sensor_loader.js');
 
 const APSafeFreqs = [
   2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, // NO_IR: 2467, 2472,
@@ -381,7 +382,41 @@ class Platform {
 
   }
 
+  // interfaces whose driver rejects an MTU change while the link is up
+  getIntfsDownForMTU() {
+    return [];
+  }
+
   async setMTU(iface, mtu) {
+    const downIntfs = this.getIntfsDownForMTU();
+    if (downIntfs.length === 0) {
+      await this._setMTU(iface, mtu);
+      return;
+    }
+    // a bond passes its MTU on to its slaves, so those slaves have to be down instead
+    const slaves = await fsp.readFile(`/sys/class/net/${iface}/bonding/slaves`, {encoding: "utf8"})
+      .then(content => content.trim().split(/\s+/).filter(Boolean)).catch((err) => null);
+    const intfs = (slaves || [iface]).filter(intf => downIntfs.includes(intf));
+    const ifplug = intfs.length > 0 && sensorLoader.getSensor("IfPlugSensor");
+    try {
+      for (const intf of intfs) {
+        if (ifplug)
+          await ifplug.stopMonitoringInterface(intf);
+        await execFile("sudo", ["ip", "link", "set", intf, "down"]);
+      }
+      await this._setMTU(iface, mtu);
+    } finally {
+      for (const intf of intfs) {
+        await execFile("sudo", ["ip", "link", "set", intf, "up"]).catch((err) => {
+          log.error(`Failed to bring up ${intf} after setting MTU of ${iface}`, err.message);
+        });
+        if (ifplug)
+          await ifplug.startMonitoringInterface(intf);
+      }
+    }
+  }
+
+  async _setMTU(iface, mtu) {
     await execFile("sudo", ["ip", "link", "set", iface, "mtu", String(mtu)]).catch((err) => {
       log.error(`Failed to set MTU of ${iface} to ${mtu}`, err.message);
     });
