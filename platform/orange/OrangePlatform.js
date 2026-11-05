@@ -90,6 +90,10 @@ class OrangePlatform extends Platform {
     return `${__dirname}/files/default_setup.json`;
   }
 
+  getMiniupnpdNftPath() {
+    return `${this.getBinaryPath()}/u22/miniupnpd.nft`;
+  }
+
   async getWlanVendor() {
     return "mt7996e";
   }
