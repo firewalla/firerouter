@@ -466,11 +466,15 @@ class RoutingPlugin extends Plugin {
     return activeIntf;
   }
 
-  // a WAN back to ready takes over if nothing is active, or in failback mode if it ranks higher than the active one
-  _failbackSwitchNeeded(status) {
-    const activeWanStatus = Object.values(this._wanStatus).filter(s => s.active).sort((a, b) => a.seq - b.seq);
-    const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-    return _.isEmpty(activeWanStatus) || (failback && status.seq < activeWanStatus[0].seq);
+  // whether a WAN back to ready takes traffic from the current one: always if nothing is current,
+  // a load_balance nextHop always joins, otherwise only in failback mode if it ranks higher
+  _takesOver(status, current) {
+    if (!current)
+      return true;
+    const settings = this.networkConfig.default || {};
+    if (settings.type === 'load_balance' && !status.backup)
+      return true;
+    return !!settings.failback && status.seq < current.seq;
   }
 
   // upsert one WAN's subnet, default and DNS routes in global_local/global_default/main
@@ -1281,18 +1285,8 @@ class RoutingPlugin extends Plugin {
         if (!currentStatus.ready && intfPlugin.isReady()) {
           currentStatus.ready = true;
           // need to be stricter if inactive WAN is back to ready or fast failback if no WAN is active currently
-          switch (type) {
-            case "load_balance": {
-              // a recovered nextHop always takes traffic back, a backup follows the primary_standby rule
-              changeActiveWanNeeded = currentStatus.backup ? this._failbackSwitchNeeded(currentStatus) : true;
-              break;
-            }
-            case "primary_standby": {
-              changeActiveWanNeeded = this._failbackSwitchNeeded(currentStatus);
-              break;
-            }
-            default:
-          }
+          if (type === "load_balance" || type === "primary_standby")
+            changeActiveWanNeeded = this._takesOver(currentStatus, this._wanStatus[this._getActiveWANNames()[0]]);
           changeDesc = {
             intf: intf,
             ready: true,
@@ -1326,10 +1320,7 @@ class RoutingPlugin extends Plugin {
             const activeWanStatus = Object.values(this._wanStatus).filter(s => s.active).sort((a, b) => a.seq - b.seq);
             if (_.isEmpty(activeWanStatus)) {
               const inUseIntfs = Object.values(this._wanStatus).filter(s => s.inUse).sort((a, b) => a.seq - b.seq);
-              const failback = !!(this.networkConfig.default && this.networkConfig.default.failback);
-              const shouldSwitch = _.isEmpty(inUseIntfs) ||
-                (failback && inUseIntfs.length > 0 && currentStatus.seq < inUseIntfs[0].seq);
-              if (shouldSwitch)
+              if (this._takesOver(currentStatus, inUseIntfs[0]))
                 this.scheduleApplyActiveGlobalDefaultRouting({intf:intf, ready: intfPlugin.isReady(),wanSwitched: true,failures: failures});
             }
           } else {
