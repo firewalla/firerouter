@@ -249,7 +249,7 @@ class RoutingPlugin extends Plugin {
         return
       }
       const state = await intfPlugin.state();
-      const metric = this._wanStatus[intf].seq + 1 + (this._wanStatus[intf].ready ? 0 : 100);
+      const metric = this._wanStatus[intf].seq + 1 + (this._wanStatus[intf].ready && !this._keptBehind(this._wanStatus[intf]) ? 0 : 100);
       const type = this.networkConfig.default.type || "single";
       const active = this._wanStatus[intf].active;
 
@@ -449,10 +449,13 @@ class RoutingPlugin extends Plugin {
     return status.seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0 : 10);
   }
 
-  // a ready standby backup that outranks the active backup (kept by failback off) must stay below it
-  _backupWanMetric(status, carrier) {
-    const keptBehind = status.active !== true && Object.values(this._wanStatus).some(s => s.backup && s.active === true && s.seq > status.seq);
-    return this._wanMetric(status, carrier, status.ready && !keptBehind);
+  // a ready standby WAN that outranks the active backup (kept by failback off) must stay below it
+  _keptBehind(status) {
+    return status.active !== true && Object.values(this._wanStatus).some(s => s.backup && s.active === true && s.seq > status.seq);
+  }
+
+  _standbyWanMetric(status, carrier) {
+    return this._wanMetric(status, carrier, status.ready && !this._keptBehind(status));
   }
 
   // in the given order, the first ready WAN becomes active and the others inactive
@@ -590,7 +593,7 @@ class RoutingPlugin extends Plugin {
           // e.g., a bridge WAN is not flushed at startup
           await this._removeUncachedDnsRoutes(viaIntf, status.plugin, af);
       }
-      await this._installWanRoutes(viaIntf, status.plugin, state, this._backupWanMetric(status, carrier), af, {
+      await this._installWanRoutes(viaIntf, status.plugin, state, this._standbyWanMetric(status, carrier), af, {
         ipv6: status.active === true,
         ipv6Default: status.active === true,
         dns: status.active === true
@@ -637,7 +640,7 @@ class RoutingPlugin extends Plugin {
         return;
       const state = await status.plugin.state();
       await this._removeWanRoutes([status.plugin], af);
-      await this._installWanRoutes(intf, status.plugin, state, this._backupWanMetric(status, state.carrier || 0), af, {ipv6: false, ipv6Default: false, dns: false});
+      await this._installWanRoutes(intf, status.plugin, state, this._standbyWanMetric(status, state.carrier || 0), af, {ipv6: false, ipv6Default: false, dns: false});
       if (af == 4)
         await this._refreshOutputSNATRules(4);
     });
@@ -713,7 +716,7 @@ class RoutingPlugin extends Plugin {
                 inUseIntfFound = true;
               }
             }
-            const metric = this._wanMetric(this._wanStatus[viaIntf], carrier);
+            const metric = this._standbyWanMetric(this._wanStatus[viaIntf], carrier);
             // only add IPv6 routes for primary WAN for primary_standby mode
             // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
             await this._installWanRoutes(viaIntf, viaIntfPlugin, state, metric, af, {
@@ -751,7 +754,7 @@ class RoutingPlugin extends Plugin {
             this._wanStatus[viaIntf].carrier = carrier;
             this._wanStatus[viaIntf].inUse = (this._wanStatus[viaIntf].active === true);
 
-            const metric = this._wanMetric(this._wanStatus[viaIntf], carrier);
+            const metric = this._standbyWanMetric(this._wanStatus[viaIntf], carrier);
             if (!af || af == 4) {
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
