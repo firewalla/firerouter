@@ -922,6 +922,30 @@ class RoutingPlugin extends Plugin {
     wanStatus[viaIntf].plugin = viaIntfPlugin;
   }
 
+  // the backup WANs of the config, without the names that are already a WAN
+  _backupIntfs(settings, primaryIntfs) {
+    const backups = [];
+    for (const viaIntf of _.isArray(settings.bakIntfs) ? settings.bakIntfs : []) {
+      if (primaryIntfs.includes(viaIntf) || backups.includes(viaIntf)) {
+        this.log.error(`${viaIntf} is already a WAN, ignore it as a backup`);
+        continue;
+      }
+      backups.push(viaIntf);
+    }
+    return backups;
+  }
+
+  // backups rank after the primary WANs, from seq on
+  async _addBackupWans(wanStatus, backups, seq, lastWanStatus, changeDescs) {
+    for (const viaIntf of backups) {
+      const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
+      if (!viaIntfPlugin)
+        this.fatal(`Cannot find global default backup interface plugin ${viaIntf}`);
+      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq++, lastWanStatus, changeDescs, true, true);
+      wanStatus[viaIntf].backup = true;
+    }
+  }
+
   async apply() {
     if (!this.networkConfig) {
       this.fatal(`Network config for ${this.name} is not set`);
@@ -978,18 +1002,7 @@ class RoutingPlugin extends Plugin {
                       wanStatus[viaIntf].weight = nextHop.weight;
                       seq++;
                     }
-                    for (const viaIntf of _.isArray(settings.bakIntfs) ? settings.bakIntfs : []) {
-                      if (wanStatus[viaIntf]) {
-                        this.log.error(`${viaIntf} is already a WAN of load_balance, ignore it in bakIntfs`);
-                        continue;
-                      }
-                      const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
-                      if (!viaIntfPlugin)
-                        this.fatal(`Cannot find global default backup interface plugin ${viaIntf}`);
-                      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, true, true);
-                      wanStatus[viaIntf].backup = true;
-                      seq++;
-                    }
+                    await this._addBackupWans(wanStatus, this._backupIntfs(settings, nextHops.map(n => n.viaIntf)), seq, lastWanStatus, changeDescs);
                     const hashPolicy = settings.hashPolicy || "l3";
                     switch (hashPolicy) {
                       case "l4": {
