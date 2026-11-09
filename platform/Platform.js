@@ -107,6 +107,13 @@ class Platform {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/bin`;
   }
 
+  getAwgBinPath() {
+    return `${this.getBinaryPath()}/awg`;
+  }
+
+  async resolveAwgBinPath() {
+  }
+
   getFilesPath() {
     return `${r.getFireRouterHome()}/platform/${this.getName()}/files`;
   }

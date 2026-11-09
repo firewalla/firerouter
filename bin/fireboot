@@ -10,6 +10,13 @@ redis-cli del "fireboot:network_down:code"
 source ${FIREROUTER_HOME}/bin/common
 source ${FIREROUTER_HOME}/platform/platform.sh
 
+if [[ $NEED_FIRERESET == "false" && -e /etc/systemd/system/firereset.service ]]; then
+  echo "Firereset is not needed on this platform, removing it..."
+  sudo systemctl disable --now firereset &>/dev/null
+  sudo rm -f /etc/systemd/system/firereset.service /home/pi/.forever/firereset.log
+  sudo systemctl daemon-reload
+fi
+
 NODE_MODULES_PATH=$(get_node_modules_dir)
 if [[ -h ${FIREROUTER_HOME}/node_modules ]]; then
   if [[ $(readlink ${FIREROUTER_HOME}/node_modules) != $NODE_MODULES_PATH ]]; then
@@ -76,12 +83,14 @@ if [[ -f /dev/shm/firerouter.upgraded ]]; then
   fi
 
   rm -f /dev/shm/firerouter.upgraded
-  if systemctl is-active firereset &>/dev/null; then
-    echo "Firereset is active, lazy-restarting FireReset with SIGINT..."
-    sudo pkill -x -SIGINT firereset
-  else
-    echo "Starting firereset..."
-    sudo systemctl start firereset
+  if [[ $NEED_FIRERESET != "false" ]]; then
+    if systemctl is-active firereset &>/dev/null; then
+      echo "Firereset is active, lazy-restarting FireReset with SIGINT..."
+      sudo pkill -x -SIGINT firereset
+    else
+      echo "Starting firereset..."
+      sudo systemctl start firereset
+    fi
   fi
 fi
 logger "Uptime after firerouter_upgrade: $(awk '{print $1}' /proc/uptime)"
@@ -89,7 +98,7 @@ logger "Uptime after firerouter_upgrade: $(awk '{print $1}' /proc/uptime)"
 if [[ $NETWORK_SETUP == "yes" ]]; then
   service_updated="0"
   firereset_restart_needed="0"
-  if ! diff -q /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/firereset.service > /dev/null; then
+  if [[ $NEED_FIRERESET != "false" ]] && ! diff -q /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/firereset.service > /dev/null; then
     sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
     service_updated="1"
     firereset_restart_needed="1"

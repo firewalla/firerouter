@@ -136,6 +136,7 @@ branch=$(git rev-parse --abbrev-ref HEAD)
 remote_branch=$(map_target_branch $branch)
 # ensure the remote fetch branch is up-to-date
 git config remote.origin.fetch "+refs/heads/$remote_branch:refs/remotes/origin/$remote_branch"
+git config "branch.$branch.remote" origin
 git config "branch.$branch.merge" "refs/heads/$remote_branch"
 $MGIT fetch
 
@@ -222,7 +223,9 @@ else
   sudo cp /home/pi/firerouter/scripts/fireboot_standalone.service /etc/systemd/system/fireboot.service
 fi
 
-sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
+if [[ $NEED_FIRERESET != "false" ]]; then
+  sudo cp /home/pi/firerouter/scripts/firereset.service /etc/systemd/system/.
+fi
 sudo systemctl daemon-reload
 
 if [[ $NETWORK_SETUP == "yes" ]]; then
@@ -230,4 +233,6 @@ if [[ $NETWORK_SETUP == "yes" ]]; then
 fi
 
 sudo systemctl reenable fireboot
-sudo systemctl reenable firereset
+if [[ $NEED_FIRERESET != "false" ]]; then
+  sudo systemctl reenable firereset
+fi

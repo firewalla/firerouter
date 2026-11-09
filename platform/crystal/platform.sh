@@ -20,6 +20,7 @@
 
 # Crystal has no status LEDs, so the firestatus LED daemon is not needed.
 NEED_FIRESTATUS=false
+NEED_FIRERESET=false
 
 # --- no LEDs on Crystal -------------------------------------------------------
 function run_horse_light {

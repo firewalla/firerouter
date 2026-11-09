@@ -16,10 +16,36 @@
 'use strict';
 
 const Platform = require('../Platform.js');
+const fs = require('fs');
+
+const AMNEZIAWG_MODULE_NAME = 'amneziawg';
+const SYSTEM_AWG_BIN_PATH = '/usr/bin/awg';
 
 class CrystalPlatform extends Platform {
   getName() {
     return "crystal";
+  }
+
+  async resolveAwgBinPath() {
+    const systemModuleLoaded = await this.isSystemAwgModuleLoaded();
+    if (systemModuleLoaded && fs.existsSync(SYSTEM_AWG_BIN_PATH)) {
+      this.awgBinPath = SYSTEM_AWG_BIN_PATH;
+      return;
+    }
+    this.awgBinPath = super.getAwgBinPath();
+  }
+
+  async isSystemAwgModuleLoaded() {
+    const systemSrcVersion = await this.getModuleSrcVersion(AMNEZIAWG_MODULE_NAME);
+    if (!systemSrcVersion) {
+      return false;
+    }
+    const loadedSrcVersion = await this.getLoadedModuleSrcVersion(AMNEZIAWG_MODULE_NAME);
+    return loadedSrcVersion === systemSrcVersion;
+  }
+
+  getAwgBinPath() {
+    return this.awgBinPath || super.getAwgBinPath();
   }
 
   isOnboardConfigSupported() {
