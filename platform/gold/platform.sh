@@ -34,6 +34,10 @@ function map_target_branch {
   "beta_7_0")
     echo "beta_7_0"
     ;;
+  # legacy alpha branch: follow beta_7_0, which carries the signed release tags
+  "beta_8_0")
+    echo "beta_7_0"
+    ;;
   "master")
     echo "master"
     ;;
