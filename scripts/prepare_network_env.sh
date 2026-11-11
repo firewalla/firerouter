@@ -20,7 +20,7 @@ append_iptables() { printf '%s\n' "$@" >> "$IPTABLES_RESTORE_FILE"; }
 append_ip6tables() { printf '%s\n' "$@" >> "$IP6TABLES_RESTORE_FILE"; }
 append_ipset() { printf '%s\n' "$@" >> "$IPSET_RESTORE_FILE"; }
 
-MSS_CLAMP="-p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+MSS_CLAMP="-p tcp -m tcp --tcp-flags SYN,RST SYN -m physdev ! --physdev-is-bridged -j TCPMSS --clamp-mss-to-pmtu"
 
 # save FR_SNAT to FR_SNAT_TMP temporarily to avoid no snat during firerouter setup
 sudo iptables -w -t nat -F FR_SNAT_TMP &> /dev/null

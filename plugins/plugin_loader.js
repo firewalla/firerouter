@@ -31,7 +31,8 @@ const _ = require('lodash');
 const AsyncLock = require('async-lock');
 const { execFile } = require('child-process-promise');
 const fwpclient = require('../util/redis_manager.js').getPublishClient();
-const platform = require('../platform/PlatformLoader.js').getPlatform();
+// get the platform on use: platform modules require this module, so loading one here hands them an empty exports
+const platformLoader = require('../platform/PlatformLoader.js');
 const lock = new AsyncLock();
 const LOCK_REAPPLY = "LOCK_REAPPLY";
 let applyInProgress = false;
@@ -174,7 +175,7 @@ async function reapply(config, dryRun = false) {
     const errors = [];
 
     const country = _.get(config, ['apc', 'globalSysConfig', 'country']);
-    const wlanReloaded = await platform.prepareWLANRegDomainChange(country).catch((err) => {
+    const wlanReloaded = await platformLoader.getPlatform().prepareWLANRegDomainChange(country).catch((err) => {
       log.error(`Failed to prepare WLAN reg domain change for country ${country}`, err);
       errors.push(err.message || err);
       return false;
