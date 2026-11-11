@@ -253,18 +253,23 @@ class WireguardInterfacePlugin extends InterfaceBasePlugin {
     }
 
     if (this.networkConfig.autonomous) {
-      const pubKey = await exec(`echo ${this.networkConfig.privateKey} | ${this.wgCmd} pubkey`).then(result => result.stdout.trim()).catch((err) => {
-        this.log.error(`Failed to parse private key to public key`);
-        return null;
-      })
-      if (pubKey) {
-        this._disposeAutomata();
-        this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig, {
-          wgCmd: this.wgCmd,
-          wireguardType: this.wireguardType,
-          bindIntf: this._bindIntf,
-        });
-        this._automata.start();
+      const WG_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+      if (!WG_KEY_RE.test(this.networkConfig.privateKey)) {
+        this.log.error('Invalid WireGuard private key format');
+      } else {
+        const pubKey = await exec(`echo ${this.networkConfig.privateKey} | ${this.wgCmd} pubkey`).then(result => result.stdout.trim()).catch((err) => {
+          this.log.error(`Failed to parse private key to public key`);
+          return null;
+        })
+        if (pubKey) {
+          this._disposeAutomata();
+          this._automata = new WireguardMeshAutomata(this.name, pubKey, this.networkConfig, {
+            wgCmd: this.wgCmd,
+            wireguardType: this.wireguardType,
+            bindIntf: this._bindIntf,
+          });
+          this._automata.start();
+        }
       }
     }
 

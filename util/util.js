@@ -234,6 +234,11 @@ function generateRandomMacAddress(prefix = "20:6D:31") {
   return randomMac.toUpperCase();
 }
 
+function isValidMacAddress(mac) {
+  if (!mac || !_.isString(mac)) return false;
+  return /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac);
+}
+
 module.exports = {
   extend: extend,
   delay: delay,
@@ -243,6 +248,7 @@ module.exports = {
   generateWpaSupplicantConfig: generateWpaSupplicantConfig,
   generateUUID,
   generateRandomMacAddress,
+  isValidMacAddress,
   parseEscapedString,
   parseHexString,
   freqToChannel,
