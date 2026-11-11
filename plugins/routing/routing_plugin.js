@@ -249,7 +249,7 @@ class RoutingPlugin extends Plugin {
         return
       }
       const state = await intfPlugin.state();
-      const metric = this._wanStatus[intf].seq + 1 + (this._wanStatus[intf].ready ? 0 : 100);
+      const metric = this._wanStatus[intf].seq + 1 + (this._wanStatus[intf].ready && !this._keptBehind(this._wanStatus[intf]) ? 0 : 100);
       const type = this.networkConfig.default.type || "single";
       const active = this._wanStatus[intf].active;
 
@@ -449,28 +449,49 @@ class RoutingPlugin extends Plugin {
     return status.seq + 1 + (ready ? 0 : 100) + (carrier == '1' ? 0 : 10);
   }
 
-  // a ready standby backup that outranks the active backup (kept by failback off) must stay below it
-  _backupWanMetric(status, carrier) {
-    const keptBehind = status.active !== true && Object.values(this._wanStatus).some(s => s.backup && s.active === true && s.seq > status.seq);
-    return this._wanMetric(status, carrier, status.ready && !keptBehind);
+  // a ready WAN left inactive while a lower-priority backup carries traffic (held by backupFailback or backup.failback off)
+  // gets the unready metric, so the kernel doesn't route around the hold
+  _keptBehind(status) {
+    return status.active !== true && Object.values(this._wanStatus).some(s => s.backup && s.active === true && s.seq > status.seq);
   }
 
-  // in the given order, the first ready WAN becomes active and the others inactive
-  _activateFirstReady(names) {
+  _standbyWanMetric(status, carrier) {
+    return this._wanMetric(status, carrier, status.ready && !this._keptBehind(status));
+  }
+
+  // in the given order, the first ready WAN that the holder doesn't hold becomes active and the others inactive
+  _activateFirstReady(names, holder = null) {
     let activeIntf = null;
     for (const name of names) {
-      this._wanStatus[name].active = this._wanStatus[name].ready && !activeIntf;
+      this._wanStatus[name].active = this._wanStatus[name].ready && !activeIntf && !this._isHeld(this._wanStatus[name], holder);
       if (this._wanStatus[name].active)
         activeIntf = name;
     }
     return activeIntf;
   }
 
-  // a WAN back to ready takes over if nothing is active, or in failback mode if it ranks higher than the active one
-  _failbackSwitchNeeded(status) {
-    const activeWanStatus = Object.values(this._wanStatus).filter(s => s.active).sort((a, b) => a.seq - b.seq);
-    const failback = (this.networkConfig["default"] && this.networkConfig["default"].failback) || false;
-    return _.isEmpty(activeWanStatus) || (failback && status.seq < activeWanStatus[0].seq);
+  // whether a WAN back to ready takes traffic from the current one. backupFailback covers backup to primary,
+  // backup.failback among backups (both default on), failback among primary_standby viaIntfs (default off)
+  _takesOver(status, current) {
+    if (!current)
+      return true;
+    const settings = this.networkConfig.default || {};
+    if (!status.backup && current.backup)
+      return settings.backupFailback !== false;
+    if (settings.type === 'load_balance' && !status.backup)
+      return true;
+    const failback = status.backup ? _.get(settings, 'backup.failback') !== false : !!settings.failback;
+    return failback && status.seq < current.seq;
+  }
+
+  // the backup carrying traffic when an apply starts, read before the apply changes any selection
+  _holdingBackup() {
+    return Object.values(this._wanStatus).find(s => s.backup && s.active === true && s.ready === true) || null;
+  }
+
+  // a ready WAN stays inactive while the backup holding traffic would not hand it over
+  _isHeld(status, holder) {
+    return !!holder && status !== holder && !this._takesOver(status, holder);
   }
 
   // upsert one WAN's subnet, default and DNS routes in global_local/global_default/main
@@ -556,8 +577,8 @@ class RoutingPlugin extends Plugin {
     }
   }
 
-  // load_balance backups carry traffic only while no nextHop is active, one at a time in seq order
-  async _applyBackupWanRoutes(af) {
+  // load_balance backups carry traffic only while no nextHop is active, one at a time
+  async _applyBackupWanRoutes(af, holder) {
     const backups = Object.keys(this._wanStatus).filter((i) => this._wanStatus[i].backup).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq);
     if (backups.length === 0)
       return;
@@ -567,7 +588,7 @@ class RoutingPlugin extends Plugin {
         for (const viaIntf of backups)
           this._wanStatus[viaIntf].active = false;
       } else {
-        this._activateFirstReady(backups);
+        this._activateFirstReady(backups, holder);
       }
     }
     for (const viaIntf of backups) {
@@ -586,7 +607,7 @@ class RoutingPlugin extends Plugin {
           // e.g., a bridge WAN is not flushed at startup
           await this._removeUncachedDnsRoutes(viaIntf, status.plugin, af);
       }
-      await this._installWanRoutes(viaIntf, status.plugin, state, this._backupWanMetric(status, carrier), af, {
+      await this._installWanRoutes(viaIntf, status.plugin, state, this._standbyWanMetric(status, carrier), af, {
         ipv6: status.active === true,
         ipv6Default: status.active === true,
         dns: status.active === true
@@ -625,7 +646,7 @@ class RoutingPlugin extends Plugin {
   }
 
   // a standby backup's address or ready change only touches its own routes, no flush of the global tables
-  async _refreshStandbyBackupRoutes(intf, af) {
+  async _refreshStandbyBackupRoutes(intf, af, opts = {}) {
     await lock.acquire(LOCK_SHARED, async () => {
       const status = this._wanStatus[intf];
       // a takeover in the meantime already installed it with its current address
@@ -633,8 +654,11 @@ class RoutingPlugin extends Plugin {
         return;
       const state = await status.plugin.state();
       await this._removeWanRoutes([status.plugin], af);
-      await this._installWanRoutes(intf, status.plugin, state, this._backupWanMetric(status, state.carrier || 0), af, {ipv6: false, ipv6Default: false, dns: false});
-      if (af == 4)
+      // a primary_standby standby keeps its DNS routes, a load_balance one would take DNS traffic from the multipath route
+      const dns = this.networkConfig.default.type === 'primary_standby';
+      await this._installWanRoutes(intf, status.plugin, state, this._standbyWanMetric(status, state.carrier || 0), af, {ipv6: false, ipv6Default: false, dns});
+      // a link coming up may change the source addresses the output SNAT rules use
+      if (af == 4 || opts.snat)
         await this._refreshOutputSNATRules(4);
     });
   }
@@ -658,6 +682,7 @@ class RoutingPlugin extends Plugin {
     // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
     await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
       const activeWANsBefore = this._getActiveWANNames();
+      const holder = this._holdingBackup();
       // flush global default routing table, no need to touch global static routing table here
       const type = this.networkConfig.default.type || "single";
       if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
@@ -683,7 +708,7 @@ class RoutingPlugin extends Plugin {
           let inUseIntfFound = false;
           const viaIntfs = Object.keys(this._wanStatus).sort((i, j) => this._wanStatus[i].seq - this._wanStatus[j].seq); // sort by seq in ascending order
           const lastActiveIntf = viaIntfs.filter((i) => this._wanStatus[i].active === true).pop() || null;
-          const currentActiveIntf = this._activateFirstReady(viaIntfs);
+          const currentActiveIntf = this._activateFirstReady(viaIntfs, holder);
           for (const viaIntf of viaIntfs) {
             const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
             const state = await viaIntfPlugin.state();
@@ -709,7 +734,7 @@ class RoutingPlugin extends Plugin {
                 inUseIntfFound = true;
               }
             }
-            const metric = this._wanMetric(this._wanStatus[viaIntf], carrier);
+            const metric = this._standbyWanMetric(this._wanStatus[viaIntf], carrier);
             // only add IPv6 routes for primary WAN for primary_standby mode
             // do not add IPv6 default route for inactive WAN under dual WAN setup, WAN connectivity check only uses IPv4
             await this._installWanRoutes(viaIntf, viaIntfPlugin, state, metric, af, {
@@ -737,17 +762,21 @@ class RoutingPlugin extends Plugin {
         case "load_balance": {
           const multiPathDesc = [];
           const multiPathDesc6 = [];
+          const hasBackups = Object.values(this._wanStatus).some(s => s.backup);
           for (const viaIntf of Object.keys(this._wanStatus).filter((i) => !this._wanStatus[i].backup)) {
             const viaIntfPlugin = this._wanStatus[viaIntf].plugin;
             const ready = this._wanStatus[viaIntf].ready;
             const weight = this._wanStatus[viaIntf].weight || 50;
             const state = await viaIntfPlugin.state();
             const carrier = state.carrier || 0;
-            this._wanStatus[viaIntf].active = ready;
+            // with backups an apply for one address family keeps the selection, as it does for the backups
+            if (!af || !hasBackups)
+              this._wanStatus[viaIntf].active = ready && !this._isHeld(this._wanStatus[viaIntf], holder);
+            const active = this._wanStatus[viaIntf].active === true;
             this._wanStatus[viaIntf].carrier = carrier;
-            this._wanStatus[viaIntf].inUse = (this._wanStatus[viaIntf].active === true);
+            this._wanStatus[viaIntf].inUse = active;
 
-            const metric = this._wanMetric(this._wanStatus[viaIntf], carrier);
+            const metric = this._standbyWanMetric(this._wanStatus[viaIntf], carrier);
             if (!af || af == 4) {
               if (state && state.ip4s) {
                 for (const ip4 of state.ip4s) {
@@ -779,7 +808,7 @@ class RoutingPlugin extends Plugin {
             if (!af || af == 4) {
               if (gw) {
                 // add a default route with higher metric if it is inactive. A default route is needed for WAN connectivity check, e.g., ping -I eth0 1.1.1.1
-                if (ready) {
+                if (active) {
                   multiPathDesc.push({ nextHop: gw, dev: viaIntf, weight: weight });
                 } else {
                   await routing.addRouteToTable("default", gw, viaIntf, routing.RT_GLOBAL_DEFAULT, metric, 4).catch((err) => { });
@@ -808,7 +837,7 @@ class RoutingPlugin extends Plugin {
 
             if (!af || af == 6) {
               if (gw6) {
-                if (ready) {
+                if (active) {
                   multiPathDesc6.push({ nextHop: gw6, dev: viaIntf, weight: weight });
                 } else {
                   // do not add IPv6 default route for inactive WAN, WAN connectivity check only uses IPv4
@@ -848,7 +877,7 @@ class RoutingPlugin extends Plugin {
             await routing.addMultiPathRouteToTable("default", routing.RT_MAIN, 6, 1, ...multiPathDesc6).catch((err) => { });
           }
           // after the multipath route, so a ready backup is never the only default route meanwhile
-          await this._applyBackupWanRoutes(af);
+          await this._applyBackupWanRoutes(af, holder);
           if (!Object.keys(this._wanStatus).some((i) => this._wanStatus[i].active === true)) {
             for (const k of Object.keys(this._wanStatus)) {
               this._wanStatus[k].inUse = false;
@@ -882,21 +911,24 @@ class RoutingPlugin extends Plugin {
     return wanSwitched;
   }
 
-  // a WAN inherits ready/active by seq from the last apply. switchedOnLoss is what a lost interface
+  // a primary inherits ready/active by seq from the last apply's primary, a backup by name from the same backup, so reordering
+  // the backups neither creates nor drops the one holding traffic. switchedOnLoss is what a lost interface
   // reports as wanSwitched, and only if it was active when switchedOnlyIfActive is set
-  async _addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, switchedOnLoss, switchedOnlyIfActive) {
+  async _addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, switchedOnLoss, switchedOnlyIfActive, backup = false) {
     this.subscribeChangeFrom(viaIntfPlugin);
     wanStatus[viaIntf] = {
       active: false,
       ready: true
     };
-    for (const intf of Object.keys(lastWanStatus)) {
-      if (lastWanStatus[intf].seq === seq) {
-        wanStatus[viaIntf].active = lastWanStatus[intf].active;
-        wanStatus[viaIntf].ready = lastWanStatus[intf].ready;
-        break;
-      }
+    const last = backup
+      ? (lastWanStatus[viaIntf] && lastWanStatus[viaIntf].backup ? lastWanStatus[viaIntf] : null)
+      : Object.values(lastWanStatus).find(s => s.seq === seq && !s.backup);
+    if (last) {
+      wanStatus[viaIntf].active = last.active;
+      wanStatus[viaIntf].ready = last.ready;
     }
+    if (backup)
+      wanStatus[viaIntf].backup = true;
     if (await viaIntfPlugin.isInterfacePresent() === false) {
       // need to publish wan conn change events if it was ready previously
       if (wanStatus[viaIntf].ready === true) {
@@ -913,6 +945,30 @@ class RoutingPlugin extends Plugin {
     }
     wanStatus[viaIntf].seq = seq;
     wanStatus[viaIntf].plugin = viaIntfPlugin;
+  }
+
+  // the backup WANs of the config, without the names that are already a WAN
+  _backupIntfs(settings, primaryIntfs) {
+    const backups = [];
+    const viaIntfs = _.get(settings, 'backup.viaIntfs');
+    for (const viaIntf of _.isArray(viaIntfs) ? viaIntfs : []) {
+      if (primaryIntfs.includes(viaIntf) || backups.includes(viaIntf)) {
+        this.log.error(`${viaIntf} is already a WAN, ignore it as a backup`);
+        continue;
+      }
+      backups.push(viaIntf);
+    }
+    return backups;
+  }
+
+  // backups rank after the primary WANs, from seq on
+  async _addBackupWans(wanStatus, backups, seq, lastWanStatus, changeDescs) {
+    for (const viaIntf of backups) {
+      const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
+      if (!viaIntfPlugin)
+        this.fatal(`Cannot find global default backup interface plugin ${viaIntf}`);
+      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq++, lastWanStatus, changeDescs, true, true, true);
+    }
   }
 
   async apply() {
@@ -950,13 +1006,15 @@ class RoutingPlugin extends Plugin {
                       if (settings.viaIntf2)
                         viaIntfs.push(settings.viaIntf2);
                     }
+                    const backups = defaultRoutingType === "primary_standby" ? this._backupIntfs(settings, viaIntfs) : [];
                     for (let seq = 0; seq < viaIntfs.length; seq++) {
                       const viaIntf = viaIntfs[seq];
                       const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
                       if (!viaIntfPlugin)
                         this.fatal(`Cannot find global default interface plugin ${viaIntf}`);
-                      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, viaIntfs.length > 1, true);
+                      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, viaIntfs.length + backups.length > 1, true);
                     }
+                    await this._addBackupWans(wanStatus, backups, viaIntfs.length, lastWanStatus, changeDescs);
                     break;
                   }
                   case "load_balance": {
@@ -971,18 +1029,7 @@ class RoutingPlugin extends Plugin {
                       wanStatus[viaIntf].weight = nextHop.weight;
                       seq++;
                     }
-                    for (const viaIntf of _.isArray(settings.bakIntfs) ? settings.bakIntfs : []) {
-                      if (wanStatus[viaIntf]) {
-                        this.log.error(`${viaIntf} is already a WAN of load_balance, ignore it in bakIntfs`);
-                        continue;
-                      }
-                      const viaIntfPlugin = pl.getPluginInstance("interface", viaIntf);
-                      if (!viaIntfPlugin)
-                        this.fatal(`Cannot find global default backup interface plugin ${viaIntf}`);
-                      await this._addWanStatus(wanStatus, viaIntf, viaIntfPlugin, seq, lastWanStatus, changeDescs, true, true);
-                      wanStatus[viaIntf].backup = true;
-                      seq++;
-                    }
+                    await this._addBackupWans(wanStatus, this._backupIntfs(settings, nextHops.map(n => n.viaIntf)), seq, lastWanStatus, changeDescs);
                     const hashPolicy = settings.hashPolicy || "l3";
                     switch (hashPolicy) {
                       case "l4": {
@@ -1176,6 +1223,12 @@ class RoutingPlugin extends Plugin {
         const intf = payload && payload.intf;
         const intfPlugin = this._wanStatus[intf] && this._wanStatus[intf].plugin
         const type = (this.networkConfig && this.networkConfig.default && this.networkConfig.default.type) || "single";
+        if (this._isStandbyBackup(intf)) {
+          this._refreshStandbyBackupRoutes(intf, 4).catch((err) => {
+            this.log.error(`Failed to refresh routes of standby backup WAN ${intf}`, err.message);
+          });
+          break;
+        }
      
         if (type === 'primary_standby' && this.pluginConfig && this.pluginConfig.smooth_failover) {
           // update global default routes related to the interface
@@ -1183,12 +1236,6 @@ class RoutingPlugin extends Plugin {
             this.refreshGlobalIntfRoutes(intf, 4);
             break;
           }
-        }
-        if (this._isStandbyBackup(intf)) {
-          this._refreshStandbyBackupRoutes(intf, 4).catch((err) => {
-            this.log.error(`Failed to refresh routes of standby backup WAN ${intf}`, err.message);
-          });
-          break;
         }
         this._reapplyNeeded = true;
         pl.scheduleReapply();
@@ -1228,6 +1275,12 @@ class RoutingPlugin extends Plugin {
             (_.isArray(intfPlugin.networkConfig.intf) && intfPlugin.networkConfig.intf.includes(intf)) || 
             (_.isString(intfPlugin.networkConfig.intf) && intfPlugin.networkConfig.intf === intf)
           ) && intfPlugin.isStaticIP()) {
+            if (this._isStandbyBackup(wan)) {
+              this._refreshStandbyBackupRoutes(wan, null, {snat: true}).catch((err) => {
+                this.log.error(`Failed to refresh routes of standby backup WAN ${wan}`, err.message);
+              });
+              continue;
+            }
             pl.acquireApplyLock(async () => {
               this._reapplyNeeded = true;
               this.propagateConfigChanged(Plugin.CHANGE_FULL);
@@ -1281,18 +1334,8 @@ class RoutingPlugin extends Plugin {
         if (!currentStatus.ready && intfPlugin.isReady()) {
           currentStatus.ready = true;
           // need to be stricter if inactive WAN is back to ready or fast failback if no WAN is active currently
-          switch (type) {
-            case "load_balance": {
-              // a recovered nextHop always takes traffic back, a backup follows the primary_standby rule
-              changeActiveWanNeeded = currentStatus.backup ? this._failbackSwitchNeeded(currentStatus) : true;
-              break;
-            }
-            case "primary_standby": {
-              changeActiveWanNeeded = this._failbackSwitchNeeded(currentStatus);
-              break;
-            }
-            default:
-          }
+          if (type === "load_balance" || type === "primary_standby")
+            changeActiveWanNeeded = this._takesOver(currentStatus, this._wanStatus[this._getActiveWANNames()[0]]);
           changeDesc = {
             intf: intf,
             ready: true,
@@ -1326,10 +1369,7 @@ class RoutingPlugin extends Plugin {
             const activeWanStatus = Object.values(this._wanStatus).filter(s => s.active).sort((a, b) => a.seq - b.seq);
             if (_.isEmpty(activeWanStatus)) {
               const inUseIntfs = Object.values(this._wanStatus).filter(s => s.inUse).sort((a, b) => a.seq - b.seq);
-              const failback = !!(this.networkConfig.default && this.networkConfig.default.failback);
-              const shouldSwitch = _.isEmpty(inUseIntfs) ||
-                (failback && inUseIntfs.length > 0 && currentStatus.seq < inUseIntfs[0].seq);
-              if (shouldSwitch)
+              if (this._takesOver(currentStatus, inUseIntfs[0]))
                 this.scheduleApplyActiveGlobalDefaultRouting({intf:intf, ready: intfPlugin.isReady(),wanSwitched: true,failures: failures});
             }
           } else {

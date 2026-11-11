@@ -46,6 +46,7 @@ function fakeIntf(name, idx, opts) {
     async getDns4Nameservers() { return [`10.0.${idx}.53`]; },
     async getRoutableDns6Nameservers() { return o.ip6 ? [`2001:db8:${idx}::53`] : []; },
     async isInterfacePresent() { return o.present; },
+    isStaticIP() { return o.staticIP === true; },
     async getIPv4Addresses() { return [`10.0.${idx}.2`]; },
     isReady() { return o.ready; },
   };
@@ -54,10 +55,14 @@ function fakeIntf(name, idx, opts) {
 const origGetPluginInstance = pl.getPluginInstance;
 const origScheduleReapply = pl.scheduleReapply;
 const origPublishChangeApplied = pl.publishChangeApplied;
+const origAcquireApplyLock = pl.acquireApplyLock;
 let reapplies = 0;
+let applyLocks = 0;
 
-const LB_BACKUP = {type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}], bakIntfs: ['wlan0'], failback: true};
-const LB_TWO_BACKUPS = {type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}], bakIntfs: ['wlan0', 'wlan1'], failback: true};
+const LB_BACKUP = {type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}], backup: {viaIntfs: ['wlan0']}};
+const LB_TWO_BACKUPS = {type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}], backup: {viaIntfs: ['wlan0', 'wlan1']}};
+const PS_BACKUP = {type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], backup: {viaIntfs: ['wlan0']}};
+const PS_TWO_BACKUPS = {type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], backup: {viaIntfs: ['wlan0', 'wlan1']}};
 
 // index of the first recorded command containing needle
 const at = (needle) => stub.calls.findIndex(c => c.includes(needle));
@@ -79,10 +84,11 @@ function setup(def, wans, pluginConfig = {smooth_failover: true}) {
   plugin.publishWANConnChange = async (desc) => { plugin.published.push(desc); };
   plugin.processWANConnChange = async () => {};
   plugin.scheduleApplyActiveGlobalDefaultRouting = (desc) => { plugin.scheduled.push(desc); };
-  // seed ready/active/carrier by seq, apply() inherits them
+  // seed ready/active as the last apply left them: apply() inherits them by seq, or by name for a backup
+  const backups = (def.backup && def.backup.viaIntfs) || [];
   plugin._wanStatus = {};
   wans.forEach((w, seq) => {
-    plugin._wanStatus[`seed${seq}`] = {seq, ready: w.ready !== false, active: w.active === true};
+    plugin._wanStatus[w.name] = {seq, ready: w.ready !== false, active: w.active === true, backup: backups.includes(w.name)};
   });
   return {plugin, intfs};
 }
@@ -104,12 +110,15 @@ describe('Test global routing plugin', function() {
     reapplies = 0;
     pl.scheduleReapply = () => { reapplies++; };
     pl.publishChangeApplied = async () => {};
+    applyLocks = 0;
+    pl.acquireApplyLock = async () => { applyLocks++; };
   });
 
   after(() => {
     pl.getPluginInstance = origGetPluginInstance;
     pl.scheduleReapply = origScheduleReapply;
     pl.publishChangeApplied = origPublishChangeApplied;
+    pl.acquireApplyLock = origAcquireApplyLock;
   });
 
   describe('golden command sequences', function() {
@@ -270,7 +279,7 @@ describe('Test global routing plugin', function() {
 
   describe('load_balance backup WANs', function() {
     it('registers backups after the nextHops, skipping duplicates and a non-array value', async() => {
-      const {plugin} = setup(Object.assign({}, LB_BACKUP, {bakIntfs: ['wlan0', 'eth1', 'wlan0']}),
+      const {plugin} = setup(Object.assign({}, LB_BACKUP, {backup: {viaIntfs: ['wlan0', 'eth1', 'wlan0']}}),
         [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
       await plugin.apply();
       expect(Object.keys(plugin._wanStatus)).to.deep.equal(['eth0', 'eth1', 'wlan0']);
@@ -278,13 +287,20 @@ describe('Test global routing plugin', function() {
       expect(plugin._wanStatus.wlan0.weight).to.be.undefined;
       expect(plugin._wanStatus.eth1.backup).to.be.undefined;
 
-      const other = setup(Object.assign({}, LB_BACKUP, {bakIntfs: 'wlan0'}), [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
-      await other.plugin.apply();
-      expect(Object.keys(other.plugin._wanStatus)).to.deep.equal(['eth0', 'eth1']);
+      for (const backup of [{viaIntfs: 'wlan0'}, 'wlan0']) {
+        const other = setup(Object.assign({}, LB_BACKUP, {backup}), [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+        await other.plugin.apply();
+        expect(Object.keys(other.plugin._wanStatus)).to.deep.equal(['eth0', 'eth1']);
+      }
+
+      // the replaced key is no longer read
+      const old = setup({type: 'load_balance', nextHops: LB_BACKUP.nextHops, bakIntfs: ['wlan0']}, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await old.plugin.apply();
+      expect(Object.keys(old.plugin._wanStatus)).to.deep.equal(['eth0', 'eth1']);
     });
 
     it('fails the apply when a backup has no interface plugin', async() => {
-      const {plugin} = setup(Object.assign({}, LB_BACKUP, {bakIntfs: ['wlan9']}), [{name: 'eth0'}, {name: 'eth1'}]);
+      const {plugin} = setup(Object.assign({}, LB_BACKUP, {backup: {viaIntfs: ['wlan9']}}), [{name: 'eth0'}, {name: 'eth1'}]);
       let error = null;
       await plugin.apply().catch((err) => { error = err; });
       expect(error).to.contain('wlan9');
@@ -400,7 +416,7 @@ describe('Test global routing plugin', function() {
     });
 
     it('keeps the backup selection on an apply for one address family', async() => {
-      const {plugin} = setup(Object.assign({}, LB_TWO_BACKUPS, {failback: false}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
+      const {plugin} = setup(LB_TWO_BACKUPS, [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
         {name: 'wlan0', ready: false}, {name: 'wlan1'}]);
       await plugin.apply();
       expect(plugin._wanStatus.wlan1.active).to.be.true;
@@ -415,7 +431,7 @@ describe('Test global routing plugin', function() {
       expect(plugin._wanStatus.wlan1.active).to.be.false;
     });
 
-    it('repeats a load_balance apply without bakIntfs with the same commands', async() => {
+    it('repeats a load_balance apply without backups with the same commands', async() => {
       const {plugin} = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}, {viaIntf: 'eth1', weight: 50}]},
         [{name: 'eth0'}, {name: 'eth1', ready: false}]);
       await plugin.apply();
@@ -511,6 +527,8 @@ describe('Test global routing plugin', function() {
         ownRoutesOnly();
         expect(stub.calls).to.include(`sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference ${metric}`);
         expect(stub.calls).to.include(`sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table global_default preference ${metric}`);
+        // a ready flip leaves the output SNAT rules alone, as on master
+        expect(stub.matching('FR_OUTPUT_SNAT')).to.be.empty;
       }
       expect(plugin.scheduled).to.be.empty;
       expect(reapplies).to.be.equal(0);
@@ -541,14 +559,14 @@ describe('Test global routing plugin', function() {
       expect(plugin.scheduled.map(d => [d.intf, d.ready, d.wanSwitched])).to.deep.equal([['eth1', true, true]]);
     });
 
-    it('fails back to a higher ranked backup only with failback', async() => {
-      for (const failback of [true, false]) {
-        const {plugin, intfs} = setup(Object.assign({}, LB_TWO_BACKUPS, {failback}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
+    it('fails back to a higher ranked backup only with backup failback, which defaults to on', async() => {
+      for (const [failback, scheduled] of [[true, 1], [false, 0], [undefined, 1]]) {
+        const {plugin, intfs} = setup(Object.assign({}, LB_TWO_BACKUPS, {backup: {viaIntfs: ['wlan0', 'wlan1'], failback}}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
           {name: 'wlan0', ready: false}, {name: 'wlan1'}]);
         await plugin.apply();
         intfs.wlan0.o.ready = true;
         connCheck(plugin, 'wlan0');
-        expect(plugin.scheduled.length).to.be.equal(failback ? 1 : 0);
+        expect(plugin.scheduled.length).to.be.equal(scheduled);
       }
     });
   });
@@ -576,7 +594,7 @@ describe('Test global routing plugin', function() {
     });
 
     it('keeps a ready standby backup below the active lower ranked backup on an IPv4 change', async() => {
-      const {plugin, intfs} = setup(Object.assign({}, LB_TWO_BACKUPS, {failback: false}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
+      const {plugin, intfs} = setup(Object.assign({}, LB_TWO_BACKUPS, {backup: {viaIntfs: ['wlan0', 'wlan1'], failback: false}}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false},
         {name: 'wlan0', ready: false}, {name: 'wlan1'}]);
       await plugin.apply();
       expect(plugin._wanStatus.wlan1.active).to.be.true;
@@ -612,6 +630,229 @@ describe('Test global routing plugin', function() {
       plugin.onEvent(event.buildEvent(event.EVENT_IP6_CHANGE, {intf: 'wlan0'}));
       await settle();
       expect(stub.calls).to.include('sudo ip -6 route flush table global_default');
+    });
+  });
+
+  describe('backup object takeover and hold', function() {
+    const defaultVia = (dev, table = 'main', af = 4) => stub.calls.filter(c => c.includes(`-${af} route add unicast default via`) && c.includes(`dev ${dev} table ${table} `));
+    const multipath = (af = 4) => stub.calls.filter(c => c.startsWith(`sudo ip -${af} route add default table main metric 1`));
+
+    // the WAN_CONN_CHECK path: the interface turns (un)ready, then the scheduled apply runs
+    async function turn(ctx, intf, ready) {
+      ctx.intfs[intf].o.ready = ready;
+      ctx.plugin.scheduled = [];
+      connCheck(ctx.plugin, intf);
+      const scheduled = ctx.plugin.scheduled.map(d => [d.intf, d.ready, d.wanSwitched]);
+      stub.calls.length = 0;
+      if (scheduled.length > 0)
+        await ctx.plugin._applyActiveGlobalDefaultRouting(true);
+      return scheduled;
+    }
+    const activeNames = (plugin) => plugin._getActiveWANNames();
+
+    it('registers primary_standby backups after the viaIntfs and ignores them under single', async() => {
+      const {plugin} = setup(Object.assign({}, PS_BACKUP, {backup: {viaIntfs: ['wlan0', 'eth1']}}), [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      expect(Object.keys(plugin._wanStatus)).to.deep.equal(['eth0', 'eth1', 'wlan0']);
+      expect(plugin._wanStatus.wlan0).to.include({seq: 2, backup: true, active: false});
+      expect(plugin.getWANConnStates().wlan0.backup).to.be.true;
+
+      const single = setup({type: 'single', viaIntf: 'eth0', backup: {viaIntfs: ['wlan0']}}, [{name: 'eth0'}, {name: 'wlan0'}]);
+      await single.plugin.apply();
+      expect(Object.keys(single.plugin._wanStatus)).to.deep.equal(['eth0']);
+    });
+
+    it('counts backups when a lost primary_standby WAN reports a switch', async() => {
+      const withBackup = setup({type: 'primary_standby', viaIntfs: ['eth0'], backup: {viaIntfs: ['wlan0']}},
+        [{name: 'eth0', active: true, present: false}, {name: 'wlan0'}]);
+      await withBackup.plugin.apply();
+      const without = setup({type: 'primary_standby', viaIntfs: ['eth0']}, [{name: 'eth0', active: true, present: false}]);
+      await without.plugin.apply();
+      await settle();
+      expect(withBackup.plugin.published.map(d => [d.intf, d.wanSwitched])).to.deep.equal([['eth0', true]]);
+      expect(without.plugin.published.map(d => [d.intf, d.wanSwitched])).to.deep.equal([['eth0', false]]);
+    });
+
+    it('primary_standby moves from the active backup to any viaIntf that turns ready, not only the first', async() => {
+      const ctx = setup(PS_BACKUP, [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0'}]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(await turn(ctx, 'eth1', true)).to.deep.equal([['eth1', true, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth1']);
+      expect(defaultVia('eth1').map(c => c.split('preference ')[1])).to.deep.equal(['2']);
+      expect(defaultVia('eth1', 'main', 6)).to.not.be.empty;
+      expect(defaultVia('wlan0', 'main', 6)).to.be.empty;
+      // among viaIntfs the top level failback still decides, off by default
+      expect(await turn(ctx, 'eth0', true)).to.deep.equal([]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth1']);
+    });
+
+    it('load_balance moves from the active backup to the nextHops that turn ready, one by one', async() => {
+      const ctx = setup(LB_BACKUP, [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0'}]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(await turn(ctx, 'eth1', true)).to.deep.equal([['eth1', true, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth1']);
+      expect(multipath()).to.deep.equal(['sudo ip -4 route add default table main metric 1 nexthop via 10.0.2.1 dev eth1 weight 50']);
+      expect(ctx.plugin._wanStatus.wlan0).to.include({active: false, inUse: false});
+      // the unready nextHop stays out of the multipath route
+      expect(defaultVia('eth0').map(c => c.split('preference ')[1])).to.deep.equal(['101']);
+      expect(await turn(ctx, 'eth0', true)).to.deep.equal([['eth0', true, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth0', 'eth1']);
+      expect(multipath()).to.deep.equal(['sudo ip -4 route add default table main metric 1 nexthop via 10.0.1.1 dev eth0 weight 50 nexthop via 10.0.2.1 dev eth1 weight 50']);
+      expect(multipath(6)).to.deep.equal(['sudo ip -6 route add default table main metric 1 nexthop via 2001:db8:1::1 dev eth0 weight 50 nexthop via 2001:db8:2::1 dev eth1 weight 50']);
+    });
+
+    it('load_balance with backupFailback off keeps traffic on the backup until it fails', async() => {
+      const ctx = setup(Object.assign({}, LB_BACKUP, {backupFailback: false}), [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0'}]);
+      await ctx.plugin.apply();
+      expect(await turn(ctx, 'eth0', true)).to.deep.equal([]);
+      await settle();
+      expect(ctx.plugin.published.map(d => [d.intf, d.ready, d.wanSwitched])).to.deep.equal([['eth0', true, false]]);
+      // a full apply, e.g. a config POST, keeps the hold: the ready nextHop sits behind the backup, out of the multipath route
+      stub.calls.length = 0;
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(multipath()).to.be.empty;
+      expect(defaultVia('eth0').map(c => c.split('preference ')[1])).to.deep.equal(['101']);
+      expect(defaultVia('wlan0').map(c => c.split('preference ')[1])).to.deep.equal(['3']);
+      // the plain seq order applies once the backup fails
+      expect(await turn(ctx, 'wlan0', false)).to.deep.equal([['wlan0', false, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth0']);
+    });
+
+    it('load_balance with backup failback off keeps the lower ranked backup', async() => {
+      const ctx = setup({type: 'load_balance', nextHops: [{viaIntf: 'eth0', weight: 50}], backup: {viaIntfs: ['eth1', 'wlan0'], failback: false}},
+        [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0'}]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(await turn(ctx, 'eth1', true)).to.deep.equal([]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(await turn(ctx, 'eth0', true)).to.deep.equal([['eth0', true, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth0']);
+    });
+
+    it('load_balance with backups keeps the nextHop selection on an apply for one address family', async() => {
+      const ctx = setup(LB_BACKUP, [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0'}]);
+      await ctx.plugin.apply();
+      ctx.plugin._wanStatus.eth0.ready = true;
+      for (const af of [6, 4]) {
+        await ctx.plugin._applyActiveGlobalDefaultRouting(true, af);
+        expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      }
+      await ctx.plugin._applyActiveGlobalDefaultRouting(true);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth0']);
+    });
+
+    it('primary_standby with backupFailback off holds the viaIntfs through a takeover between backups, an IPv6 apply and config POSTs', async() => {
+      const def = Object.assign({}, PS_TWO_BACKUPS, {backupFailback: false});
+      const ctx = setup(def, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}, {name: 'wlan1'}]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth0']);
+      expect(await turn(ctx, 'eth0', false)).to.deep.equal([['eth0', false, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth1']);
+      expect(await turn(ctx, 'eth1', false)).to.deep.equal([['eth1', false, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(await turn(ctx, 'wlan0', false)).to.deep.equal([['wlan0', false, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan1']);
+      // eth0 is held
+      expect(await turn(ctx, 'eth0', true)).to.deep.equal([]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan1']);
+      // wlan0 takes over from wlan1 (backup failback on by default), eth0 stays held behind it
+      expect(await turn(ctx, 'wlan0', true)).to.deep.equal([['wlan0', true, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(defaultVia('eth0').map(c => c.split('preference ')[1])).to.deep.equal(['101']);
+      expect(defaultVia('wlan0').map(c => c.split('preference ')[1])).to.deep.equal(['3']);
+      // the EVENT_IP6_CHANGE path for eth0 keeps IPv6 on the backup
+      stub.calls.length = 0;
+      await ctx.plugin.flush(6);
+      await ctx.plugin._applyActiveGlobalDefaultRouting(true, 6);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      expect(defaultVia('wlan0', 'main', 6)).to.not.be.empty;
+      expect(defaultVia('eth0', 'main', 6)).to.be.empty;
+      // an IPv4 change of the held eth0 under smooth_failover keeps it behind the backup
+      stub.calls.length = 0;
+      ctx.plugin.onEvent(event.buildEvent(event.EVENT_IP_CHANGE, {intf: 'eth0'}));
+      await settle();
+      expect(defaultVia('eth0').map(c => c.split('preference ')[1])).to.deep.equal(['101']);
+      // a config POST keeps the hold; one that ranks wlan1 first moves traffic to it, still not to eth0
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      ctx.plugin.networkConfig = {default: Object.assign({}, def, {backup: {viaIntfs: ['wlan1', 'wlan0']}})};
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan1']);
+      // once the holder fails, the ready primary wins over the ready backup
+      expect(await turn(ctx, 'wlan1', false)).to.deep.equal([['wlan1', false, true]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['eth0']);
+    });
+
+    it('a backup inherits only its own state across a config POST', async() => {
+      // wlan1 lands on the seq where wlan0 was active, it must not become a second holder
+      const def = Object.assign({}, PS_BACKUP, {backup: {viaIntfs: ['wlan0'], failback: false}});
+      const ctx = setup(def, [{name: 'eth0', ready: false}, {name: 'eth1', ready: false}, {name: 'wlan0'}, {name: 'wlan1'}]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      ctx.plugin.networkConfig = {default: Object.assign({}, def, {backup: {viaIntfs: ['wlan1', 'wlan0'], failback: false}})};
+      await ctx.plugin.apply();
+      expect(ctx.plugin._wanStatus.wlan1).to.include({seq: 2, active: false});
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      // a former primary does not hand a backup its state either
+      ctx.plugin.networkConfig = {default: {type: 'primary_standby', viaIntfs: ['eth0', 'wlan1'], backup: {viaIntfs: ['eth1']}}};
+      ctx.plugin._wanStatus.eth1.active = true;
+      ctx.plugin._wanStatus.eth1.ready = true;
+      await ctx.plugin.apply();
+      expect(ctx.plugin._wanStatus.eth1).to.include({backup: true});
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan1']);
+    });
+
+    it('a primary does not inherit the state of a backup on its former seq', async() => {
+      // eth2 lands on the seq where the active wlan0 was; a missing eth2 must not report its loss as a switch
+      const ctx = setup({type: 'primary_standby', viaIntfs: ['eth0'], backup: {viaIntfs: ['wlan0']}},
+        [{name: 'eth0', ready: false}, {name: 'wlan0'}, {name: 'eth2', present: false}]);
+      await ctx.plugin.apply();
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+      await settle();
+      ctx.plugin.published = [];
+      ctx.plugin.networkConfig = {default: {type: 'primary_standby', viaIntfs: ['eth0', 'eth2'], backup: {viaIntfs: ['wlan0']}}};
+      await ctx.plugin.apply();
+      await settle();
+      expect(ctx.plugin._wanStatus.eth2).to.include({seq: 1, active: false, ready: false});
+      expect(ctx.plugin.published.map(d => [d.intf, d.ready, d.wanSwitched])).to.deep.equal([['eth2', false, false]]);
+      expect(activeNames(ctx.plugin)).to.deep.equal(['wlan0']);
+    });
+
+    it('primary_standby refreshes only a standby backup on its address change, with its DNS routes', async() => {
+      for (const pluginConfig of [{smooth_failover: true}, {}]) {
+        stub.reset();
+        stub.failOn(' route del ');
+        reapplies = 0;
+        const {plugin} = setup(PS_BACKUP, [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0'}], pluginConfig);
+        await plugin.apply();
+        stub.calls.length = 0;
+        plugin.onEvent(event.buildEvent(event.EVENT_IP_CHANGE, {intf: 'wlan0'}));
+        await settle();
+        expect(reapplies).to.be.equal(0);
+        expect(stub.calls.filter(c => (c.includes(' route ') || c.includes(' r show ')) && !c.includes('wlan0'))).to.be.empty;
+        expect(stub.calls).to.include('sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference 3');
+        expect(stub.calls).to.include('sudo ip -4 route add unicast 10.0.3.53 via 10.0.3.1 dev wlan0 table main preference 3');
+      }
+    });
+
+    it('refreshes only a standby backup when its link with a static IP comes up', async() => {
+      const {plugin} = setup(LB_BACKUP, [{name: 'eth0', staticIP: true}, {name: 'eth1'}, {name: 'wlan0', staticIP: true}]);
+      await plugin.apply();
+      stub.calls.length = 0;
+      plugin.onEvent(event.buildEvent(event.EVENT_IF_UP, {intf: 'wlan0'}));
+      await settle();
+      expect(applyLocks).to.be.equal(0);
+      expect(stub.calls).to.include('sudo ip -4 route add unicast default via 10.0.3.1 dev wlan0 table main preference 3');
+      expect(stub.calls.filter(c => (c.includes(' route ') || c.includes(' r show ')) && !c.includes('wlan0'))).to.be.empty;
+      // the output SNAT rules are rebuilt as the full apply did
+      expect(stub.calls).to.include('sudo iptables -w -t nat -F FR_OUTPUT_SNAT');
+      expect(stub.matching('-A FR_OUTPUT_SNAT -s 10.0.3.2 -o eth0 -j MASQUERADE')).to.not.be.empty;
+      plugin.onEvent(event.buildEvent(event.EVENT_IF_UP, {intf: 'eth0'}));
+      expect(applyLocks).to.be.equal(1);
     });
   });
 
