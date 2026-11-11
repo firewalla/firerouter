@@ -12,6 +12,9 @@ cache-size=3000
 
 strict-order
 
+# when a name has addresses on several networks, answer with the one on the querier's network
+localise-queries
+
 # per-interface configurations
 conf-dir=/home/pi/.firewalla/config/dnsmasq/%INTERFACE_UUID%
 # global configurations
