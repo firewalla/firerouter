@@ -2515,6 +2515,11 @@ class InterfaceBasePlugin extends Plugin {
           currentStatus.ready = true;
           changeDesc = { intf, ready: true, failures };
         }
+        if (!active) {
+          this.onWanCheckFailed().catch((err) => {
+            this.log.error(`Failed to handle the failed wan check on ${this.name}`, err.message);
+          });
+        }
         if (wasPendingTest) {
           const duration = this._pendingTestTimestamp ? (Math.floor(Date.now() / 1000) - this._pendingTestTimestamp) : 0;
           this.log.info(`Finished 1st wan status test (took ${duration} seconds) after config change, ${this.name} final status: `, currentStatus);
@@ -2532,6 +2537,10 @@ class InterfaceBasePlugin extends Plugin {
 
   isReady() {
     return this._wanConnState && this._wanConnState.ready || false;
+  }
+
+  // called on every failed wan connectivity check of this interface, after its ready state is updated
+  async onWanCheckFailed() {
   }
 
   async publishWANStateChange(changeDesc) {
