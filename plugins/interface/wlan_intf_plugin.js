@@ -107,10 +107,14 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
-      const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
-      return execFile("sudo", [wpaCliPath, "-p", ctlSocket, "-i", instance.name].concat(args))
+      return WLANInterfacePlugin.execWpaCli(instance.name, ctlSocket, args)
     }
+  }
+
+  // ctrlDir is the control socket directory of the interface's wpa_supplicant or hostapd
+  static async execWpaCli(ifname, ctrlDir, args) {
+    return execFile("sudo", [await platform.getWpaCliBinPath(), "-p", ctrlDir, "-i", ifname].concat(args));
   }
 
 
@@ -398,7 +402,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   async getWpaStatus() {
     // wpa_cli is interoperable on both station and ap interface
-    const lines = await execFile("sudo", [await platform.getWpaCliBinPath(), "-p", this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`, "-i", this.name, "status"])
+    const ctrlDir = this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`;
+    const lines = await WLANInterfacePlugin.execWpaCli(this.name, ctrlDir, ["status"])
       .then(result => result.stdout.trim().split('\n')).catch(() => []);
     const status = {};
     /*
