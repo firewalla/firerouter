@@ -25,9 +25,22 @@ const fs = require('fs');
 const Promise = require('bluebird');
 Promise.promisifyAll(fs);
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
+const AsyncLock = require('async-lock');
+const lock = new AsyncLock();
 
 const serverKeyDir = `${r.getUserConfigFolder()}/sshd/keys`;
 const keyAlgorithms = platform.getSSHKeyTypes();
+const sshdConfigDir = `${r.getUserConfigFolder()}/sshd`;
+const extraConfigDir = `${r.getUserConfigFolder()}/sshd_config.d`;
+const listenAddressesPath = `${sshdConfigDir}/listen_addresses`;
+const listenStatePath = `${sshdConfigDir}/listen_state.json`;
+const LOCK_RELOAD = "LOCK_RELOAD_SSHD";
+// sshd plugins apply concurrently, one reload after all of them instead of one per interface
+const RELOAD_DELAY = 3000;
+// OpenSSH's MAX_LISTEN_SOCKS: with one listen address more, sshd exits on start or reload and ssh
+// stops working on every network, loopback included
+const MAX_LISTEN_SOCKS = 16;
+const LOOPBACK_LISTEN_ADDRESSES = 1; // ListenAddress 127.0.0.1 in default_sshd_config
 
 
 class SSHDPlugin extends Plugin {
@@ -68,9 +81,94 @@ class SSHDPlugin extends Plugin {
   }
 
   async reloadSSHD() {
-    await execFile(`${__dirname}/reload_sshd.sh`, []).catch((err) => {
-      this.log.error(`Failed to execute reload_sshd.sh`, err.message);
-    });
+    SSHDPlugin.scheduleReload(this.log);
+  }
+
+  // written to a temp file and renamed, so the listen_state route never reads a half-written file
+  static async _writeFileAtomic(path, content) {
+    const tmpPath = `${path}.tmp`;
+    await fs.writeFileAsync(tmpPath, content);
+    await fs.renameAsync(tmpPath, path);
+  }
+
+  static scheduleReload(log) {
+    if (SSHDPlugin._reloadTask)
+      clearTimeout(SSHDPlugin._reloadTask);
+    SSHDPlugin._reloadTask = setTimeout(() => {
+      SSHDPlugin._reloadTask = null;
+      lock.acquire(LOCK_RELOAD, async () => {
+        await SSHDPlugin.writeListenAddresses(log);
+        await execFile(`${__dirname}/reload_sshd.sh`, []);
+      }).catch((err) => {
+        log.error(`Failed to reload sshd`, err.message);
+      });
+    }, RELOAD_DELAY);
+  }
+
+  // LAN first, then interfaces that are neither, WAN last; by name within each, numbers in order.
+  // the app sends the whole config on every change, so this order does not depend on history
+  static selectListenAddresses(entries, budget) {
+    const sorted = entries.slice().sort((a, b) => a.rank - b.rank || a.intf.localeCompare(b.intf, undefined, { numeric: true }));
+    const listening = [];
+    const dropped = [];
+    const seen = new Set();
+    for (const { intf, ip } of sorted) {
+      if (seen.has(ip))
+        continue;
+      seen.add(ip);
+      (listening.length < budget ? listening : dropped).push({ intf, ip });
+    }
+    return { listening, dropped };
+  }
+
+  static _listenRank(intf) {
+    const intfPlugin = pl.getPluginInstance("interface", intf);
+    if (intfPlugin && intfPlugin.isLAN())
+      return 0;
+    if (intfPlugin && intfPlugin.isWAN())
+      return 2;
+    return 1;
+  }
+
+  static async _countExtraListenAddresses() {
+    const files = await fs.readdirAsync(extraConfigDir).catch(() => []);
+    let count = 0;
+    for (const file of files.filter(f => f.endsWith(".conf"))) {
+      const content = await fs.readFileAsync(`${extraConfigDir}/${file}`, "utf8").catch(() => "");
+      count += (content.match(/^\s*ListenAddress\s/gim) || []).length;
+    }
+    return count;
+  }
+
+  // writes the ListenAddress lines reload_sshd.sh puts in sshd_config, capped so sshd can still start
+  static async writeListenAddresses(log) {
+    const files = await fs.readdirAsync(sshdConfigDir).catch(() => []);
+    const entries = [];
+    for (const file of files) {
+      const m = file.match(/^sshd_config\.(.+)$/);
+      if (!m)
+        continue;
+      const intf = m[1];
+      const rank = SSHDPlugin._listenRank(intf);
+      const content = await fs.readFileAsync(`${sshdConfigDir}/${file}`, "utf8").catch(() => "");
+      for (const line of content.split(/\\n|\n/)) {
+        const ip = line.replace(/^\s*ListenAddress\s+/, "").trim();
+        if (ip)
+          entries.push({ intf, ip, rank });
+      }
+    }
+    const budget = Math.max(0, MAX_LISTEN_SOCKS - LOOPBACK_LISTEN_ADDRESSES - await SSHDPlugin._countExtraListenAddresses());
+    const { listening, dropped } = SSHDPlugin.selectListenAddresses(entries, budget);
+    if (dropped.length > 0)
+      log.warn(`sshd listens on at most ${budget} network addresses, not listening on ${dropped.map(e => `${e.ip} (${e.intf})`).join(", ")}`);
+    // escaped \\n on purpose, reload_sshd.sh passes it to sed
+    await fs.writeFileAsync(listenAddressesPath, listening.map(e => `ListenAddress ${e.ip}`).join('\\n'));
+    await SSHDPlugin._writeFileAtomic(listenStatePath, JSON.stringify({ listening, dropped }));
+  }
+
+  static async getListenState() {
+    const content = await fs.readFileAsync(listenStatePath, "utf8").catch(() => null);
+    return content ? JSON.parse(content) : { listening: [], dropped: [] };
   }
 
   _getConfFilePath() {

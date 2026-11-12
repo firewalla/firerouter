@@ -2,11 +2,9 @@
 
 CUR_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
+# written by sshd_plugin.js from the per-interface sshd_config.* files, capped to what sshd can listen on
 LISTEN_ADDRESSES=""
-
-for CONF_FILE in /home/pi/.router/config/sshd/sshd_config.*; do
-  [[ -f "$CONF_FILE" ]] && LISTEN_ADDRESSES="$LISTEN_ADDRESSES$(cat $CONF_FILE)\n"
-done
+[[ -f /home/pi/.router/config/sshd/listen_addresses ]] && LISTEN_ADDRESSES="$(cat /home/pi/.router/config/sshd/listen_addresses)"
 
 sed "s/#LISTEN_ADDRESSES#/$LISTEN_ADDRESSES/g" $CUR_DIR/default_sshd_config > /home/pi/.router/config/sshd/sshd_config
 
