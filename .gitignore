@@ -4,3 +4,7 @@
 
 logs
 *.log
+
+.claude/
+CLAUDE.md
+AGENTS.md
