@@ -8,7 +8,8 @@ Type=simple
 Restart=always
 WorkingDirectory=%WORKING_DIRECTORY%
 ExecStart=/bin/bash %DHCP_DIRECTORY%/dhcp.sh
-ExecReload=/usr/bin/pkill -HUP dnsmasq
+# match on config file
+ExecReload=/usr/bin/pkill -f -HUP dnsmasq.dhcp
 
 [Install]
 WantedBy=multi-user.target
