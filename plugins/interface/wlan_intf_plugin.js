@@ -39,6 +39,10 @@ const wpaSupplicantScript = `${r.getFireRouterHome()}/scripts/wpa_supplicant.sh`
 const AP_SCAN_RESTORE_DEBOUNCE_MS = 2000;
 const AP_SCAN_RESTORE_WATCHDOG_MS = 35000;
 
+const WPA_SCAN_MIN_INTERVAL_MS = 60 * 1000;
+// wpa_supplicant is connected or connecting, a scan would only get in its way
+const WPA_STATES_NO_SCAN = new Set(['COMPLETED', 'AUTHENTICATING', 'ASSOCIATING', 'ASSOCIATED', '4WAY_HANDSHAKE', 'GROUP_HANDSHAKE']);
+
 class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   static async preparePlugin() {
@@ -107,10 +111,14 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
     const instance = await WLANInterfacePlugin.getInstanceWithWpaSupplicant(iwPhy)
     if (instance) {
-      const wpaCliPath = await platform.getWpaCliBinPath();
       const ctlSocket = `${r.getRuntimeFolder()}/wpa_supplicant/${instance.name}`
-      return execFile("sudo", [wpaCliPath, "-p", ctlSocket, "-i", instance.name].concat(args))
+      return WLANInterfacePlugin.execWpaCli(instance.name, ctlSocket, args)
     }
+  }
+
+  // ctrlDir is the control socket directory of the interface's wpa_supplicant or hostapd
+  static async execWpaCli(ifname, ctrlDir, args) {
+    return execFile("sudo", [await platform.getWpaCliBinPath(), "-p", ctrlDir, "-i", ifname].concat(args));
   }
 
 
@@ -398,7 +406,8 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
 
   async getWpaStatus() {
     // wpa_cli is interoperable on both station and ap interface
-    const lines = await execFile("sudo", [await platform.getWpaCliBinPath(), "-p", this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`, "-i", this.name, "status"])
+    const ctrlDir = this.isWAN() ? `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}` : `${r.getRuntimeFolder()}/hostapd`;
+    const lines = await WLANInterfacePlugin.execWpaCli(this.name, ctrlDir, ["status"])
       .then(result => result.stdout.trim().split('\n')).catch(() => []);
     const status = {};
     /*
@@ -512,6 +521,33 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
     state.vendor = vendor;
     return state;
+  }
+
+  // wpa_supplicant gives up scanning after a while when its network is gone, so a lost uplink never comes back
+  // on its own. scan for it again while the box has no internet
+  async onWanCheckFailed() {
+    // no wpaSupplicant config means no wpa_supplicant service is running for this interface, there is nothing to scan
+    if (!this.networkConfig || !this.networkConfig.wpaSupplicant)
+      return;
+    // reads isReady() of each WAN, not the active list: single routing mode keeps a failed WAN active
+    const routingPlugin = pl.getPluginInstance("routing", "global");
+    const wans = (routingPlugin && routingPlugin.getAllWANPlugins()) || [];
+    if (this.isReady() || wans.some(wan => wan.isReady()))
+      return;
+    // a timestamp rather than the failure count, ifdown events trigger extra checks
+    const now = Date.now();
+    if (now - (this._lastWpaScanTs || 0) < WPA_SCAN_MIN_INTERVAL_MS)
+      return;
+    this._lastWpaScanTs = now;
+
+    const { wpa_state: wpaState } = await this.getWpaStatus();
+    if (WPA_STATES_NO_SCAN.has(wpaState)) {
+      this.log.info(`No scan on ${this.name}, wpa_state is ${wpaState}`);
+      return;
+    }
+    // own control socket, not simpleWpaCommand(): it picks the instance by phy, which may be another interface
+    const result = await WLANInterfacePlugin.execWpaCli(this.name, `${r.getRuntimeFolder()}/wpa_supplicant/${this.name}`, ["scan"]);
+    this.log.info(`Scanning for the network on ${this.name} while no WAN is ready, wpa_state is ${wpaState}:`, result.stdout.trim());
   }
 
   onEvent(e) {

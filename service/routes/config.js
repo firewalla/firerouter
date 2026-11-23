@@ -503,6 +503,16 @@ router.get('/power_mode',
     }
   });
 
+// the addresses sshd listens on, and the ones left out because sshd cannot listen on more
+router.get('/sshd/listen_state', async (req, res, next) => {
+  const SSHDPlugin = require('../../plugins/sshd/sshd_plugin.js');
+  await SSHDPlugin.getListenState().then((state) => {
+    res.status(200).json(state);
+  }).catch((err) => {
+    res.status(500).json({errors: [err.message]});
+  });
+});
+
 router.get('/dhcp_lease/:intf', async (req, res, next) => {
     const intf = req.params.intf;
     if (!intf) {
