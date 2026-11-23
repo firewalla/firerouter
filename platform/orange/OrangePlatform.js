@@ -43,6 +43,10 @@ const EVENT_WPA_AUTHENTICATING = "EVENT_WPA_AUTHENTICATING";
 const EVENT_WPA_DISCONNECTED = "EVENT_WPA_DISCONNECTED";
 const EVENT_WPA_CONNECTED = "EVENT_WPA_CONNECTED";
 const EVENT_AP_SILENCE_TIMEOUT = "EVENT_AP_SILENCE_TIMEOUT";
+const EVENT_WIFI_SCAN = "EVENT_WIFI_SCAN";
+
+// long enough to pick an SSID and enter its password after a scan
+const SCAN_SILENCE_MS = 120000;
 
 const STATE_AP_SILENCE = "STATE_AP_SILENCE";
 const STATE_NORMAL = "STATE_NORMAL";
@@ -61,7 +65,7 @@ class OrangePlatform extends Platform {
 
   constructor() {
     super();
-    this.apStateAutomata = {wpaSupplicantPID: null, bands: {}};
+    this.apStateAutomata = {wpaSupplicantPID: null, lastAuthTs: null, lastConnectedTs: null, bands: {}};
     this.apStateAutomata.bands[BAND_24G] = {
       state: STATE_NORMAL,
       silenceStartTs: null,
@@ -846,6 +850,7 @@ class OrangePlatform extends Platform {
             return;
           }
           const band = freq >= 5000 ? BAND_5G : BAND_24G;
+          this.apStateAutomata.lastAuthTs = Date.now();
           if (pid !== this.apStateAutomata.wpaSupplicantPID) {
             log.info(`${LOG_TAG_STA_AP} wpa_supplicant pid changed, clearing attempted SSIDs cache`);
             this.apStateAutomata.bands[BAND_24G].attemptedSSIDs.clear();
@@ -858,7 +863,7 @@ class OrangePlatform extends Platform {
               if (!stateAutomata.attemptedSSIDs.has(`${ssid}`)) {
                 // extend silence period by 30 seconds for each new SSID authentication attempt
                 log.info(`${LOG_TAG_STA_AP} Extending silence period on band ${band} by 45 seconds for SSID ${ssid} authentication attempt`);
-                stateAutomata.silenceEndTs = Date.now() + 45000;
+                stateAutomata.silenceEndTs = Math.max(stateAutomata.silenceEndTs, Date.now() + 45000);
               }
               stateAutomata.attemptedSSIDs.add(`${ssid}`);
               break;
@@ -892,12 +897,41 @@ class OrangePlatform extends Platform {
           }
           break;
         }
+        case EVENT_WIFI_SCAN: {
+          // a scan usually precedes switching the Wi-Fi WAN, so free 5G before the first attempt instead of after it fails
+          const pl = require('../../plugins/plugin_loader.js');
+          const wlanIntf = pl.getPluginInstance("interface", this.getWifiClientInterface());
+          if (!wlanIntf || !wlanIntf.isWAN())
+            return;
+          const hostapds = Object.values(pl.getPluginInstances("hostapd") || {});
+          if (!hostapds.some(h => _.get(h, 'networkConfig.params.hw_mode') !== "g"))
+            return;
+          const stateAutomata = this.apStateAutomata.bands[BAND_5G];
+          if (stateAutomata.state === STATE_AP_SILENCE) {
+            // once the WAN has connected, keep the 5 second resume rather than holding the AP down again
+            if (!(this.apStateAutomata.lastConnectedTs >= stateAutomata.silenceStartTs))
+              stateAutomata.silenceEndTs = Math.max(stateAutomata.silenceEndTs, Date.now() + SCAN_SILENCE_MS);
+            return;
+          }
+          log.info(`${LOG_TAG_STA_AP} Wi-Fi scan requested, entering silence period on band ${BAND_5G}`);
+          stateAutomata.state = STATE_AP_SILENCE;
+          stateAutomata.silenceStartTs = Date.now();
+          stateAutomata.silenceEndTs = Date.now() + SCAN_SILENCE_MS;
+          stateAutomata.scanTriggered = true;
+          this.pauseAP(BAND_5G);
+          // stop now rather than after the restart debounce, a switch may follow the scan right away
+          await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${BAND_5G}`]).catch((err) => {
+            log.error(`${LOG_TAG_STA_AP} Failed to stop hostapd on band ${BAND_5G}`, err.message);
+          });
+          break;
+        }
         case EVENT_WPA_CONNECTED: {
           const {pid, bssid} = data;
           log.info(`${LOG_TAG_STA_AP} WPA connection established, clearing attempted SSIDs cache`);
           this.apStateAutomata.bands[BAND_24G].attemptedSSIDs.clear();
           this.apStateAutomata.bands[BAND_5G].attemptedSSIDs.clear();
           this.apStateAutomata.wpaSupplicantPID = pid;
+          this.apStateAutomata.lastConnectedTs = Date.now();
 
           for (const band of [BAND_24G, BAND_5G]) {
             const stateAutomata = this.apStateAutomata.bands[band];
@@ -922,6 +956,13 @@ class OrangePlatform extends Platform {
         if (stateAutomata.state === STATE_AP_SILENCE) {
           if (Date.now() >= stateAutomata.silenceEndTs) {
             stateAutomata.state = STATE_NORMAL;
+            const scanOnly = stateAutomata.scanTriggered && !(this.apStateAutomata.lastAuthTs >= stateAutomata.silenceStartTs);
+            stateAutomata.scanTriggered = false;
+            if (scanOnly) {
+              log.info(`${LOG_TAG_STA_AP} Silence period on band ${band} ended without a connection attempt, resuming AP`);
+              this.resumeAP(band);
+              continue;
+            }
             let needReapplyConfig = true;
             const pl = require('../../plugins/plugin_loader.js');
             const wlanIntf = pl.getPluginInstance("interface", this.getWifiClientInterface());
@@ -1004,6 +1045,10 @@ class OrangePlatform extends Platform {
     await exec(`echo 1 | sudo tee /sys/kernel/debug/ieee80211/${phyName}/dfs_skip_cac`).catch((err) => {
       log.error(`Failed to skip DFS CAC on phy ${phyName}`, err.message);
     });
+  }
+
+  async onWifiScan() {
+    await this.onEvent(EVENT_WIFI_SCAN, {});
   }
 
   async prepareSwitchWifi() {

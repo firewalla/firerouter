@@ -528,6 +528,10 @@ class Platform {
 
   }
 
+  async onWifiScan() {
+
+  }
+
   getWpaSupplicantDefaultConfig() {
     return [];
   }

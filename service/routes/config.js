@@ -26,6 +26,7 @@ const AsyncLock = require('async-lock');
 const lock = new AsyncLock();
 const sensorLoader = require('../../sensors/sensor_loader.js');
 const constants = require('../../util/constants.js');
+const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const WLAN_FLAG_WEP         = 0b1
 const WLAN_FLAG_WPA         = 0b10
@@ -145,6 +146,8 @@ router.get('/wlan/:intf/available', async (req, res, _next) => {
         return result
       })
     res.status(200).json(result)
+    // after replying, the app may be connected through the AP this pauses
+    await platform.onWifiScan();
   } catch(err) {
     log.error(req.url, err)
     res.status(500).json({errors: [err.message]});
