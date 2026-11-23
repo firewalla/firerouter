@@ -33,6 +33,8 @@ const maxErrCounter = 100; // do not try to set mac address again if too many er
 const R8125 = "r8125";
 // touch this file in the user config folder to keep the r8125 driver shipped in the OS image
 const R8125_OVERRIDE_DISABLE_FLAG = "disable_r8125_override";
+// where the image pins each ethernet port to a name by its PCI address or platform node
+const PERSISTENT_NET_RULES = "/etc/udev/rules.d/70-persistent-net.rules";
 
 class GSEPlatform extends Platform {
   getName() {
@@ -239,6 +241,9 @@ class GSEPlatform extends Platform {
       return;
 
     log.info(`Overriding ${R8125} with ${koPath}, srcversion ${loadedSrcVersion || "<not loaded>"} -> ${koSrcVersion}`);
+    // the reload re-probes both ports and the kernel hands out ethN in probe order, so take note
+    // of which port carries which name while that is still the mapping the box is configured for
+    const portsBefore = await this.getEthernetPortMapping();
     if (await this.isKernelModuleLoaded(R8125) && !await this.rmmodKernelModule(R8125))
       return;
     const loaded = await execFile("sudo", ["insmod", koPath]).then(() => true).catch((err) => {
@@ -249,9 +254,92 @@ class GSEPlatform extends Platform {
       // never leave the box without an ethernet driver
       log.warn(`Falling back to ${R8125} from OS image`);
       await this.modprobeKernelModule(R8125);
+      await this.enforceEthernetPortNames(portsBefore);
       return;
     }
     log.info(`${R8125} overridden, srcversion ${await this.getLoadedModuleSrcVersion(R8125)}`);
+    await this.enforceEthernetPortNames(portsBefore);
+  }
+
+  // Which r8125 port currently carries which interface name, as name -> PCI address.
+  async getEthernetPortMapping() {
+    const mapping = {};
+    const names = await fsp.readdir("/sys/class/net").catch(() => []);
+    for (const name of names) {
+      const driver = await fsp.realpath(`/sys/class/net/${name}/device/driver`).catch(() => null);
+      if (!driver || driver.split("/").pop() !== R8125)
+        continue;
+      const device = await fsp.realpath(`/sys/class/net/${name}/device`).catch(() => null);
+      if (device)
+        mapping[name] = device.split("/").pop();
+    }
+    return mapping;
+  }
+
+  // Which name each port is pinned to by the image, as PCI address -> name.
+  async getPinnedPortNames() {
+    const content = await fsp.readFile(PERSISTENT_NET_RULES, {encoding: "utf8"}).catch((err) => {
+      log.warn(`Cannot read ${PERSISTENT_NET_RULES}`, err.message);
+      return "";
+    });
+    const pinned = {};
+    for (const line of content.split("\n")) {
+      const kernel = line.match(/KERNELS=="([^"]+)"/);
+      const name = line.match(/NAME:?="([^"]+)"/);
+      if (kernel && name)
+        pinned[kernel[1]] = name[1];
+    }
+    return pinned;
+  }
+
+  // The kernel names the re-probed ports in probe order. udev pins them by PCI address, but when
+  // the two ports end up holding each other's name it cannot rename either - it logs
+  // "Failed to rename network interface ... File exists" for both and gives up - and the WAN ends
+  // up on the LAN socket until the next boot. Put the pinned names back, through a temporary name
+  // so that a swap is possible. The rules are the authority rather than what the box had a moment
+  // ago, so a box that came up already crossed - udev can lose the same race at the boot probe -
+  // is put right here too. This runs before any interface is configured, so the ports carry no
+  // address and belong to no bridge or bond yet.
+  async enforceEthernetPortNames(portsBefore) {
+    const nameOf = {};        // PCI address -> the name that port is supposed to carry
+    for (const name of Object.keys(portsBefore))
+      nameOf[portsBefore[name]] = name;
+
+    const portsAfter = await this.getEthernetPortMapping();
+    // the rules win wherever they have something to say; the names from before the reload are
+    // only the fallback, for a platform or an image that does not pin them
+    const pinned = await this.getPinnedPortNames();
+    for (const name of Object.keys(portsAfter)) {
+      if (pinned[portsAfter[name]])
+        nameOf[portsAfter[name]] = pinned[portsAfter[name]];
+    }
+    const misplaced = Object.keys(portsAfter).filter(name => nameOf[portsAfter[name]] && nameOf[portsAfter[name]] !== name);
+    if (misplaced.length === 0)
+      return;
+
+    log.warn("Ethernet port names are not the pinned ones, fixing", portsAfter, nameOf);
+    const parked = [];
+    for (let i = 0; i < misplaced.length; i++) {
+      const name = misplaced[i];
+      const temp = `fwrename${i}`;
+      // a rename needs the interface down; firerouter brings the ports up with the config later
+      await execFile("sudo", ["ip", "link", "set", name, "down"]).catch(() => {});
+      if (await execFile("sudo", ["ip", "link", "set", name, "name", temp]).then(() => true).catch((err) => {
+        log.error(`Failed to park ${name} as ${temp}`, err.message);
+        return false;
+      }))
+        parked.push({temp, target: nameOf[portsAfter[name]], origin: name});
+    }
+    for (const port of parked) {
+      await execFile("sudo", ["ip", "link", "set", port.temp, "name", port.target]).catch(async (err) => {
+        log.error(`Failed to rename ${port.temp} to ${port.target}`, err.message);
+        // a port left under a temporary name is worse than the swap: no config refers to it
+        await execFile("sudo", ["ip", "link", "set", port.temp, "name", port.origin]).catch((rollbackErr) => {
+          log.error(`Failed to roll ${port.temp} back to ${port.origin}`, rollbackErr.message);
+        });
+      });
+    }
+    log.info("Ethernet port names fixed", await this.getEthernetPortMapping());
   }
 
   async overrideWLANKernelModule() {
