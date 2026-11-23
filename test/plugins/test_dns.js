@@ -41,4 +41,10 @@ describe('Test interface base dhcp6', function(){
       await this.plugin.writeDNSConfFile();
       log.debug(`dns resolv ${this.plugin._getResolvFilePath()}\n`, await exec(`cat ${this.plugin._getResolvFilePath()}`).then(r => r.stdout.trim()).catch(err => null));
     });
+
+    it('should localise queries', async() => {
+      await this.plugin.writeDNSConfFile();
+      const conf = await exec(`cat ${this.plugin._getConfFilePath()}`).then(r => r.stdout);
+      expect(conf).to.match(/^localise-queries$/m);
+    });
   });
