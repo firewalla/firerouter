@@ -794,6 +794,18 @@ class NetworkConfigManager {
     return true;
   }
 
+  // a NIC can be added, removed or replaced after flash, so the active config follows the ports on every boot
+  async reconcileActiveConfig(config) {
+    if (!platform.isOnboardConfigSupported())
+      return config;
+    const phyNames = await this.getPhyInterfaceNames();
+    const reconciled = op.reconcilePorts(config, phyNames);
+    if (_.isEqual(reconciled, config))
+      return config;
+    // a changed config gets a new ncid when it is saved
+    return _.omit(reconciled, ["ncid", "reqId"]);
+  }
+
   async getDefaultConfig() {
     // use onboard-config.json when first apply network on crystal platform.
     if (platform.isOnboardConfigSupported()) {

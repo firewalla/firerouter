@@ -44,7 +44,12 @@ async function pre_run() {
   await sl.initSensors();
   // consume onboard-config on first boot after flash, no-op once consumed
   await ncm.consumeOnboardConfig().catch((err) => log.error("Failed to consume onboard config", err.message));
-  const activeConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
+  const lastConfig = ( await ncm.getActiveConfig()) || (await ncm.getDefaultConfig());
+  // if reconcile fails, keep booting with the last config unchanged(only for crystal!)
+  const activeConfig = await ncm.reconcileActiveConfig(lastConfig).catch((err) => {
+    log.error("Failed to reconcile active config with ports on this box", err.message);
+    return lastConfig;
+  });
   await ncm.tryApplyConfig(activeConfig, true);
   await ncm.saveConfig(activeConfig);
   await fwpclient.publishAsync("FIREWALLA:HEARTBEAT:UPDATE", JSON.stringify({"invoked-by":"firerouter"}));
