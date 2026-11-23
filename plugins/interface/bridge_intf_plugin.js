@@ -314,9 +314,9 @@ class BridgePortStateSync {
       this._log.warn(`bridge monitor link error`, err.message);
     });
     for (const physicalIntf of memberIntfs) {
-      const raw = await fsp.readFile(`/sys/class/net/${this._bridgeName}/brif/${physicalIntf}/state`, 'utf8').catch(() => null);
-      if (raw !== null)
-        this._scheduleApply(physicalIntf, parseInt(raw.trim(), 10));
+      const state = await BridgePortStateSync.readBrifState(this._bridgeName, physicalIntf);
+      if (state !== undefined)
+        this._scheduleApply(physicalIntf, state);
     }
     // bounded wait: the monitor is already live at this point, so a physical interface that keeps
     // flapping would keep its _runLoop (and this wait) alive indefinitely otherwise
@@ -367,8 +367,7 @@ class BridgePortStateSync {
     const afterMaster = line.slice(masterMatch.index + masterMatch[0].length);
     const stateMatch = afterMaster.match(/\bstate\s+(\w+)/);
     if (!stateMatch) return;
-    const stateMap = { forwarding: 3, blocking: 4, disabled: 0, listening: 1, learning: 2 };
-    const stateNum = stateMap[stateMatch[1]];
+    const stateNum = BridgePortStateSync.STATE_NUMBERS[stateMatch[1]];
     if (stateNum === undefined) return;
     this._scheduleApply(physicalIntf, stateNum);
   }
@@ -409,24 +408,28 @@ class BridgePortStateSync {
       .then(p => p.split('/').pop())
       .catch(() => null);
     if (!nativeBridge) return null;
-    const raw = await fsp.readFile(`/sys/class/net/${nativeBridge}/brif/${physicalIntf}/state`, 'utf8').catch(() => undefined);
-    if (raw === undefined) return undefined;
-    return parseInt(raw.trim(), 10);
+    return BridgePortStateSync.readBrifState(nativeBridge, physicalIntf);
+  }
+
+  // The kernel's STP state number of a bridge port, or undefined if it can't be read.
+  static async readBrifState(bridge, port) {
+    return fsp.readFile(`/sys/class/net/${bridge}/brif/${port}/state`, 'utf8')
+      .then(raw => parseInt(raw.trim(), 10))
+      .catch(() => undefined);
   }
 
   // Set all VLAN sub-interfaces of physicalIntf to forwarding (stpState===3) or disabled.
   // All non-forwarding states (blocking, listening, learning, disabled) collapse to disabled:
   // the VLAN bridge has STP off, so only forwarding/disabled have defined kernel semantics there.
   static async applyVlanPortStates(physicalIntf, stpState, log) {
-    const targetState = stpState === 3 ? 'forwarding' : 'disabled';
-    const targetNum = stpState === 3 ? 3 : 0;
+    const { forwarding, disabled } = BridgePortStateSync.STATE_NUMBERS;
+    const targetState = stpState === forwarding ? 'forwarding' : 'disabled';
+    const targetNum = stpState === forwarding ? forwarding : disabled;
     const allIntfs = await fsp.readdir('/sys/class/net/').catch(() => []);
     const vlanIntfs = allIntfs.filter(i => i.startsWith(`${physicalIntf}.`));
     for (const vlanIntf of vlanIntfs) {
       const vlanMaster = await fsp.readlink(`/sys/class/net/${vlanIntf}/master`).then(p => p.split('/').pop()).catch(() => null);
-      const current = vlanMaster
-        ? await fsp.readFile(`/sys/class/net/${vlanMaster}/brif/${vlanIntf}/state`, 'utf8').then(s => parseInt(s.trim(), 10)).catch(() => undefined)
-        : undefined;
+      const current = vlanMaster ? await BridgePortStateSync.readBrifState(vlanMaster, vlanIntf) : undefined;
       if (current === targetNum) continue;
       await execFile("sudo", ["bridge", "link", "set", "dev", vlanIntf, "state", targetState])
         .catch(err => { if (log) log.warn(`applyVlanPortStates: bridge link set dev ${vlanIntf} state ${targetState} failed`, err.message); });
@@ -436,3 +439,9 @@ class BridgePortStateSync {
 
 // upper bound on how long startMonitor() waits for the initial per-interface sync to land
 BridgePortStateSync.INITIAL_SYNC_TIMEOUT_MS = 3000;
+
+// kernel bridge port state numbers, by the names `bridge monitor link` prints
+BridgePortStateSync.STATE_NUMBERS = { disabled: 0, listening: 1, learning: 2, forwarding: 3, blocking: 4 };
+
+// exposed for the stub tests
+BridgeInterfacePlugin.BridgePortStateSync = BridgePortStateSync;

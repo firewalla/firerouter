@@ -133,4 +133,100 @@ describe('Test bridge interface plugin', function(){
       });
     });
   });
+
+  describe('port state reads', function(){
+    const { BridgePortStateSync } = BridgeInterfacePlugin;
+    const origReadFile = fsp.readFile;
+    const origReaddir = fsp.readdir;
+    const origReadlink = fsp.readlink;
+    // /sys/class/net/<bridge>/brif/<port>/state contents by "<bridge>/<port>", a missing key fails the read
+    let states;
+
+    beforeEach(() => {
+      states = {};
+      fsp.readFile = async (file) => {
+        const m = file.match(/^\/sys\/class\/net\/([^/]+)\/brif\/([^/]+)\/state$/);
+        const raw = m && states[`${m[1]}/${m[2]}`];
+        if (raw === undefined)
+          throw new Error(`ENOENT: ${file}`);
+        return raw;
+      };
+    });
+    afterEach(() => {
+      fsp.readFile = origReadFile;
+      fsp.readdir = origReaddir;
+      fsp.readlink = origReadlink;
+    });
+
+    describe('readBrifState', function(){
+      it('should return the state number', async()=> {
+        states["br0/eth1"] = "3\n";
+        expect(await BridgePortStateSync.readBrifState("br0", "eth1")).to.be.equal(3);
+        states["br0/eth1"] = "0\n";
+        expect(await BridgePortStateSync.readBrifState("br0", "eth1")).to.be.equal(0);
+      });
+
+      it('should return undefined when the read fails', async()=> {
+        expect(await BridgePortStateSync.readBrifState("br0", "eth9")).to.be.equal(undefined);
+      });
+    });
+
+    describe('getNativeBridgePortState', function(){
+      beforeEach(() => {
+        fsp.readlink = async (file) => file === "/sys/class/net/eth1/master" ? "../br0" : (() => { throw new Error("ENOENT"); })();
+      });
+
+      it('should read the state through the native bridge', async()=> {
+        states["br0/eth1"] = "4\n";
+        expect(await BridgePortStateSync.getNativeBridgePortState("eth1")).to.be.equal(4);
+      });
+
+      it('should return null without a native bridge', async()=> {
+        expect(await BridgePortStateSync.getNativeBridgePortState("eth2")).to.be.equal(null);
+      });
+
+      it('should return undefined when the state cannot be read', async()=> {
+        expect(await BridgePortStateSync.getNativeBridgePortState("eth1")).to.be.equal(undefined);
+      });
+    });
+
+    describe('applyVlanPortStates', function(){
+      beforeEach(() => {
+        fsp.readdir = async () => ["eth0", "eth1", "eth1.10", "eth2.10"];
+        fsp.readlink = async () => "../br1";
+      });
+
+      it('should skip a vlan port already at the target state', async()=> {
+        states["br1/eth1.10"] = "3\n";
+        await BridgePortStateSync.applyVlanPortStates("eth1", 3);
+        expect(stub.matching("bridge link set")).to.be.deep.equal([]);
+      });
+
+      it('should set forwarding when the vlan port differs', async()=> {
+        states["br1/eth1.10"] = "0\n";
+        await BridgePortStateSync.applyVlanPortStates("eth1", 3);
+        expect(stub.matching("bridge link set")).to.be.deep.equal(["sudo bridge link set dev eth1.10 state forwarding"]);
+      });
+
+      it('should collapse every other state to disabled', async()=> {
+        for (const stpState of [1, 2, 4]) {
+          stub.reset();
+          states["br1/eth1.10"] = "3\n";
+          await BridgePortStateSync.applyVlanPortStates("eth1", stpState);
+          expect(stub.matching("bridge link set")).to.be.deep.equal(["sudo bridge link set dev eth1.10 state disabled"]);
+        }
+      });
+
+      it('should skip a disabled vlan port when the target is disabled', async()=> {
+        states["br1/eth1.10"] = "0\n";
+        await BridgePortStateSync.applyVlanPortStates("eth1", 4);
+        expect(stub.matching("bridge link set")).to.be.deep.equal([]);
+      });
+
+      it('should set the state when the vlan port state cannot be read', async()=> {
+        await BridgePortStateSync.applyVlanPortStates("eth1", 3);
+        expect(stub.matching("bridge link set")).to.be.deep.equal(["sudo bridge link set dev eth1.10 state forwarding"]);
+      });
+    });
+  });
 });
