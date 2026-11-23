@@ -22,6 +22,8 @@ const pl = require('../plugin_loader.js');
 const fsp = require('fs').promises;
 const _ = require('lodash');
 const util = require('../../util/util.js');
+const era = require('../../event/EventRequestApi.js');
+const EventConstants = require('../../event/EventConstants.js');
 const platform = require('../../platform/PlatformLoader.js').getPlatform();
 
 const SEED_INTF = 'eth0';
@@ -278,6 +280,11 @@ class BridgePortStateSync {
     this._pendingStates = new Map();
     this._runningIntfs = new Set();
     this._runLoopPromises = new Map();
+    // last STP state seen per port, as the event's state name
+    this._lastStates = new Map();
+    // ts of the last change published per port
+    this._lastTs = new Map();
+    this._warnedStates = new Set();
   }
 
   // Kill the bridge monitor link subprocess and wait for any in-flight apply to finish, so that
@@ -288,6 +295,9 @@ class BridgePortStateSync {
       this._monitorProcess = null;
     }
     this._pendingStates.clear();
+    this._lastStates.clear();
+    this._lastTs.clear();
+    this._warnedStates.clear();
     await Promise.all(this._runLoopPromises.values());
   }
 
@@ -315,8 +325,14 @@ class BridgePortStateSync {
     });
     for (const physicalIntf of memberIntfs) {
       const state = await BridgePortStateSync.readBrifState(this._bridgeName, physicalIntf);
-      if (state !== undefined)
+      if (state !== undefined) {
+        // never over a line handled while the read was pending
+        if (!this._lastStates.has(physicalIntf)) {
+          const word = Object.keys(BridgePortStateSync.STATE_NUMBERS).find(k => BridgePortStateSync.STATE_NUMBERS[k] === state);
+          this._publishPortState(physicalIntf, state, word);
+        }
         this._scheduleApply(physicalIntf, state);
+      }
     }
     // bounded wait: the monitor is already live at this point, so a physical interface that keeps
     // flapping would keep its _runLoop (and this wait) alive indefinitely otherwise
@@ -368,8 +384,40 @@ class BridgePortStateSync {
     const stateMatch = afterMaster.match(/\bstate\s+(\w+)/);
     if (!stateMatch) return;
     const stateNum = BridgePortStateSync.STATE_NUMBERS[stateMatch[1]];
-    if (stateNum === undefined) return;
+    if (stateNum === undefined) {
+      if (!this._warnedStates.has(stateMatch[1])) {
+        this._warnedStates.add(stateMatch[1]);
+        this._log.warn(`unknown bridge port state "${stateMatch[1]}" on ${this._bridgeName}, ignored`);
+      }
+      return;
+    }
+    // here, not in _runLoop: _pendingStates keeps only the last state and would drop the ones in between
+    this._publishPortState(physicalIntf, stateNum, stateMatch[1]);
     this._scheduleApply(physicalIntf, stateNum);
+  }
+
+  // A port seen for the first time publishes its state: the box saves the first message of a key
+  // without logging it, so the changes behind it are the ones it logs. After that a change is one message.
+  _publishPortState(port, stateNum, kernelWord) {
+    const current = BridgePortStateSync.EVENT_STATE_NAMES[stateNum];
+    const last = this._lastStates.get(port);
+    if (last === current) return;
+    this._lastStates.set(port, current);
+    // after the port's previous message: the box orders the log by ts, so lines handled in one
+    // millisecond must not tie
+    const ts = Math.max(Date.now(), (this._lastTs.get(port) || 0) + 1);
+    this._lastTs.set(port, ts);
+    const where = `bridge port ${this._bridgeName}:${port}`;
+    this._log.info(last === undefined
+      ? `${where} ${current} (kernel ${kernelWord})`
+      : `${where} ${last} -> ${current} (kernel ${kernelWord})`);
+    const labels = {
+      current_state: current,
+      last_state: last === undefined ? null : last,
+      bridge: this._bridgeName, port, ok_value: 0, no_error: 1
+    };
+    era.addStateEvent(EventConstants.EVENT_BRIDGE_PORT_STP_STATE, port,
+      BridgePortStateSync.EVENT_STATE_VALUES[current], labels, ts);
   }
 
   _scheduleApply(physicalIntf, stateNum) {
@@ -442,6 +490,18 @@ BridgePortStateSync.INITIAL_SYNC_TIMEOUT_MS = 3000;
 
 // kernel bridge port state numbers, by the names `bridge monitor link` prints
 BridgePortStateSync.STATE_NUMBERS = { disabled: 0, listening: 1, learning: 2, forwarding: 3, blocking: 4 };
+
+// The event's port state for each kernel state; the AP and the switch publish the same four.
+// mstpd reports both listening and blocking as discarding.
+{
+  const n = BridgePortStateSync.STATE_NUMBERS;
+  BridgePortStateSync.EVENT_STATE_NAMES = {
+    [n.forwarding]: 'forwarding', [n.learning]: 'learning', [n.blocking]: 'discarding',
+    [n.listening]: 'discarding', [n.disabled]: 'disabled'
+  };
+}
+// state_value of the event; shared with the AP and the switch, append only
+BridgePortStateSync.EVENT_STATE_VALUES = { forwarding: 0, learning: 1, discarding: 2, disabled: 3 };
 
 // exposed for the stub tests
 BridgeInterfacePlugin.BridgePortStateSync = BridgePortStateSync;
