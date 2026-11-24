@@ -527,6 +527,11 @@ class Platform {
   async prepareSwitchWifi() {
 
   }
+  // called right before the STA selects the uplink, true if it disconnected the current uplink
+  async prepareSelectWifi(intf, ssid, bssid) {
+    return false;
+  }
+
 
   getWpaSupplicantDefaultConfig() {
     return [];
