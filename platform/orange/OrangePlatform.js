@@ -963,11 +963,18 @@ class OrangePlatform extends Platform {
             if (needReapplyConfig) {
               await ncm.acquireConfigRWLock(async () => {
                 const currentConfig = await ncm.getActiveConfig();
-                if (currentConfig) {
-                  await ncm.tryApplyConfig(currentConfig).catch((err) => {
-                    log.error(`${LOG_TAG_STA_AP} Failed to reapply current config`, err.message);
-                  });
-                }
+                if (!currentConfig)
+                  return;
+                // only the AP channel follows the STA here, a full reapply would also rebuild unrelated plugins and LAN DNS
+                const applied = await this._applyHostapdConfig(currentConfig).catch((err) => {
+                  log.error(`${LOG_TAG_STA_AP} Failed to apply hostapd config`, err.message);
+                  return false;
+                });
+                if (applied)
+                  return;
+                await ncm.tryApplyConfig(currentConfig).catch((err) => {
+                  log.error(`${LOG_TAG_STA_AP} Failed to reapply current config`, err.message);
+                });
               });
             }
             this.resumeAP(band);
@@ -978,7 +985,20 @@ class OrangePlatform extends Platform {
       log.error(`${LOG_TAG_STA_AP} Failed to check AP state automata`, err.message);
     });
   }
-  
+
+  // applies only the hostapd part of the converted config, false if the set of hostapd instances changed or applying failed,
+  // so that a full reapply is needed
+  async _applyHostapdConfig(config) {
+    const ncm = require('../../core/network_config_mgr.js');
+    const pl = require('../../plugins/plugin_loader.js');
+    const converted = await ncm.convertIntegratedAPConfig(config);
+    const newConfigs = (converted && converted.hostapd) || {};
+    if (!_.isEqual(Object.keys(newConfigs).sort(), Object.keys(pl.getPluginInstances("hostapd") || {}).sort()))
+      return false;
+    const errors = await pl.reapplyInstances("hostapd", newConfigs);
+    return errors !== null && _.isEmpty(errors);
+  }
+
   needResetLinkBeforeSwitchWifi() {
     return false;
   }

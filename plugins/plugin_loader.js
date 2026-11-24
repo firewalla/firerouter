@@ -231,6 +231,7 @@ async function publishChangeFlags() {
 async function reapply(config, dryRun = false) {
   let t1, t2;
   return await lock.acquire(LOCK_REAPPLY, async () => {
+   try {
     t1 = Date.now() / 1000;
     applyInProgress = true;
     const errors = [];
@@ -382,16 +383,73 @@ async function reapply(config, dryRun = false) {
     await publishChangeFlags();
     lastAppliedTimestamp = Date.now() / 1000;
     return errors;
-  }).then((errors) => {
+   } finally {
+    // cleared before the lock is released, the next holder may already have set it when the handlers below run
     applyInProgress = false;
+   }
+  }).then((errors) => {
     lastAppliedTimestamp = Date.now() / 1000;
     t2 = Date.now() / 1000;
     log.info(`reapply is complete ${_.isEmpty(errors) ? "without" : "with"} error, elapsed time: ${(t2 - t1).toFixed(3)}`);
     return errors;
   }).catch((err) => {
-    applyInProgress = false;
     log.error(`Failed to apply network config`, err);
     return [err.message];
+  });
+}
+
+// apply new configs to existing instances of one category the way reapply does, without a full reapply. Every plugin that
+// subscribes to a changed instance is flushed and applied with it, the rest are left alone. An instance that fails to apply
+// stays marked, so the next reapply retries it although its config did not change. Returns the errors, or null if configs
+// names an instance that does not exist
+async function reapplyInstances(category, configs) {
+  return lock.acquire(LOCK_REAPPLY, async () => {
+    const t1 = Date.now() / 1000;
+    const existing = pluginCategoryMap[category] || {};
+    if (Object.keys(configs).some(name => !existing[name]))
+      return null;
+    applyInProgress = true;
+    const errors = [];
+    try {
+      const affected = new Set();
+      for (const name of Object.keys(configs)) {
+        const instance = existing[name];
+        if (_isConfigEqual(instance.networkConfig, configs[name]))
+          continue;
+        log.info(`Network config of ${category}-->${name} changed`);
+        instance.propagateConfigChanged(instance.getConfigChangeType(configs[name]));
+        instance._nextConfig = configs[name];
+        affected.add(instance);
+        for (const subscriber of instance.getRecursiveSubscriberPlugins()) {
+          if (affected.has(subscriber))
+            continue;
+          subscriber._nextConfig = subscriber.networkConfig;
+          affected.add(subscriber);
+        }
+      }
+      const ordered = (confs) => confs.map(pluginConf => [pluginConf, [...affected].filter(instance =>
+        (pluginCategoryMap[pluginConf.category] || {})[instance.name] === instance && instance.constructor.name === pluginConf.c.name)]);
+      for (const [pluginConf, instances] of ordered([...pluginConfs].reverse()))
+        for (const instance of instances)
+          await flushInstance(instance, pluginConf, false, false);
+      const failed = [];
+      for (const [pluginConf, instances] of ordered(pluginConfs)) {
+        for (const instance of instances) {
+          const count = errors.length;
+          await applyInstance(instance, pluginConf, errors);
+          if (errors.length > count)
+            failed.push(instance);
+        }
+      }
+      for (const instance of failed)
+        instance.propagateConfigChanged(Plugin.CHANGE_FULL);
+    } finally {
+      applyInProgress = false;
+    }
+    await publishChangeFlags();
+    lastAppliedTimestamp = Date.now() / 1000;
+    log.info(`reapply of ${category} instances is complete ${_.isEmpty(errors) ? "without" : "with"} error, elapsed time: ${(lastAppliedTimestamp - t1).toFixed(3)}`);
+    return errors;
   });
 }
 
@@ -421,6 +479,7 @@ module.exports = {
   getPluginInstances: getPluginInstances,
   acquireApplyLock: acquireApplyLock,
   reapply: reapply,
+  reapplyInstances: reapplyInstances,
   scheduleReapply: scheduleReapply,
   scheduleRestartRsyslog: scheduleRestartRsyslog,
   isApplyInProgress: isApplyInProgress,
