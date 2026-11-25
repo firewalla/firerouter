@@ -378,6 +378,8 @@ async function reapply(config, dryRun = false) {
       }
     }
     pluginCategoryMap = newPluginCategoryMap;
+    // before applyInProgress is cleared, so that one of them always shows this apply while the publish below is awaited
+    lastAppliedTimestamp = Date.now() / 1000;
     applyInProgress = false;
     // clear applyInProgress so that subsequent publish functions will send message to redis immediately
     await publishChangeFlags();
