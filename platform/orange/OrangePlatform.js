@@ -990,7 +990,9 @@ class OrangePlatform extends Platform {
         if (state === "ENABLED" && widened && widened.width === sta.width)
           return;
       }
-      log.warn(`${LOG_TAG_STA_AP} AP band ${band} did not come back at ${sta.width} MHz`);
+      // narrower than the STA its clients have no downlink, a restart brings it up at its configured width
+      log.warn(`${LOG_TAG_STA_AP} AP band ${band} did not come back at ${sta.width} MHz, it restarts once its config follows the STA`);
+      return band;
     });
   }
 
