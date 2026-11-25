@@ -153,6 +153,12 @@ class NetworkConfigManager {
           const wpaCliPath = await platform.getWpaCliBinPath();
           const socketDir = `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`;
           const wpaCli = (...args) => execFile("sudo", [wpaCliPath, "-p", socketDir, "-i", intf, ...args]);
+          // wpa_cli exits 0 when wpa_supplicant replies FAIL
+          const wpaCliOK = (...args) => wpaCli(...args).then((result) => {
+            const reply = result.stdout.trim();
+            if (reply !== "OK")
+              throw new Error(reply || `no reply to ${args[0]}`);
+          });
           const isWPAComplate = async () => {
             return await exec(`sudo ${wpaCliPath} -p ${socketDir} -i ${intf} status | grep wpa_state`).then(result => result.stdout.trim().endsWith("=COMPLETED")).catch((err) => false);
           };
@@ -270,15 +276,21 @@ class NetworkConfigManager {
           for (const key of Object.keys(params)) {
             const value = await util.generateWpaSupplicantConfig(key, params);
             // the key is allowlisted above but the value is caller supplied, keep it out of a shell
-            const error = await wpaCli("set_network", String(selectedNetwork.id), key, String(value)).then(() => null).catch((err) => err.message);
+            const error = await wpaCliOK("set_network", String(selectedNetwork.id), key, String(value)).then(() => null).catch((err) => err.message);
             if (error) {
               await finish([error], undoDisable);
               return;
             }
           }
-          let error = await wpaCli("select_network", String(selectedNetwork.id)).then(() => null).catch((err) => err.message);
+          // only now that the network is set up, as preparing may disconnect the current uplink
+          const bssid = params.bssid || (selectedNetwork.bssid && selectedNetwork.bssid !== "any" ? selectedNetwork.bssid : null);
+          const disconnected = await platform.prepareSelectWifi(intf, ssid, bssid).catch((err) => {
+            log.error(`Failed to prepare selecting ${ssid} on ${intf}`, err.message);
+            return false;
+          });
+          let error = await wpaCliOK("select_network", String(selectedNetwork.id)).then(() => null).catch((err) => err.message);
           if (error) {
-            await finish([error], undoDisable);
+            await finish([error], disconnected ? restorePrevious : undoDisable);
             return;
           }
           // the attempt may already have failed while select_network was returning
@@ -682,6 +694,9 @@ class NetworkConfigManager {
           log.verbose('returning')
           const final = results.filter(r => !selfWlanMacs.includes(r.mac))
           log.info(`Found ${final.length} SSIDs`)
+          // the scan interface drops its results soon after, a switch to one of the SSIDs may still need them
+          if (final.length)
+            this.lastWlanScan = {ts: Date.now(), wlans: final};
           resolve(final)
         }).catch((err) => {
           reject(err)
@@ -693,6 +708,13 @@ class NetworkConfigManager {
         WLANInterfacePlugin.releaseAPScanInterface();
       }
     }
+  }
+
+  // the most recent non-empty result of getWlansViaWpaSupplicant, null if older than maxAge milliseconds
+  getRecentWlanScan(maxAge = 600000) {
+    if (!this.lastWlanScan || Date.now() - this.lastWlanScan.ts > maxAge)
+      return null;
+    return this.lastWlanScan.wlans;
   }
 
   async getAvailableChannelsHostapd() {
