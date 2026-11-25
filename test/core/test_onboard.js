@@ -503,6 +503,46 @@ describe('Test onboard config consumption', function() {
     });
   });
 
+  describe('reconcileActiveConfig', () => {
+    const activeConfig = () => _.merge(op.expandProfile(adaptiveNetwork(), ports(4)), {ncid: "last-ncid"});
+
+    it('should leave the config alone on other platforms', async () => {
+      platform.isOnboardConfigSupported = () => false;
+      ncm.getPhyInterfaceNames = async () => ports(2);
+      const config = activeConfig();
+      expect(await ncm.reconcileActiveConfig(config)).to.equal(config);
+    });
+
+    it('should keep the config and its ncid when the ports are unchanged', async () => {
+      platform.isOnboardConfigSupported = () => true;
+      const config = activeConfig();
+      expect(await ncm.reconcileActiveConfig(config)).to.equal(config);
+    });
+
+    it('should drop the ports of a removed NIC and the ncid', async () => {
+      platform.isOnboardConfigSupported = () => true;
+      ncm.getPhyInterfaceNames = async () => ports(2);
+      const config = await ncm.reconcileActiveConfig(activeConfig());
+      expect(Object.keys(config.interface.phy)).to.eql(["eth0", "eth1"]);
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1"]);
+      expect(config.ncid).to.be.undefined;
+    });
+
+    it('should bridge the ports of an added NIC', async () => {
+      platform.isOnboardConfigSupported = () => true;
+      ncm.getPhyInterfaceNames = async () => ports(6);
+      const config = await ncm.reconcileActiveConfig(activeConfig());
+      expect(config.interface.bridge.br0.intf).to.eql(["eth1", "eth2", "eth3", "eth4", "eth5"]);
+    });
+
+    it('should keep the WAN port when it is absent', async () => {
+      platform.isOnboardConfigSupported = () => true;
+      ncm.getPhyInterfaceNames = async () => ["eth1", "eth2", "eth3"];
+      const config = activeConfig();
+      expect(await ncm.reconcileActiveConfig(config)).to.equal(config);
+    });
+  });
+
   describe('consumeOnboardConfig', () => {
     // redis and saveConfig are fully stubbed, live box config is never touched
     const testFile = "/tmp/test-onboard-config.json";

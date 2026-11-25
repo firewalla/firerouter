@@ -381,8 +381,9 @@ class NetworkConfigManager {
 
     if (result.active) {
       // if the wan is active after live check, immediately set the wan connectivity status to true on this wan to speed up the status update
+      // propagate it like WanConnCheckSensor does, so the routing plugin can select this wan now instead of after the next periodic check
       const event = require('./event.js');
-      intfPlugin.onEvent(event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: iface, active: true, forceState: true, failures: []}));
+      intfPlugin.propagateEvent(event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: iface, active: true, forceState: true, failures: []}));
     }
 
     return result;
@@ -814,6 +815,18 @@ class NetworkConfigManager {
     await rclient.setAsync("sysdb:onboardConfigHash", hash);
     log.info("Onboard network config is set as active config");
     return true;
+  }
+
+  // a NIC can be added, removed or replaced after flash, so the active config follows the ports on every boot
+  async reconcileActiveConfig(config) {
+    if (!platform.isOnboardConfigSupported())
+      return config;
+    const phyNames = await this.getPhyInterfaceNames();
+    const reconciled = op.reconcilePorts(config, phyNames);
+    if (_.isEqual(reconciled, config))
+      return config;
+    // a changed config gets a new ncid when it is saved
+    return _.omit(reconciled, ["ncid", "reqId"]);
   }
 
   async getDefaultConfig() {

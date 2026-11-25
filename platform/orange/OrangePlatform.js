@@ -826,6 +826,11 @@ class OrangePlatform extends Platform {
         delete this.apIntfReset[band];
         log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
         await execFile("sudo", ["systemctl", "restart", `firerouter_hostapd@band_${band}`]).catch((err) => {});
+        const primary = bssConfigs.find(line => line.startsWith("interface="));
+        if (band === BAND_5G && primary)
+          await this.skipCACWithinSTAChannel(primary.substring("interface=".length)).catch((err) => {
+            log.error(`Failed to check CAC on band ${band}`, err.message);
+          });
       });
     }, 2000);
     hostapdRestartTasks[band] = task;
@@ -1328,6 +1333,41 @@ class OrangePlatform extends Platform {
     await exec(`echo 1 | sudo tee /sys/kernel/debug/ieee80211/${phyName}/dfs_skip_cac`).catch((err) => {
       log.error(`Failed to skip DFS CAC on phy ${phyName}`, err.message);
     });
+  }
+
+  // the uplink AP already operates on the channels the STA is associated on, so a CAC confined to
+  // them is skipped rather than keeping the 5G AP down for a minute
+  async skipCACWithinSTAChannel(apIntf, attempts = 10) {
+    for (let i = 0; i < attempts; i++) {
+      await util.delay(1000);
+      const state = await execFile("sudo", ["hostapd_cli", "-p", `${r.getRuntimeFolder()}/hostapd`, "-i", apIntf, "status"])
+        .then(result => (result.stdout.match(/^state=(\S+)/m) || [])[1]).catch(() => null);
+      if (state === "ENABLED")
+        return;
+      // hostapd may still be starting up
+      if (state !== "DFS")
+        continue;
+      const apRange = await this._getOperatingFreqRange(apIntf);
+      const staRange = await this._getOperatingFreqRange(this.getWifiClientInterface());
+      if (!apRange || !staRange || apRange[0] < staRange[0] || apRange[1] > staRange[1]) {
+        log.info(`CAC on ${apIntf} ${JSON.stringify(apRange)} is not within the STA channel ${JSON.stringify(staRange)}, keep it`);
+        return;
+      }
+      log.info(`CAC on ${apIntf} ${JSON.stringify(apRange)} is within the STA channel ${JSON.stringify(staRange)}, skip it`);
+      await this.skipDFSCAC();
+      return;
+    }
+  }
+
+  // [low, high] edge frequencies in MHz, null if the interface is not on a channel or not on a single segment
+  async _getOperatingFreqRange(intf) {
+    const output = await execFile("iw", ["dev", intf, "info"]).then(result => result.stdout).catch(() => "");
+    const match = output.match(/width: (\d+) MHz[^,]*, center1: (\d+) MHz/);
+    if (!match)
+      return null;
+    const width = Number(match[1]);
+    const center = Number(match[2]);
+    return [center - width / 2, center + width / 2];
   }
 
   async prepareSwitchWifi() {
