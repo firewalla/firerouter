@@ -366,8 +366,17 @@ describe('Test network config validation', function(){
       for (const entry of entries) {
         const config = baseConfig();
         config.dhcp = { "br0": entry };
-        const errors = await ncm.validateConfig(config);
+        const errors = await ncm.validateConfig(config, { incoming: true });
         expect(errors, JSON.stringify(entry)).to.deep.equal(["range of dhcp br0 is not a valid ipv4 range"]);
+      }
+    });
+
+    // boot, onboard and revert validate a config that is already saved, which has to keep applying
+    it('should accept a saved dhcp entry without a usable range', async()=> {
+      for (const entry of [{}, { range: {} }, { range: null }, { range: { from: "10.10.0.10" } }, { gateway: "10.10.0.1" }, null]) {
+        const config = baseConfig();
+        config.dhcp = { "br0": entry };
+        expect(await ncm.validateConfig(config), JSON.stringify(entry)).to.be.empty;
       }
     });
 
@@ -375,14 +384,14 @@ describe('Test network config validation', function(){
       for (const extra of [{}, { relay: null }]) {
         const config = baseConfig();
         config.dhcp = { "br0": Object.assign({ range: LOCAL_RANGE, subnetMask: "255.255.255.0", lease: 86400 }, extra) };
-        expect(await ncm.validateConfig(config), JSON.stringify(extra)).to.be.empty;
+        expect(await ncm.validateConfig(config, { incoming: true }), JSON.stringify(extra)).to.be.empty;
       }
     });
 
     it('should not take relay null for a relay entry', async()=> {
       const config = baseConfig();
       config.dhcp = { "br0": { relay: null } };
-      expect(await ncm.validateConfig(config)).to.deep.equal(["range of dhcp br0 is not a valid ipv4 range"]);
+      expect(await ncm.validateConfig(config, { incoming: true })).to.deep.equal(["range of dhcp br0 is not a valid ipv4 range"]);
     });
   });
 

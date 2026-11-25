@@ -882,7 +882,9 @@ class NetworkConfigManager {
     return config;
   }
 
-  async validateConfig(config) {
+  // incoming: the config arrives through config/set. A check that only makes sense for new input
+  // runs then, since a saved config has to keep applying at boot and on revert
+  async validateConfig(config, { incoming = false } = {}) {
     if (!config)
       return ["config is not defined"];
     if (!config.interface)
@@ -934,10 +936,9 @@ class NetworkConfigManager {
                 return [`extraOptions of dhcp ${name} is not a dhcp option code ${code}`];
             }
           }
-          // a network served locally needs a range, or dhcp_plugin writes a broken dhcp-range
-          // line. apply_current_config validates too, so boot refuses a saved entry without one
+          // a network served locally needs a range, or dhcp_plugin writes a broken dhcp-range line
           const entry = section[name];
-          if (_.isNil(_.get(entry, "relay")) && !(isIPv4(_.get(entry, ["range", "from"])) && isIPv4(_.get(entry, ["range", "to"]))))
+          if (incoming && _.isNil(_.get(entry, "relay")) && !(isIPv4(_.get(entry, ["range", "from"])) && isIPv4(_.get(entry, ["range", "to"]))))
             return [`range of dhcp ${name} is not a valid ipv4 range`];
         }
       }

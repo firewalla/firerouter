@@ -285,7 +285,7 @@ describe('Test onboard network profile', function() {
     const common = (lans) => ({
       routing: {global: {default: {viaIntf: "eth0"}}},
       nat: _.fromPairs(lans.map(n => [`${n}-eth0`, {in: n, out: "eth0"}])),
-      dhcp: _.fromPairs(lans.map(n => [n, {gateway: "10.0.0.1", range: {from: "10.0.0.10", to: "10.0.0.250"}}]))
+      dhcp: _.fromPairs(lans.map(n => [n, {gateway: "10.0.0.1"}]))
     });
 
     // shaped like the GoldSE "me": a lag on eth1+eth3 with a vlan on it, eth2 alone with a vlan bridge
