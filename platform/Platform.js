@@ -532,6 +532,10 @@ class Platform {
     return false;
   }
 
+  // called right before wpa_supplicant starts on a WLAN interface, with the networks its new config adds or changes
+  async prepareWpaSupplicantStart(intf, changedNetworks) {
+  }
+
 
   getWpaSupplicantDefaultConfig() {
     return [];
