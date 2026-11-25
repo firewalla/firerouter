@@ -130,7 +130,8 @@ class DHCPPlugin extends Plugin {
     }
   }
 
-  async apply() {
+  // null while the interface is not present yet
+  async _resolveInterface() {
     let iface = this.name;
     if (iface.includes(":")) {
       // virtual interface, need to strip suffix
@@ -140,11 +141,20 @@ class DHCPPlugin extends Plugin {
     if (!ifacePlugin) {
       this.fatal(`Interface plugin ${this.name} is not found`);
     }
+    // in case prefix delegation is used, address may be changed dynamically
     this.subscribeChangeFrom(ifacePlugin);
     if (await ifacePlugin.isInterfacePresent() === false) {
       this.log.warn(`Interface ${this.name} is not present yet`);
-      return;
+      return null;
     }
+    return {iface, ifacePlugin};
+  }
+
+  async apply() {
+    const resolved = await this._resolveInterface();
+    if (!resolved)
+      return;
+    const {iface} = resolved;
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
       this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain, this.networkConfig.extraOptions);
     this._restartService();

@@ -24,6 +24,7 @@ const path = require('path');
 
 const stub = require('./stub_exec.js');
 const DHCPPlugin = stub.load(require.resolve('../../plugins/dhcp/dhcp_plugin.js'));
+const pl = require('../../plugins/plugin_loader.js');
 let log = require('../../util/logger.js')(__filename, 'info');
 
 // writeDHCPConfFile concatenates its values into a line-oriented dnsmasq conf file that
@@ -71,5 +72,72 @@ describe('Test dhcp plugin configuration', function(){
     // nothing in the generated file may be a daemon setting rather than dhcp option data
     for (const line of content.split("\n"))
       expect(line, `unexpected directive ${line}`).to.match(/^(dhcp-range|dhcp-option|dhcp-option-force|dhcp-boot)=/);
+  });
+});
+
+describe('Test dhcp plugin apply', function(){
+  this.timeout(30000);
+
+  const confPath = path.join(os.tmpdir(), `firerouter_test_dhcp_apply_${process.pid}.conf`);
+  const range = {from: "192.168.10.100", to: "192.168.10.150"};
+  const origGetPluginInstance = pl.getPluginInstance;
+  let ifaces;
+  let restarts;
+
+  const build = (name, config = {range, subnetMask: "255.255.255.0", lease: 86400}) => {
+    const plugin = stub.build(DHCPPlugin, name, config);
+    plugin._getConfFilePath = () => confPath;
+    plugin._restartService = () => { restarts++; };
+    return plugin;
+  };
+  const read = () => fs.readFileAsync(confPath, {encoding: "utf8"}).catch(() => null);
+
+  beforeEach(async () => {
+    ifaces = {};
+    restarts = 0;
+    pl.getPluginInstance = (category, name) => category === "interface" ? ifaces[name] : null;
+    await fs.unlinkAsync(confPath).catch(() => {});
+  });
+
+  afterEach(async () => {
+    pl.getPluginInstance = origGetPluginInstance;
+    await fs.unlinkAsync(confPath).catch(() => {});
+  });
+
+  it('should subscribe to the interface, write its range and restart dhcp', async() => {
+    ifaces.br1 = stub.fakeInterface();
+    const plugin = build("br1");
+    await plugin.apply();
+    expect(ifaces.br1.subscribers).to.deep.equal([plugin]);
+    expect(await read()).to.contain("dhcp-range=tag:br1,192.168.10.100,192.168.10.150,255.255.255.0,86400");
+    expect(restarts).to.equal(1);
+  });
+
+  it('should tag a virtual interface by its parent but look it up by its own name', async() => {
+    ifaces["br0:0"] = stub.fakeInterface();
+    const plugin = build("br0:0");
+    await plugin.apply();
+    expect(ifaces["br0:0"].subscribers).to.deep.equal([plugin]);
+    expect(await read()).to.contain("dhcp-range=tag:br0,");
+    expect(await read()).to.not.contain("tag:br0:0");
+  });
+
+  it('should write nothing and schedule no restart while the interface is not present', async() => {
+    ifaces.br1 = stub.fakeInterface({isInterfacePresent: async () => false});
+    const plugin = build("br1");
+    await plugin.apply();
+    // still subscribed, so the plugin is applied again once the interface shows up
+    expect(ifaces.br1.subscribers).to.deep.equal([plugin]);
+    expect(await read()).to.be.null;
+    expect(restarts).to.equal(0);
+  });
+
+  it('should fail without an interface plugin and write nothing', async() => {
+    const plugin = build("br1");
+    let thrown = null;
+    await plugin.apply().catch((err) => { thrown = err; });
+    expect(thrown).to.equal("Interface plugin br1 is not found");
+    expect(await read()).to.be.null;
+    expect(restarts).to.equal(0);
   });
 });
