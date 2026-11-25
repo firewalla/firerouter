@@ -369,8 +369,9 @@ class NetworkConfigManager {
 
     if (result.active) {
       // if the wan is active after live check, immediately set the wan connectivity status to true on this wan to speed up the status update
+      // propagate it like WanConnCheckSensor does, so the routing plugin can select this wan now instead of after the next periodic check
       const event = require('./event.js');
-      intfPlugin.onEvent(event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: iface, active: true, forceState: true, failures: []}));
+      intfPlugin.propagateEvent(event.buildEvent(event.EVENT_WAN_CONN_CHECK, {intf: iface, active: true, forceState: true, failures: []}));
     }
 
     return result;
