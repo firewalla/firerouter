@@ -344,4 +344,182 @@ describe('Test network config validation', function(){
       expect(errors).to.not.be.empty;
     });
   });
+
+  describe('dhcp range', function(){
+    const LOCAL_RANGE = { from: "10.10.0.10", to: "10.10.0.250" };
+
+    // an entry that would already make dhcp_plugin write a broken dhcp-range line
+    it('should reject a local dhcp entry without a usable range', async()=> {
+      const entries = [
+        {},
+        { range: {} },
+        { range: null },
+        { range: { from: "10.10.0.10" } },
+        { range: { to: "10.10.0.250" } },
+        { range: { from: "10.10.0.10", to: "10.10.0.250/24" } },
+        { range: { from: "010.10.0.10", to: "10.10.0.250" } },
+        { range: { from: "dhcp.example", to: "10.10.0.250" } },
+        { range: { from: ["10.10.0.10"], to: "10.10.0.250" } },
+        { range: { from: 10, to: "10.10.0.250" } },
+        null,
+      ];
+      for (const entry of entries) {
+        const config = baseConfig();
+        config.dhcp = { "br0": entry };
+        const errors = await ncm.validateConfig(config);
+        expect(errors, JSON.stringify(entry)).to.deep.equal(["range of dhcp br0 is not a valid ipv4 range"]);
+      }
+    });
+
+    it('should accept a local dhcp entry with a range, and relay null as absent', async()=> {
+      for (const extra of [{}, { relay: null }]) {
+        const config = baseConfig();
+        config.dhcp = { "br0": Object.assign({ range: LOCAL_RANGE, subnetMask: "255.255.255.0", lease: 86400 }, extra) };
+        expect(await ncm.validateConfig(config), JSON.stringify(extra)).to.be.empty;
+      }
+    });
+
+    it('should not take relay null for a relay entry', async()=> {
+      const config = baseConfig();
+      config.dhcp = { "br0": { relay: null } };
+      expect(await ncm.validateConfig(config)).to.deep.equal(["range of dhcp br0 is not a valid ipv4 range"]);
+    });
+  });
+
+  describe('dhcp relay', function(){
+    // br0 of default_setup.json is the relayed network: one static address, 10.10.0.1/24
+    const relayConfig = (relay, entry = {}) => {
+      const config = baseConfig();
+      config.dhcp = { "br0": Object.assign({ relay }, entry) };
+      return config;
+    };
+
+    it('should accept one server and two servers', async()=> {
+      for (const servers of [["10.30.0.5"], ["10.30.0.5", "10.30.0.6"]]) {
+        const errors = await ncm.validateConfig(relayConfig({ servers }));
+        expect(errors, JSON.stringify(servers)).to.be.empty;
+      }
+    });
+
+    it('should accept a relayed network next to a local one', async()=> {
+      const config = relayConfig({ servers: ["10.30.0.5"] });
+      config.interface.bridge.br1 = { ipv4: "10.20.0.1/24", enabled: true, intf: [] };
+      config.dhcp.br1 = { range: { from: "10.20.0.10", to: "10.20.0.250" }, subnetMask: "255.255.255.0", lease: 86400 };
+      expect(await ncm.validateConfig(config)).to.be.empty;
+    });
+
+    it('should accept a server outside the network and a server on another LAN of the box', async()=> {
+      const config = relayConfig({ servers: ["10.30.0.5", "10.20.0.5"] });
+      config.interface.bridge.br1 = { ipv4: "10.20.0.1/24", enabled: true, intf: [] };
+      expect(await ncm.validateConfig(config)).to.be.empty;
+    });
+
+    it('should accept the same address written once with a prefix length and once as ipv4s', async()=> {
+      // the interface loop dedupes the two, so there is still exactly one static address
+      const config = relayConfig({ servers: ["10.30.0.5"] });
+      config.interface.bridge.br0.ipv4s = ["10.10.0.1/24"];
+      expect(await ncm.validateConfig(config)).to.be.empty;
+    });
+
+    // an older app writes a default entry next to relay, and an older firerouter needs it to boot
+    it('should accept relay together with a full default local entry', async()=> {
+      const entry = {
+        range: { from: "10.10.0.2", to: "10.10.0.254" },
+        subnetMask: "255.255.255.0",
+        lease: 86400,
+        gateway: "10.10.0.1",
+        nameservers: ["10.10.0.1"],
+        searchDomain: [".lan"],
+      };
+      expect(await ncm.validateConfig(relayConfig({ servers: ["10.30.0.5"] }, entry))).to.be.empty;
+      expect(await ncm.validateConfig(relayConfig({ servers: ["10.30.0.5"] }, entry), { incoming: true })).to.be.empty;
+    });
+
+    it('should not check the local fields of a relay entry, they are ignored', async()=> {
+      const entries = [
+        { range: { from: "x", to: "y" } },
+        { range: {} },
+        { range: null },
+        { range: { from: "10.10.0.2/24", to: "010.10.0.254" } },
+        { subnetMask: "x", lease: "x", gateway: "x", nameservers: "x", searchDomain: 5, tags: 5 },
+      ];
+      for (const entry of entries) {
+        const relay = { servers: ["10.30.0.5"] };
+        expect(await ncm.validateConfig(relayConfig(relay, entry)), JSON.stringify(entry)).to.be.empty;
+        expect(await ncm.validateConfig(relayConfig(relay, entry), { incoming: true }), JSON.stringify(entry)).to.be.empty;
+      }
+    });
+
+    it('should still check the servers of a relay entry that carries local fields', async()=> {
+      const entry = { range: { from: "10.10.0.2", to: "10.10.0.254" }, subnetMask: "255.255.255.0", lease: 86400 };
+      expect(await ncm.validateConfig(relayConfig({ servers: ["10.30.0.5/24"] }, entry), { incoming: true }))
+        .to.deep.equal(["relay server of dhcp br0 is not an ipv4 address 10.30.0.5/24"]);
+      expect(await ncm.validateConfig(relayConfig({ servers: ["10.10.0.1"] }, entry), { incoming: true }))
+        .to.deep.equal(["relay server of dhcp br0 is the address of br0 itself"]);
+    });
+
+    it('should reject a server that is not a plain dotted quad', async()=> {
+      // each of these would reach the conf line of the one dnsmasq that serves every network
+      const servers = ["10.30.0.5/24", "010.30.0.5", "10.30.0", "10.30.0.256", "dhcp.example", "",
+        "10.30.0.5,10.30.0.6", "10.30.0.5 # x", "10.30.0.5\n", " 10.30.0.5", "::1", "10.30.0.5:67",
+        5, null, true, ["10.30.0.5"], { a: "10.30.0.5" }];
+      for (const server of servers) {
+        const errors = await ncm.validateConfig(relayConfig({ servers: [server] }));
+        expect(errors, JSON.stringify(server)).to.have.lengthOf(1);
+        expect(errors[0], JSON.stringify(server)).to.match(/^(relay server of dhcp br0 is not an ipv4 address |control character in )/);
+      }
+      // one bad item among good ones is enough
+      const errors = await ncm.validateConfig(relayConfig({ servers: ["10.30.0.5", "10.30.0.6/24"] }));
+      expect(errors).to.deep.equal(["relay server of dhcp br0 is not an ipv4 address 10.30.0.6/24"]);
+    });
+
+    it('should reject a missing, empty or malformed servers list', async()=> {
+      for (const relay of [{}, { servers: [] }, { servers: "10.30.0.5" }, { servers: null }, { servers: { 0: "10.30.0.5" } }]) {
+        const errors = await ncm.validateConfig(relayConfig(relay));
+        expect(errors, JSON.stringify(relay)).to.deep.equal(["relay servers of dhcp br0 is not a non-empty list"]);
+      }
+    });
+
+    it('should reject a relay that is not an object', async()=> {
+      for (const relay of ["10.30.0.5", ["10.30.0.5"], 5, true, false, 0, ""]) {
+        const errors = await ncm.validateConfig(relayConfig(relay));
+        expect(errors, JSON.stringify(relay)).to.deep.equal(["relay of dhcp br0 is not an object"]);
+      }
+    });
+
+    it('should reject a server equal to the address of the network itself', async()=> {
+      const errors = await ncm.validateConfig(relayConfig({ servers: ["10.30.0.5", "10.10.0.1"] }));
+      expect(errors).to.deep.equal(["relay server of dhcp br0 is the address of br0 itself"]);
+    });
+
+    it('should reject relay on a virtual interface key', async()=> {
+      const config = baseConfig();
+      config.interface.phy["br0:0"] = { ipv4: "10.31.0.1/24", enabled: true };
+      config.dhcp = { "br0:0": { relay: { servers: ["10.30.0.5"] } } };
+      expect(await ncm.validateConfig(config)).to.deep.equal(["relay of dhcp br0:0 is not supported on a virtual interface"]);
+    });
+
+    it('should reject an interface with two static addresses', async()=> {
+      const config = relayConfig({ servers: ["10.30.0.5"] });
+      config.interface.bridge.br0.ipv4s = ["10.11.0.1/24"];
+      expect(await ncm.validateConfig(config)).to.deep.equal(["relay of dhcp br0 needs interface br0 to have exactly one static ipv4"]);
+    });
+
+    it('should reject an interface with no static address, or no such interface', async()=> {
+      const noAddress = relayConfig({ servers: ["10.30.0.5"] });
+      delete noAddress.interface.bridge.br0.ipv4;
+      expect(await ncm.validateConfig(noAddress)).to.deep.equal(["relay of dhcp br0 needs interface br0 to have exactly one static ipv4"]);
+
+      const noInterface = baseConfig();
+      noInterface.dhcp = { "br9": { relay: { servers: ["10.30.0.5"] } } };
+      expect(await ncm.validateConfig(noInterface)).to.deep.equal(["relay of dhcp br9 needs interface br9 to have exactly one static ipv4"]);
+    });
+
+    it('should reject a network address that is not a plain dotted quad', async()=> {
+      // Address4 takes the leading zero, and the plugin would write it into the dhcp-relay line
+      const config = relayConfig({ servers: ["10.30.0.5"] });
+      config.interface.bridge.br0.ipv4 = "010.10.0.1/24";
+      expect(await ncm.validateConfig(config)).to.deep.equal(["ipv4 of br0 is not valid for dhcp relay 010.10.0.1/24"]);
+    });
+  });
 });

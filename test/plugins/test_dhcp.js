@@ -140,4 +140,98 @@ describe('Test dhcp plugin apply', function(){
     expect(await read()).to.be.null;
     expect(restarts).to.equal(0);
   });
+
+  describe('relay mode', function(){
+    const relayConfig = (servers) => ({relay: {servers}});
+    const withAddress = (addresses) => stub.fakeInterface({getIPv4Addresses: async () => addresses});
+
+    it('should write one dhcp-relay line for a server, from the address of the network', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1/24"]);
+      await build("br1", relayConfig(["10.20.0.5"])).apply();
+      expect(await read()).to.equal("dhcp-relay=192.168.10.1,10.20.0.5");
+      expect(restarts).to.equal(1);
+    });
+
+    it('should write one line per server', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1/24"]);
+      await build("br1", relayConfig(["10.20.0.5", "10.20.0.6"])).apply();
+      const content = await read();
+      expect(content.split("\n")).to.deep.equal(["dhcp-relay=192.168.10.1,10.20.0.5", "dhcp-relay=192.168.10.1,10.20.0.6"]);
+      // dnsmasq must not be handed a range or any other directive for a relayed network
+      for (const line of content.split("\n"))
+        expect(line, `unexpected directive ${line}`).to.match(/^dhcp-relay=/);
+    });
+
+    it('should write only the relay line whatever local server fields the entry carries', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1/24"]);
+      const full = {range, subnetMask: "255.255.255.0", lease: 86400, gateway: "192.168.10.1", nameservers: ["192.168.10.1"],
+        searchDomain: [".lan"], extraOptions: {"15": "lan.example"}, tags: ["grp1"]};
+      const garbage = Object.assign({}, full, {range: {from: "x", to: "y"}});
+      for (const local of [full, garbage, {range: {}}, {range: null}]) {
+        await build("br1", Object.assign({relay: {servers: ["10.20.0.5"]}}, local)).apply();
+        const content = await read();
+        expect(content, JSON.stringify(local)).to.equal("dhcp-relay=192.168.10.1,10.20.0.5");
+        expect(content).to.not.match(/dhcp-range|dhcp-option/);
+      }
+    });
+
+    it('should take the address as it is when it carries no prefix length', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1"]);
+      await build("br1", relayConfig(["10.20.0.5"])).apply();
+      expect(await read()).to.equal("dhcp-relay=192.168.10.1,10.20.0.5");
+    });
+
+    it('should subscribe to the interface in relay mode too', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1/24"]);
+      const plugin = build("br1", relayConfig(["10.20.0.5"]));
+      await plugin.apply();
+      expect(ifaces.br1.subscribers).to.deep.equal([plugin]);
+    });
+
+    it('should write nothing, warn and schedule no restart when the interface has no ipv4 yet', async() => {
+      for (const addresses of [null, []]) {
+        restarts = 0;
+        ifaces.br1 = withAddress(addresses);
+        await build("br1", relayConfig(["10.20.0.5"])).apply();
+        expect(await read(), `addresses ${JSON.stringify(addresses)}`).to.be.null;
+        expect(restarts).to.equal(0);
+      }
+    });
+
+    it('should write nothing while the interface is not present', async() => {
+      ifaces.br1 = stub.fakeInterface({isInterfacePresent: async () => false, getIPv4Addresses: async () => ["192.168.10.1/24"]});
+      await build("br1", relayConfig(["10.20.0.5"])).apply();
+      expect(await read()).to.be.null;
+      expect(restarts).to.equal(0);
+    });
+
+    it('should leave the output of a local network as it was when relay is null or absent', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1/24"]);
+      const expected = "dhcp-range=tag:br1,192.168.10.100,192.168.10.150,255.255.255.0,86400\n";
+      for (const extra of [{}, {relay: null}]) {
+        await build("br1", Object.assign({range, subnetMask: "255.255.255.0", lease: 86400}, extra)).apply();
+        expect(await read()).to.equal(expected);
+      }
+    });
+
+    it('should replace the whole file when a network switches between local and relay, and apply twice safely', async() => {
+      ifaces.br1 = withAddress(["192.168.10.1/24"]);
+      const local = build("br1");
+      const relayed = build("br1", relayConfig(["10.20.0.5"]));
+      // plugin_loader flushes the previous instance before it applies the new one
+      await local.apply();
+      expect(await read()).to.contain("dhcp-range=");
+      await local.flush();
+      await relayed.apply();
+      expect(await read()).to.equal("dhcp-relay=192.168.10.1,10.20.0.5");
+      await relayed.flush();
+      await relayed.apply();
+      expect(await read()).to.equal("dhcp-relay=192.168.10.1,10.20.0.5");
+      await relayed.flush();
+      await local.apply();
+      const content = await read();
+      expect(content).to.contain("dhcp-range=tag:br1,");
+      expect(content).to.not.contain("dhcp-relay");
+    });
+  });
 });

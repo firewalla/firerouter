@@ -34,6 +34,7 @@ const lock = new AsyncLock();
 
 const fsp = require('fs').promises;
 const crypto = require('crypto');
+const net = require('net');
 const util = require('../util/util.js');
 const { spawnWpaCliInteractive, parseSsidTempDisabled } = require('../util/wpa_cli.js');
 const pluginConfig = require('../util/config.js').getConfig();
@@ -57,6 +58,39 @@ const INTF_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,15}$/;
 // keys of the non-interface plugin sections are free form labels rather than kernel interface
 // names, so keep the same charset but do not impose IFNAMSIZ on them
 const PLUGIN_NAME_REGEX = /^[A-Za-z0-9._:@-]{1,64}$/;
+
+// net.isIPv4 and not Address4 here: the value lands in a dnsmasq conf line, and Address4 also
+// accepts a prefix length and leading zeros
+const isIPv4 = (value) => _.isString(value) && net.isIPv4(value);
+
+// error message for a dhcp entry that relays to remote servers, or null when it can be applied.
+// ipv4s are the static addresses config.interface gives the interface of the same name.
+// The entry may also carry the fields of a local server (an older app writes a default one next
+// to relay); dhcp_plugin ignores them in relay mode, so none of them is checked here
+function validateDhcpRelay(name, entry, ipv4s) {
+  const relay = entry.relay;
+  if (!_.isPlainObject(relay))
+    return `relay of dhcp ${name} is not an object`;
+  if (!_.isArray(relay.servers) || _.isEmpty(relay.servers))
+    return `relay servers of dhcp ${name} is not a non-empty list`;
+  for (const server of relay.servers) {
+    if (!isIPv4(server))
+      return `relay server of dhcp ${name} is not an ipv4 address ${server}`;
+  }
+  // dnsmasq picks a relay by the addresses of the device a request arrives on, so an alias is
+  // not a network of its own
+  if (name.includes(":"))
+    return `relay of dhcp ${name} is not supported on a virtual interface`;
+  if (ipv4s.length !== 1)
+    return `relay of dhcp ${name} needs interface ${name} to have exactly one static ipv4`;
+  const local = ipv4s[0].split("/")[0];
+  if (!isIPv4(local))
+    return `ipv4 of ${name} is not valid for dhcp relay ${ipv4s[0]}`;
+  // dnsmasq drops a relay to its own address silently, so DHCP would just stop working
+  if (relay.servers.includes(local))
+    return `relay server of dhcp ${name} is the address of ${name} itself`;
+  return null;
+}
 
 const Promise = require('bluebird');
 
@@ -900,10 +934,16 @@ class NetworkConfigManager {
                 return [`extraOptions of dhcp ${name} is not a dhcp option code ${code}`];
             }
           }
+          // a network served locally needs a range, or dhcp_plugin writes a broken dhcp-range
+          // line. apply_current_config validates too, so boot refuses a saved entry without one
+          const entry = section[name];
+          if (_.isNil(_.get(entry, "relay")) && !(isIPv4(_.get(entry, ["range", "from"])) && isIPv4(_.get(entry, ["range", "to"]))))
+            return [`range of dhcp ${name} is not a valid ipv4 range`];
         }
       }
     }
     const ifaceIp4PrefixMap = {};
+    const ipv4sByIntf = new Map();
     const wanIntfs = [];
     for (const ifaceType in config.interface) {
       const ifaces = config.interface[ifaceType];
@@ -937,6 +977,7 @@ class NetworkConfigManager {
           if (iface.ipv4s && _.isArray(iface.ipv4s))
             Array.prototype.push.apply(ipv4s, iface.ipv4s);
           ipv4s = ipv4s.filter((v, i, a) => a.indexOf(v) === i);
+          ipv4sByIntf.set(name, ipv4s);
           for (const ipv4 of ipv4s) {
             const addr = new Address4(ipv4);
             if (!addr.isValid())
@@ -952,6 +993,14 @@ class NetworkConfigManager {
           }
         }
       }
+    }
+    const dhcp = _.isObject(config.dhcp) ? config.dhcp : {};
+    for (const name of Object.keys(dhcp)) {
+      if (_.isNil(_.get(dhcp[name], "relay")))
+        continue;
+      const error = validateDhcpRelay(name, dhcp[name], ipv4sByIntf.get(name) || []);
+      if (error)
+        return [error];
     }
     return [];
   }
