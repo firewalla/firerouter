@@ -161,8 +161,9 @@ class DNSPlugin extends Plugin {
     if (wanIntfPlugins && wanIntfPlugins.length > 0) {
       intfPlugin = wanIntfPlugins[0];
     } else if (inUseWanIntfPlugins.length > 0) {
-      // use first connected WAN's name server as tentative upstream DNS nameserver
-      intfPlugin = await this._findWANWithNameservers(inUseWanIntfPlugins);
+      // use first connected WAN's name server as tentative upstream DNS nameserver, else any WAN's: a Wi-Fi WAN between
+      // uplinks is not in use, while its resolv.conf already has the new uplink's nameservers
+      intfPlugin = await this._findWANWithNameservers(inUseWanIntfPlugins) || await this._findWANWithNameservers(routingPlugin.getAllWANPlugins() || []);
       if (!intfPlugin) {
         this.log.error(`No connected WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
         return;

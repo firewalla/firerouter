@@ -88,10 +88,17 @@ describe('Test dns upstream from the WAN resolv.conf', function() {
     expect(linked()).to.eql(["wlan0.resolv.conf"]);
   });
 
-  it('links nothing when no in-use WAN has nameservers', async() => {
-    // e.g. a Wi-Fi WAN between uplinks: the unplugged eth1 is in use, wlan0 already has the new uplink's nameservers
+  it('links any WAN with nameservers when no in-use WAN has them', async() => {
+    // a Wi-Fi WAN between uplinks: the unplugged eth1 is in use, wlan0 already has the new uplink's nameservers
     const eth1 = wan("eth1", []);
     const wlan0 = wan("wlan0", ["10.0.1.1"]);
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [], [eth1]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('links nothing when no WAN has nameservers', async() => {
+    const eth1 = wan("eth1", []);
+    const wlan0 = wan("wlan0", null);
     await plugin._linkWANResolvConf(routing([eth1, wlan0], [], [eth1]));
     expect(linked()).to.eql([]);
   });
