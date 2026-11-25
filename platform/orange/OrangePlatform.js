@@ -842,6 +842,15 @@ class OrangePlatform extends Platform {
     return Boolean(live) && live.freq === chandef.freq && live.width === chandef.width;
   }
 
+  // called with LOCK_AP_STATE_AUTOMATA held
+  _enterSilence(band) {
+    const stateAutomata = this.apStateAutomata.bands[band];
+    stateAutomata.state = STATE_AP_SILENCE;
+    stateAutomata.silenceStartTs = Date.now();
+    stateAutomata.silenceEndTs = Date.now() + 45000;
+    this.pauseAP(band);
+  }
+
   pauseAP(band) {
     this.apPause[band] = true;
     this.scheduleHostapdRestart(band);
@@ -1171,10 +1180,7 @@ class OrangePlatform extends Platform {
                 if (switched === null)
                   return;
                 log.info(`${LOG_TAG_STA_AP} AP band ${band} cannot switch to channel ${channel}, entering silence period`);
-                stateAutomata.state = STATE_AP_SILENCE;
-                stateAutomata.silenceStartTs = Date.now();
-                stateAutomata.silenceEndTs = Date.now() + 45000;
-                this.pauseAP(band);
+                this._enterSilence(band);
                 break;
               }
               for (const key of Object.keys(hostapds)) {
@@ -1186,10 +1192,7 @@ class OrangePlatform extends Platform {
                 }
               }
               log.info(`${LOG_TAG_STA_AP} AP band ${band} is not configured on the same channel ${channel} as SSID ${ssid}, entering silence period`);
-              stateAutomata.state = STATE_AP_SILENCE;
-              stateAutomata.silenceStartTs = Date.now();
-              stateAutomata.silenceEndTs = Date.now() + 45000;
-              this.pauseAP(band);
+              this._enterSilence(band);
               break;
             }
           }
