@@ -17,7 +17,10 @@
 
 // Off-box: the launcher that plugins/dns/dns.template.sh renders into dns.sh. It runs with a fake
 // dnsmasq and a fake redis-cli, needs no box and no redis. Each conf file's content picks how the
-// fake behaves: "run" stays up, "fail" exits at once.
+// fake behaves: "run" stays up, "fail" exits at once, "die1" runs for one second and exits.
+//
+// bash's $SECONDS has a one second resolution, so no case sits on a MIN_UP_SECS boundary: the
+// constants are overridden by env (the unit sets none) to keep a second of margin on both sides.
 
 const chai = require('chai');
 const expect = chai.expect;
@@ -33,7 +36,8 @@ echo "start $$ $*" >> "$FAKE_LOG"
 mode=$(<"\${@: -1}")
 case $mode in
   fail) exit 3 ;;
-  *) exec sleep 1000 ;;
+  die1) sleep 1; exit 2 ;;
+  *) exec -a "fake_dnsmasq $*" sleep 1000 ;;
 esac
 `;
 
@@ -71,6 +75,25 @@ describe('dns launcher (dns.template.sh)', function () {
       const [, pid, ...args] = l.split(' ');
       return { pid: Number(pid), args: args.join(' ') };
     });
+  }
+
+  function startsOf(name) {
+    return starts().filter(s => s.args.endsWith(`dnsmasq.dns.${name}.conf`));
+  }
+
+  // the launcher's own log lines
+  function logLines() {
+    return launcher.out.split('\n').filter(l => l.startsWith('dns_launcher: '));
+  }
+
+  // live fake dnsmasq pids in the launcher's group, matched the way ExecReload's pkill matches
+  function reloadTargets() {
+    const r = cp.spawnSync('pgrep', ['-g', String(launcher.pid), '-f', 'dnsmasq\\.dns']);
+    return r.stdout.toString().split('\n').filter(Boolean).map(Number).sort();
+  }
+
+  function groupGone() {
+    return cp.spawnSync('pgrep', ['-g', String(launcher.pid)]).status === 1;
   }
 
   function writeConf(name, mode) {
@@ -134,6 +157,104 @@ describe('dns launcher (dns.template.sh)', function () {
     await until(() => lines('redis.log').length > 0);
 
     expect(lines('redis.log')).to.deep.equal(['HINCRBY stats:systemd:restart firerouter_dns 1']);
+  });
+
+  it('keeps healthy instances running while a failing one backs off 1, 2, 4 s', async () => {
+    writeConf('br0', 'run');
+    writeConf('nosuchif', 'fail');
+    const child = launch();
+    await until(() => logLines().length >= 3);
+    await until(() => lines('redis.log').length > 0);
+
+    expect(logLines().map(l => l.replace(/ up=\ds/, ''))).to.deep.equal([
+      'dns_launcher: dnsmasq.dns.nosuchif.conf exited rc=3 retry in 1s',
+      'dns_launcher: dnsmasq.dns.nosuchif.conf exited rc=3 retry in 2s',
+      'dns_launcher: dnsmasq.dns.nosuchif.conf exited rc=3 retry in 4s'
+    ]);
+    expect(startsOf('br0')).to.have.length(1);
+    expect(startsOf('nosuchif').length).to.be.at.least(3);
+    expect(child.exitCode).to.equal(null);
+    expect(lines('redis.log')).to.have.length(1);
+  });
+
+  it('restarts a killed instance at once and leaves the others alone', async function () {
+    writeConf('br0', 'run');
+    writeConf('br1', 'run');
+    launch({ MIN_UP_SECS: '1' });
+    await until(() => starts().length === 2);
+    await sleep(2200);
+
+    const before = startsOf('br1')[0].pid;
+    process.kill(before, 'SIGKILL');
+    await until(() => startsOf('br1').length === 2, 700);
+
+    expect(startsOf('br1')[1].pid).to.not.equal(before);
+    expect(startsOf('br0')).to.have.length(1);
+    expect(logLines()).to.have.length(1);
+    expect(logLines()[0]).to.match(/dnsmasq\.dns\.br1\.conf exited rc=137 up=\ds retry in 0s$/);
+    expect(lines('redis.log')).to.have.length(1);
+  });
+
+  it('backs off an instance that dies shortly after it started', async () => {
+    writeConf('br0', 'die1');
+    launch();
+    await until(() => logLines().length >= 1);
+    const first = Date.now();
+    await until(() => startsOf('br0').length === 2);
+
+    expect(logLines()[0]).to.match(/exited rc=2 up=[12]s retry in 1s$/);
+    expect(Date.now() - first).to.be.at.least(800);
+  });
+
+  it('logs the exit that first brings the delay to MAX_DELAY, then stops', async () => {
+    writeConf('nosuchif', 'fail');
+    launch({ MAX_DELAY: '2', LOG_EVERY: '600' });
+    await until(() => startsOf('nosuchif').length === 3);
+    await sleep(1000);
+
+    expect(logLines().map(l => l.replace(/ up=\ds/, ''))).to.deep.equal([
+      'dns_launcher: dnsmasq.dns.nosuchif.conf exited rc=3 retry in 1s',
+      'dns_launcher: dnsmasq.dns.nosuchif.conf exited rc=3 retry in 2s'
+    ]);
+  });
+
+  it('logs at most one line per LOG_EVERY once the delay is at its cap', async () => {
+    writeConf('nosuchif', 'fail');
+    launch({ MAX_DELAY: '1', LOG_EVERY: '3' });
+    await sleep(4500);
+
+    expect(startsOf('nosuchif').length).to.be.at.least(4);
+    expect(logLines()).to.have.length(2);
+  });
+
+  it('only matches the dnsmasq processes when reloading', async () => {
+    writeConf('br0', 'run');
+    writeConf('br1', 'run');
+    writeConf('nosuchif', 'fail');
+    launch();
+    await until(() => startsOf('br0').length && startsOf('br1').length && startsOf('nosuchif').length);
+
+    expect(reloadTargets()).to.deep.equal([startsOf('br0')[0].pid, startsOf('br1')[0].pid].sort());
+  });
+
+  it('leaves no process behind when the group is terminated', async () => {
+    writeConf('br0', 'run');
+    writeConf('nosuchif', 'fail');
+    const child = launch();
+    await until(() => startsOf('br0').length && startsOf('nosuchif').length);
+    await until(() => logLines().length >= 1);
+
+    // systemd repeats its kill until the cgroup is empty
+    const end = Date.now() + 3000;
+    while (!groupGone() && Date.now() < end) {
+      try { process.kill(-child.pid, 'SIGTERM'); } catch (err) { /* already gone */ }
+      await sleep(100);
+    }
+
+    expect(groupGone()).to.equal(true);
+    for (const { pid } of starts()) {
+      expect(() => process.kill(pid, 0)).to.throw(/ESRCH/);
+    }
   });
 
   it('exits 0 when there is no conf file', async () => {
