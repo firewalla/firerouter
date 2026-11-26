@@ -32,16 +32,24 @@ describe('Test dns upstream from the WAN resolv.conf', function() {
   let plugin;
 
   // nameservers: null for a WAN without a resolv.conf, [] for an empty one
-  const wan = (name, nameservers, present = true) => {
+  const wan = (name, nameservers, present = true, carrier = "1") => {
     if (nameservers)
       resolvFiles.add(r.getInterfaceResolvConfPath(name));
-    return {name, isInterfacePresent: async () => present, getDNSNameservers: async () => nameservers || []};
+    return {name, isInterfacePresent: async () => present, getDNSNameservers: async () => nameservers || [],
+      carrierState: async () => carrier};
   };
-  const routing = (all, active, inUse) => ({
+  // backups: names configured as backup.viaIntfs, which are standby unless they are active
+  const routing = (all, active, inUse, backups = [], type = "primary_standby") => ({
+    networkConfig: {default: {type}},
     getActiveWANPlugins: () => active,
     getInUseWANPlugins: () => inUse,
     getAllWANPlugins: () => all,
     getPrimaryWANPlugin: () => all[0] || null,
+    getWANConnState: (name) => ({
+      active: active.some(p => p.name === name),
+      inUse: inUse.some(p => p.name === name),
+      ...(backups.includes(name) ? {backup: true} : {}),
+    }),
   });
   const linked = () => links.map(l => l.split("/").pop());
 
@@ -61,6 +69,59 @@ describe('Test dns upstream from the WAN resolv.conf', function() {
     const wlan0 = wan("wlan0", ["10.0.1.1"]);
     await plugin._linkWANResolvConf(routing([eth0, wlan0], [wlan0], [wlan0]));
     expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('keeps an active WAN that has no carrier, the primary/standby choice is routing\'s', async() => {
+    // right after apply_current_config every WAN is optimistically ready, so the wired primary is
+    // active before its connectivity check has run
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "0");
+    const wlan0 = wan("wlan0", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [eth1], [eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('links a WAN with a carrier when the active WAN has no nameservers', async() => {
+    const eth1 = wan("eth1", [], true, "0");
+    const wlan0 = wan("wlan0", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [eth1], [eth1]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('still links the active WAN when no WAN has nameservers', async() => {
+    const eth1 = wan("eth1", [], true, "0");
+    const wlan0 = wan("wlan0", null, true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [eth1], [eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('picks the active WAN with a carrier when load_balance has several, both wired', async() => {
+    // load_balance keeps every ready WAN active, so the unplugged eth0 stays first by seq while
+    // eth1 is the one carrying traffic
+    const eth0 = wan("eth0", ["10.0.0.1"], true, "0");
+    const eth1 = wan("eth1", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, eth1], [eth0, eth1], [eth0, eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('does not borrow from a load_balance standby backup, its DNS routes are gone', async() => {
+    const eth0 = wan("eth0", [], true, "0");
+    const lte0 = wan("lte0", ["10.0.2.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, lte0], [eth0], [eth0], ["lte0"], "load_balance"));
+    expect(linked()).to.eql(["eth0.resolv.conf"]);
+  });
+
+  it('borrows from a load_balance backup that is itself active', async() => {
+    const eth0 = wan("eth0", [], true, "0");
+    const lte0 = wan("lte0", ["10.0.2.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, lte0], [eth0, lte0], [lte0], ["lte0"], "load_balance"));
+    expect(linked()).to.eql(["lte0.resolv.conf"]);
+  });
+
+  it('borrows from a primary_standby backup, which keeps its DNS routes', async() => {
+    const eth0 = wan("eth0", [], true, "0");
+    const lte0 = wan("lte0", ["10.0.2.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, lte0], [eth0], [eth0], ["lte0"]));
+    expect(linked()).to.eql(["lte0.resolv.conf"]);
   });
 
   it('links an in-use WAN with nameservers while no WAN is active', async() => {
@@ -94,6 +155,35 @@ describe('Test dns upstream from the WAN resolv.conf', function() {
     const wlan0 = wan("wlan0", ["10.0.1.1"]);
     await plugin._linkWANResolvConf(routing([eth1, wlan0], [], [eth1]));
     expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('prefers a WAN with a carrier over an unplugged one that kept its nameservers', async() => {
+    // the same gap, but the unplugged primary still holds the nameservers of its last lease, and it
+    // comes first both in the in-use list and by seq in all WANs
+    const eth1 = wan("eth1", ["10.99.99.99"], true, "0");
+    const wlan0 = wan("wlan0", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [], [eth1]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('prefers a WAN with a carrier when none is active or in use', async() => {
+    const eth1 = wan("eth1", ["10.99.99.99"], true, "0");
+    const wlan0 = wan("wlan0", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [], []));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('still links a WAN with no carrier when no WAN has one', async() => {
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "0");
+    const wlan0 = wan("wlan0", ["10.0.1.1"], true, "0");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [], [eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('links a WAN whose carrier cannot be read when no WAN has one, e.g. pppoe', async() => {
+    const pppoe0 = wan("pppoe0", ["10.0.0.1"], true, null);
+    await plugin._linkWANResolvConf(routing([pppoe0], [], [pppoe0]));
+    expect(linked()).to.eql(["pppoe0.resolv.conf"]);
   });
 
   it('links nothing when no WAN has nameservers', async() => {
