@@ -75,6 +75,12 @@ class OrangePlatform extends Platform {
       attemptedSSIDs: new Set(),
     }
     this.apPause = {};
+    // bands whose AP interfaces were deleted or recreated since hostapd last started
+    this.apIntfReset = {};
+    // per band, while a config sync runs: the channel the running AP is already on, as its config only catches up with it
+    this.hostapdSyncKeep = {};
+    // per band, the channel the pending restart may keep the AP on, taken from the sync that scheduled it, if any
+    this.hostapdKeepRunning = {};
     this.apStateAutomataTask = setInterval(() => {
       this.checkAPStateAutomata().catch((err) => {
         log.error("Failed to check AP state automata", err.message);
@@ -535,7 +541,17 @@ class OrangePlatform extends Platform {
     }
   }
 
+  _markAPInterfaceReset(wlanIntfPlugin) {
+    if (wlanIntfPlugin.name === this.getWifiClientInterface() || wlanIntfPlugin.name === this.getAPScanInterface())
+      return;
+    const band = _.get(wlanIntfPlugin, "networkConfig.band");
+    // fwapc may spell 2.4 GHz as 2g, the hostapd restart is scheduled by BAND_24G
+    if (band)
+      this.apIntfReset[band === "2g" ? BAND_24G : band] = true;
+  }
+
   async createWLANInterface(wlanIntfPlugin) {
+    this._markAPInterfaceReset(wlanIntfPlugin);
     const macAddr = wlanIntfPlugin.networkConfig.hwAddr || await this._getWLANAddress(wlanIntfPlugin.name, wlanIntfPlugin.networkConfig.band);
     const phyName = await this._get80211PhyName();
     if (!phyName) {
@@ -549,6 +565,7 @@ class OrangePlatform extends Platform {
   }
 
   async removeWLANInterface(wlanIntfPlugin) {
+    this._markAPInterfaceReset(wlanIntfPlugin);
     await execFile("sudo", ["iw", "dev", wlanIntfPlugin.name, "del"]).catch((err) => {});
   }
 
@@ -771,24 +788,67 @@ class OrangePlatform extends Platform {
     if (hostapdRestartTasks[band]) {
       clearTimeout(hostapdRestartTasks[band]);
     }
-    hostapdRestartTasks[band] = setTimeout(async () => {
-      const bssConfigs = await this._mergeHostapdConfig(band);
-      if (_.isEmpty(bssConfigs)) {
-        await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
-        log.info(`Removed hostapd config on band ${band}, stopping hostapd service`);
-        await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${band}`]).catch((err) => {});
-      } else {
+    // a later schedule outside the sync replaces the mark, so only the sync's own restart can be skipped
+    if (this.hostapdSyncKeep[band])
+      this.hostapdKeepRunning[band] = this.hostapdSyncKeep[band];
+    else
+      delete this.hostapdKeepRunning[band];
+    const task = setTimeout(() => {
+      const pl = require('../../plugins/plugin_loader.js');
+      // under the apply lock, as a reapply flushes and applies the band's hostapd instances one by one and a config merged in
+      // between is empty or lacks the primary interface
+      pl.acquireApplyLock(async () => {
+        // clearTimeout cannot cancel a task already waiting for the lock, a later schedule does the work instead
+        if (hostapdRestartTasks[band] !== task)
+          return;
+        delete hostapdRestartTasks[band];
+        const keep = this.hostapdKeepRunning[band];
+        delete this.hostapdKeepRunning[band];
+        const bssConfigs = await this._mergeHostapdConfig(band);
+        if (_.isEmpty(bssConfigs)) {
+          await fsp.unlink(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`).catch((err) => {});
+          log.info(`Removed hostapd config on band ${band}, stopping hostapd service`);
+          await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${band}`]).catch((err) => {});
+          return;
+        }
         await fsp.writeFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, bssConfigs.join("\n"), {encoding: 'utf8'});
         if (this.apPause[band]) {
           log.info(`AP on band ${band} is paused, stop it`);
           await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${band}`]).catch((err) => {});
           return;
-        } else {
-          log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
-          await execFile("sudo", ["systemctl", "restart", `firerouter_hostapd@band_${band}`]).catch((err) => {});
         }
-      }
+        // hostapd has to set up AP interfaces that were deleted or recreated under it, e.g. by a full reapply of the WLAN plugins
+        if (keep && !this.apIntfReset[band] && await this._isAPRunningAt(bssConfigs, keep)) {
+          // a restart would disconnect the AP's clients and the STA on the same radio for a channel the AP is already on
+          log.info(`Updated hostapd config on band ${band}, hostapd already runs on its channel, skip restarting it`);
+          return;
+        }
+        delete this.apIntfReset[band];
+        log.info(`Updated hostapd config on band ${band}, restarting hostapd service`);
+        await execFile("sudo", ["systemctl", "restart", `firerouter_hostapd@band_${band}`]).catch((err) => {});
+        const primary = bssConfigs.find(line => line.startsWith("interface="));
+        if (band === BAND_5G && primary)
+          await this.skipCACWithinSTAChannel(primary.substring("interface=".length)).catch((err) => {
+            log.error(`Failed to check CAC on band ${band}`, err.message);
+          });
+      });
     }, 2000);
+    hostapdRestartTasks[band] = task;
+  }
+
+  async _isAPRunningAt(bssConfigs, chandef) {
+    const primary = bssConfigs.find(l => l.startsWith("interface="));
+    const live = primary && await this._getChandef(primary.substring("interface=".length));
+    return Boolean(live) && live.freq === chandef.freq && live.width === chandef.width;
+  }
+
+  // called with LOCK_AP_STATE_AUTOMATA held
+  _enterSilence(band) {
+    const stateAutomata = this.apStateAutomata.bands[band];
+    stateAutomata.state = STATE_AP_SILENCE;
+    stateAutomata.silenceStartTs = Date.now();
+    stateAutomata.silenceEndTs = Date.now() + 45000;
+    this.pauseAP(band);
   }
 
   pauseAP(band) {
@@ -799,6 +859,234 @@ class OrangePlatform extends Platform {
   resumeAP(band) {
     delete this.apPause[band];
     this.scheduleHostapdRestart(band);
+  }
+
+  // the interface= line of the merged hostapd config is the one hostapd_cli controls the band through
+  async _getPrimaryAPInterface(band) {
+    const content = await fsp.readFile(`${r.getUserConfigFolder()}/hostapd/band_${band}.conf`, {encoding: 'utf8'}).catch(() => "");
+    const match = content.match(/^interface=(\S+)$/m);
+    return match ? match[1] : null;
+  }
+
+  // null if the interface is not on a channel, e.g. its hostapd is stopped
+  async _getChandef(intf) {
+    const output = await execFile("iw", ["dev", intf, "info"]).then(result => result.stdout).catch(() => "");
+    const match = output.match(/channel (\d+) \((\d+) MHz\), width: (\d+) MHz[^,]*, center1: (\d+) MHz/);
+    if (!match)
+      return null;
+    return {channel: Number(match[1]), freq: Number(match[2]), width: Number(match[3]), center1: Number(match[4])};
+  }
+
+  // enabled channels of the radio by frequency, with the DFS state ("usable", "available" or "unavailable") of those that need DFS
+  async _getChannelStates() {
+    const phyName = await this._get80211PhyName();
+    const output = await execFile("iw", ["phy", phyName, "channels"]).then(result => result.stdout).catch(() => "");
+    const states = {};
+    let freq = null;
+    for (const line of output.split("\n")) {
+      const freqMatch = line.match(/\* (\d+) MHz \[\d+\]/);
+      if (freqMatch) {
+        freq = line.includes("disabled") ? null : Number(freqMatch[1]);
+        if (freq)
+          states[freq] = null;
+        continue;
+      }
+      const stateMatch = line.match(/DFS state: (\w+)/);
+      if (stateMatch && freq)
+        states[freq] = stateMatch[1];
+    }
+    return states;
+  }
+
+  // chan_switch arguments for the widest bandwidth up to maxWidth that needs no CAC, null if the primary channel itself needs one.
+  // 80 MHz at most, a wider AP than the uplink would not fit the STA's channel and most uplinks use 80 MHz
+  async _getCSAArgs(band, freq, maxWidth) {
+    if (band === BAND_24G)
+      return [String(freq), "ht", "he"];
+    const states = await this._getChannelStates();
+    const noCAC = (f) => states.hasOwnProperty(f) && (states[f] === null || states[f] === "available");
+    // 20 MHz channels are aligned to 5180 up to 144 and to 5745 from 149 on, e.g. 5180-5240 is the 80 MHz block of 36-48
+    const base = freq >= 5745 ? 5745 : 5180;
+    for (const width of [80, 40, 20].filter(w => w <= Math.min(maxWidth || 20, 80))) {
+      const blockStart = freq - ((freq - base) % width);
+      if (!_.range(blockStart, blockStart + width, 20).every(noCAC))
+        continue;
+      if (width === 20)
+        return [String(freq), "ht", "vht", "he"];
+      const center = blockStart + width / 2 - 10;
+      const secOffset = ((freq - base) % 40) === 0 ? 1 : -1;
+      return [String(freq), `sec_channel_offset=${secOffset}`, `center_freq1=${center}`, `bandwidth=${width}`, "ht", "vht", "he"];
+    }
+    return null;
+  }
+
+  // after the STA connected: the AP takes the STA's width, and without a silence period, whose end would have converted the
+  // config again, the hostapd config follows the STA, as a reapply that converted it before the STA moved may have restarted
+  // hostapd on the old channel, and a channel switch left the hostapd config behind the running AP
+  async _followSTAChannel() {
+    // first, as it needs no config lock and the AP's clients have no downlink until the AP is as wide as the STA
+    const restartBand = await this._widenAPToSTA();
+    const silent = [BAND_24G, BAND_5G].some(band => this.apStateAutomata.bands[band].state === STATE_AP_SILENCE);
+    if (!silent) {
+      const ncm = require('../../core/network_config_mgr.js');
+      await ncm.acquireConfigRWLock(async () => {
+        const currentConfig = await ncm.getActiveConfig();
+        if (!currentConfig)
+          return;
+        // the AP already runs on the STA's channel and width after a channel switch or widening, its config only catches up
+        const sta = await this._getChandef(this.getWifiClientInterface());
+        const staBand = sta && (sta.freq >= 5000 ? BAND_5G : BAND_24G);
+        if (sta) {
+          const apIntf = await this._getPrimaryAPInterface(staBand);
+          const ap = apIntf && await this._getChandef(apIntf);
+          if (ap && ap.freq === sta.freq && ap.width === sta.width)
+            this.hostapdSyncKeep[staBand] = {freq: sta.freq, width: sta.width};
+        }
+        const applied = await this._applyHostapdConfig(currentConfig).catch((err) => {
+          log.error(`${LOG_TAG_STA_AP} Failed to apply hostapd config`, err.message);
+          return false;
+        }).finally(() => {
+          this.hostapdSyncKeep = {};
+        });
+        if (!applied) {
+          log.warn(`${LOG_TAG_STA_AP} Applying only hostapd for the STA channel failed, reapplying current config`);
+          await ncm.tryApplyConfig(currentConfig).catch((err) => {
+            log.error(`${LOG_TAG_STA_AP} Failed to reapply current config`, err.message);
+          });
+        }
+      });
+    }
+    // the sync restarts it if the config changed, otherwise the AP still has to come up at the STA's width
+    if (restartBand)
+      this.scheduleHostapdRestart(restartBand);
+  }
+
+  // the radio's channel context takes the wider of the STA and the AP, and the AP's associated clients lose their downlink
+  // when it widens under them (mt7996), so the AP is switched to the STA's width. A CAC this needs is skipped, as the range
+  // is the channel the uplink AP already operates on; the AP's clients reconnect once
+  // the band to restart once its config follows the STA if the AP could not be widened
+  async _widenAPToSTA() {
+    return lock.acquire(LOCK_AP_STATE_AUTOMATA, async () => {
+      const sta = await this._getChandef(this.getWifiClientInterface());
+      if (!sta || sta.width <= 20)
+        return;
+      const band = sta.freq >= 5000 ? BAND_5G : BAND_24G;
+      if (this.apStateAutomata.bands[band].state !== STATE_NORMAL)
+        return;
+      const apIntf = await this._getPrimaryAPInterface(band);
+      const ap = apIntf && await this._getChandef(apIntf);
+      if (!ap || ap.freq !== sta.freq || ap.width >= sta.width)
+        return;
+      const base = sta.freq >= 5745 ? 5745 : 5180;
+      const secOffset = band === BAND_24G ? (sta.center1 > sta.freq ? 1 : -1) : (((sta.freq - base) % 40) === 0 ? 1 : -1);
+      const modes = band === BAND_24G ? ["ht", "he"] : ["ht", "vht", "he"];
+      const hostapdCli = ["hostapd_cli", "-p", `${r.getRuntimeFolder()}/hostapd`, "-i", apIntf];
+      log.info(`${LOG_TAG_STA_AP} AP band ${band} is ${ap.width} MHz under a ${sta.width} MHz STA, widening it`);
+      const args = [String(sta.freq), `sec_channel_offset=${secOffset}`, `center_freq1=${sta.center1}`, `bandwidth=${sta.width}`, ...modes];
+      if (!await this._chanSwitch(apIntf, args)) {
+        log.warn(`${LOG_TAG_STA_AP} Failed to widen AP band ${band} to ${sta.width} MHz, it restarts once its config follows the STA`);
+        return band;
+      }
+      for (let i = 0; i < 25; i++) {
+        await util.delay(200);
+        const state = await execFile("sudo", [...hostapdCli, "status"])
+          .then(res => (res.stdout.match(/^state=(\S+)/m) || [])[1]).catch(() => null);
+        if (state === "DFS") {
+          await this.skipDFSCAC();
+          continue;
+        }
+        const widened = await this._getChandef(apIntf);
+        if (state === "ENABLED" && widened && widened.width === sta.width)
+          return;
+      }
+      // narrower than the STA its clients have no downlink, a restart brings it up at its configured width
+      log.warn(`${LOG_TAG_STA_AP} AP band ${band} did not come back at ${sta.width} MHz, it restarts once its config follows the STA`);
+      return band;
+    });
+  }
+
+  // wpa_supplicant tries the saved uplinks one after another, and joining one on another channel of the band while the AP
+  // switches makes hostapd stop the AP. A STA that is not associated is held off until func is done
+  async _withSTAPaused(func) {
+    const wlanIntf = this.getWifiClientInterface();
+    const wpaCli = ["sudo", await this.getWpaCliBinPath(), "-p", `${r.getRuntimeFolder()}/wpa_supplicant/${wlanIntf}`, "-i", wlanIntf];
+    const paused = !await this._getChandef(wlanIntf);
+    if (paused)
+      await execFile(wpaCli[0], [...wpaCli.slice(1), "disconnect"]).catch(() => {});
+    try {
+      return await func();
+    } finally {
+      if (paused)
+        await execFile(wpaCli[0], [...wpaCli.slice(1), "reconnect"]).catch(() => {});
+    }
+  }
+
+  // the radio rejects a switch while it scans, and wpa_supplicant keeps scanning while it looks for an uplink
+  async _abortScans() {
+    const wpaCli = await this.getWpaCliBinPath();
+    await Promise.all([this.getWifiClientInterface(), this.getAPScanInterface()].map(intf =>
+      execFile("sudo", [wpaCli, "-p", `${r.getRuntimeFolder()}/wpa_supplicant/${intf}`, "-i", intf, "abort_scan"]).catch(() => {})));
+  }
+
+  // send a channel switch, retrying while the radio rejects it. beforeAttempt may return a value to give up with instead.
+  // true once hostapd accepted it, false if it kept rejecting it
+  async _chanSwitch(apIntf, args, beforeAttempt = async () => undefined) {
+    for (let i = 0; i < 10; i++) {
+      if (i > 0)
+        await util.delay(300);
+      const early = await beforeAttempt();
+      if (early !== undefined)
+        return early;
+      await this._abortScans();
+      const accepted = await execFile("sudo", ["hostapd_cli", "-p", `${r.getRuntimeFolder()}/hostapd`, "-i", apIntf, "chan_switch", "5", ...args])
+        .then(res => res.stdout.trim() === "OK").catch(() => false);
+      if (accepted)
+        return true;
+    }
+    return false;
+  }
+
+  // move the AP of the band to the STA's frequency with a channel switch announcement, so its clients follow it.
+  // true if moved, null if the STA meanwhile joined the AP's channel and nothing is needed, false if the AP has to be stopped instead
+  async _switchAPChannel(band, apIntf, freq, maxWidth) {
+    const args = await this._getCSAArgs(band, freq, maxWidth);
+    if (!args) {
+      log.info(`${LOG_TAG_STA_AP} Frequency ${freq} needs a CAC, cannot switch AP channel on band ${band}`);
+      return false;
+    }
+    const wpaCli = await this.getWpaCliBinPath();
+    // wpa_supplicant tries several uplinks in a row, by the time an attempt is handled the STA may have joined another one on
+    // this radio, and hostapd stops the AP after accepting a switch away from the STA's channel
+    const staGuard = async () => {
+      const staChandef = await this._getChandef(this.getWifiClientInterface());
+      if (!staChandef || (staChandef.freq >= 5000) !== (band === BAND_5G))
+        return undefined;
+      const apChandef = await this._getChandef(apIntf);
+      if (apChandef && apChandef.freq === staChandef.freq) {
+        log.info(`${LOG_TAG_STA_AP} STA already joined ${staChandef.freq} on band ${band} where the AP is, ignore the attempt on ${freq}`);
+        return null;
+      }
+      log.info(`${LOG_TAG_STA_AP} STA is on ${staChandef.freq} on band ${band}, cannot switch AP channel`);
+      return false;
+    };
+    const accepted = await this._chanSwitch(apIntf, args, staGuard);
+    if (accepted !== true) {
+      if (accepted === false)
+        log.warn(`${LOG_TAG_STA_AP} Channel switch to ${freq} not done on ${apIntf}`);
+      return accepted;
+    }
+    for (let i = 0; i < 15; i++) {
+      await util.delay(200);
+      const chandef = await this._getChandef(apIntf);
+      if (chandef && chandef.freq === freq) {
+        // the failed attempt put the uplink on the ignore list, so the retry could pick the SSID on another band
+        await execFile("sudo", [wpaCli, "-p", `${r.getRuntimeFolder()}/wpa_supplicant/${this.getWifiClientInterface()}`,
+          "-i", this.getWifiClientInterface(), "bssid_ignore", "clear"]).catch(() => {});
+        return true;
+      }
+    }
+    log.warn(`${LOG_TAG_STA_AP} Channel switch to ${freq} did not complete on ${apIntf}`);
+    return false;
   }
 
   async processWpaSupplicantLog(line, config) {
@@ -874,6 +1162,29 @@ class OrangePlatform extends Platform {
                 return;
               }
               log.info(`${LOG_TAG_STA_AP} New authentication attempt for SSID ${ssid} on band ${band} with channel ${channel}, checking if AP is configured on the same channel`);
+              // the AP may already run on another channel than configured, e.g. after a channel switch
+              const apIntf = await this._getPrimaryAPInterface(band);
+              const apChandef = apIntf && await this._getChandef(apIntf);
+              if (apChandef) {
+                if (apChandef.channel === channel) {
+                  log.info(`${LOG_TAG_STA_AP} AP band ${band} is already on channel ${channel}, same as SSID ${ssid}`);
+                  return;
+                }
+                // moving the AP keeps its clients connected, unlike stopping it for a silence period
+                const switched = await this._withSTAPaused(() => this._switchAPChannel(band, apIntf, freq, apChandef.width)).catch((err) => {
+                  log.error(`${LOG_TAG_STA_AP} Failed to switch AP channel on band ${band}`, err.message);
+                  return false;
+                });
+                if (switched) {
+                  log.info(`${LOG_TAG_STA_AP} AP band ${band} switched to channel ${channel} for SSID ${ssid}`);
+                  return;
+                }
+                if (switched === null)
+                  return;
+                log.info(`${LOG_TAG_STA_AP} AP band ${band} cannot switch to channel ${channel}, entering silence period`);
+                this._enterSilence(band);
+                break;
+              }
               for (const key of Object.keys(hostapds)) {
                 const hostapd = hostapds[key];
                 const parameters = _.get(hostapd, 'networkConfig.params', {});
@@ -883,10 +1194,7 @@ class OrangePlatform extends Platform {
                 }
               }
               log.info(`${LOG_TAG_STA_AP} AP band ${band} is not configured on the same channel ${channel} as SSID ${ssid}, entering silence period`);
-              stateAutomata.state = STATE_AP_SILENCE;
-              stateAutomata.silenceStartTs = Date.now();
-              stateAutomata.silenceEndTs = Date.now() + 45000;
-              this.pauseAP(band);
+              this._enterSilence(band);
               break;
             }
           }
@@ -906,6 +1214,12 @@ class OrangePlatform extends Platform {
               stateAutomata.silenceEndTs = Date.now() + 5000;
             }
           }
+          // outside of this event, as it takes the locks and waits for the AP
+          setTimeout(() => {
+            this._followSTAChannel().catch((err) => {
+              log.error(`${LOG_TAG_STA_AP} Failed to align AP with the STA channel`, err.message);
+            });
+          }, 0);
           break;
         }
       }
@@ -963,11 +1277,18 @@ class OrangePlatform extends Platform {
             if (needReapplyConfig) {
               await ncm.acquireConfigRWLock(async () => {
                 const currentConfig = await ncm.getActiveConfig();
-                if (currentConfig) {
-                  await ncm.tryApplyConfig(currentConfig).catch((err) => {
-                    log.error(`${LOG_TAG_STA_AP} Failed to reapply current config`, err.message);
-                  });
-                }
+                if (!currentConfig)
+                  return;
+                // only the AP channel follows the STA here, a full reapply would also rebuild unrelated plugins and LAN DNS
+                const applied = await this._applyHostapdConfig(currentConfig).catch((err) => {
+                  log.error(`${LOG_TAG_STA_AP} Failed to apply hostapd config`, err.message);
+                  return false;
+                });
+                if (applied)
+                  return;
+                await ncm.tryApplyConfig(currentConfig).catch((err) => {
+                  log.error(`${LOG_TAG_STA_AP} Failed to reapply current config`, err.message);
+                });
               });
             }
             this.resumeAP(band);
@@ -978,7 +1299,20 @@ class OrangePlatform extends Platform {
       log.error(`${LOG_TAG_STA_AP} Failed to check AP state automata`, err.message);
     });
   }
-  
+
+  // applies only the hostapd part of the converted config, false if the set of hostapd instances changed or applying failed,
+  // so that a full reapply is needed
+  async _applyHostapdConfig(config) {
+    const ncm = require('../../core/network_config_mgr.js');
+    const pl = require('../../plugins/plugin_loader.js');
+    const converted = await ncm.convertIntegratedAPConfig(config);
+    const newConfigs = (converted && converted.hostapd) || {};
+    if (!_.isEqual(Object.keys(newConfigs).sort(), Object.keys(pl.getPluginInstances("hostapd") || {}).sort()))
+      return false;
+    const errors = await pl.reapplyInstances("hostapd", newConfigs);
+    return errors !== null && _.isEmpty(errors);
+  }
+
   needResetLinkBeforeSwitchWifi() {
     return false;
   }
@@ -1006,12 +1340,140 @@ class OrangePlatform extends Platform {
     });
   }
 
+  // the uplink AP already operates on the channels the STA is associated on, so a CAC confined to
+  // them is skipped rather than keeping the 5G AP down for a minute
+  async skipCACWithinSTAChannel(apIntf, attempts = 10) {
+    for (let i = 0; i < attempts; i++) {
+      await util.delay(1000);
+      const state = await execFile("sudo", ["hostapd_cli", "-p", `${r.getRuntimeFolder()}/hostapd`, "-i", apIntf, "status"])
+        .then(result => (result.stdout.match(/^state=(\S+)/m) || [])[1]).catch(() => null);
+      if (state === "ENABLED")
+        return;
+      // hostapd may still be starting up
+      if (state !== "DFS")
+        continue;
+      const apRange = await this._getOperatingFreqRange(apIntf);
+      const staRange = await this._getOperatingFreqRange(this.getWifiClientInterface());
+      if (!apRange || !staRange || apRange[0] < staRange[0] || apRange[1] > staRange[1]) {
+        log.info(`CAC on ${apIntf} ${JSON.stringify(apRange)} is not within the STA channel ${JSON.stringify(staRange)}, keep it`);
+        return;
+      }
+      log.info(`CAC on ${apIntf} ${JSON.stringify(apRange)} is within the STA channel ${JSON.stringify(staRange)}, skip it`);
+      await this.skipDFSCAC();
+      return;
+    }
+  }
+
+  // [low, high] edge frequencies in MHz, null if the interface is not on a channel or not on a single segment
+  async _getOperatingFreqRange(intf) {
+    const output = await execFile("iw", ["dev", intf, "info"]).then(result => result.stdout).catch(() => "");
+    const match = output.match(/width: (\d+) MHz[^,]*, center1: (\d+) MHz/);
+    if (!match)
+      return null;
+    const width = Number(match[1]);
+    const center = Number(match[2]);
+    return [center - width / 2, center + width / 2];
+  }
+
   async prepareSwitchWifi() {
     await this.setDFSScanState(true);
     await this.skipDFSCAC();
     for (const band of [BAND_24G, BAND_5G]) {
       this.apStateAutomata.bands[band].attemptedSSIDs.clear();
     }
+  }
+
+  async prepareSelectWifi(intf, ssid, bssid) {
+    return this._switchAPChannelForUplink(ssid, bssid).catch((err) => {
+      log.error(`${LOG_TAG_STA_AP} Failed to switch AP channel for uplink ${ssid}`, err.message);
+      return false;
+    });
+  }
+
+  // a network the config adds or changes is the uplink the app switches to, wpa_supplicant may join it before the switch request arrives
+  async prepareWpaSupplicantStart(intf, changedNetworks) {
+    const network = _.last(changedNetworks || []);
+    if (intf !== this.getWifiClientInterface() || !network || !network.ssid)
+      return;
+    // a silence period ending may hold the AP state lock while it waits for this config apply
+    await this._switchAPChannelForUplink(network.ssid, network.bssid, {timeout: 3000}).catch((err) => {
+      log.warn(`${LOG_TAG_STA_AP} Skip preparing the AP for uplink ${network.ssid}`, err.message);
+    });
+  }
+
+  // the uplink's BSSes from the scan the app just did, or from what the STA has seen
+  async _getUplinkBSSes(ssid, bssid) {
+    const ncm = require('../../core/network_config_mgr.js');
+    const wanted = (bss) => bss.ssid === ssid && bss.freq && (!bssid || bss.bssid === bssid.toUpperCase());
+    let bsses = (ncm.getRecentWlanScan() || []).map(wlan => ({bssid: wlan.mac, freq: wlan.freq, signal: wlan.signal, ssid: wlan.ssid}));
+    if (!bsses.some(wanted)) {
+      const wlanIntf = this.getWifiClientInterface();
+      const output = await execFile("sudo", [await this.getWpaCliBinPath(), "-p", `${r.getRuntimeFolder()}/wpa_supplicant/${wlanIntf}`, "-i", wlanIntf, "scan_results"])
+        .then(result => result.stdout).catch(() => "");
+      bsses = output.split("\n").slice(1).map(line => line.split("\t")).filter(fields => fields.length >= 5)
+        .map(([mac, freq, signal, flags, name]) => ({bssid: mac.toUpperCase(), freq: Number(freq), signal: Number(signal), ssid: util.parseEscapedString(name)}));
+    }
+    // a BSSID the switch asks for, or the network is pinned to, is the one the STA will authenticate to
+    return bsses.filter(wanted);
+  }
+
+  // 5G preferred while its signal is usable
+  _pickUplinkBSS(bsses) {
+    return _.maxBy(bsses.filter(bss => bss.freq >= 5000 && bss.signal >= -75), "signal") || _.maxBy(bsses, "signal") || null;
+  }
+
+  // move the AP to the uplink's channel before the STA tries it, so the first authentication is not rejected.
+  // true if the current uplink had to be disconnected for it
+  async _switchAPChannelForUplink(ssid, bssid, lockOpts = {}) {
+    const bsses = await this._getUplinkBSSes(ssid, bssid);
+    // after a failed attempt the STA moves on to a BSS on another channel, the AP cannot follow it with a channel switch
+    const channels5G = _.uniq(bsses.filter(bss => bss.freq >= 5000).map(bss => bss.freq));
+    if (channels5G.length > 1) {
+      await lock.acquire(LOCK_AP_STATE_AUTOMATA, async () => {
+        // a 5G AP that is configured but not running may be about to come back, e.g. at the end of a silence period
+        if (!await this._getPrimaryAPInterface(BAND_5G))
+          return;
+        const stateAutomata = this.apStateAutomata.bands[BAND_5G];
+        const channels = channels5G.map(freq => util.freqToChannel(freq)).join(",");
+        if (stateAutomata.state === STATE_AP_SILENCE) {
+          log.info(`${LOG_TAG_STA_AP} Uplink ${ssid} is on 5G channels ${channels}, keeping the silence period on band ${BAND_5G}`);
+          stateAutomata.silenceEndTs = Math.max(stateAutomata.silenceEndTs || 0, Date.now() + 45000);
+        } else {
+          log.info(`${LOG_TAG_STA_AP} Uplink ${ssid} is on 5G channels ${channels}, entering silence period on band ${BAND_5G}`);
+          this._enterSilence(BAND_5G);
+        }
+        // the scheduled stop waits for a running config apply, the STA tries the uplink right after this returns
+        await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${BAND_5G}`]).catch((err) => {});
+      }, lockOpts);
+      return false;
+    }
+    const bss = this._pickUplinkBSS(bsses);
+    if (!bss) {
+      log.info(`${LOG_TAG_STA_AP} No scan result for uplink ${ssid}, the AP channel follows on the first attempt`);
+      return false;
+    }
+    const band = bss.freq >= 5000 ? BAND_5G : BAND_24G;
+    let disconnected = false;
+    await lock.acquire(LOCK_AP_STATE_AUTOMATA, async () => {
+      if (this.apStateAutomata.bands[band].state !== STATE_NORMAL)
+        return;
+      const apIntf = await this._getPrimaryAPInterface(band);
+      const apChandef = apIntf && await this._getChandef(apIntf);
+      if (!apChandef || apChandef.freq === bss.freq)
+        return;
+      // the old uplink holds the radio on its channel, the switch below would stop the AP
+      const wlanIntf = this.getWifiClientInterface();
+      const onBand = (chandef) => chandef && (chandef.freq >= 5000) === (band === BAND_5G);
+      if (onBand(await this._getChandef(wlanIntf))) {
+        await execFile("sudo", [await this.getWpaCliBinPath(), "-p", `${r.getRuntimeFolder()}/wpa_supplicant/${wlanIntf}`, "-i", wlanIntf, "disconnect"]).catch(() => {});
+        disconnected = true;
+        for (let i = 0; i < 10 && onBand(await this._getChandef(wlanIntf)); i++)
+          await util.delay(100);
+      }
+      const switched = await this._switchAPChannel(band, apIntf, bss.freq, apChandef.width);
+      log.info(`${LOG_TAG_STA_AP} AP band ${band} ${switched ? "switched" : "not switched"} to ${bss.freq} ahead of uplink ${ssid}`);
+    }, lockOpts);
+    return disconnected;
   }
 
   getWpaSupplicantDefaultConfig() {

@@ -301,7 +301,8 @@ function reconcilePorts(network, phyNames) {
   //    - delete interface.phy.ethX and every vlan on it (interface.vlan.ethX.Y)
   //    - remove ethX and ethX.Y from every bridge
   //    - remove ethX from every bond and from app.bond
-  for (const port of Object.keys(source).filter(n => ETH_NAME.test(n) && !current.includes(n))) {
+  // the WAN port is kept even when absent, dropping it would lose the WAN settings
+  for (const port of Object.keys(source).filter(n => ETH_NAME.test(n) && n !== WAN_PHY && !current.includes(n))) {
     const subIntfs = Object.keys(vlans).filter(v => vlans[v].intf === port);
     const gone = [port, ...subIntfs];
     delete source[port];

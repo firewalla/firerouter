@@ -55,11 +55,20 @@ describe('Test switchWifi early failure', function() {
         hooks.onCommand(cmd);
       if (hooks.failSet && cmd.includes(' set_network '))
         throw new Error('FAIL');
+      if (hooks.failSelect && cmd.includes(' select_network '))
+        throw new Error('FAIL');
+      // as wpa_cli does: exit 0 with the controller's FAIL reply
+      if (hooks.replyFail.some(c => cmd.includes(` ${c} `)))
+        return { stdout: 'FAIL\n', stderr: '' };
       return { stdout: cmd.endsWith('add_network') ? '1\n' : 'OK\n', stderr: '' };
     };
     pl.platform = {
       getWpaCliBinPath: async () => '/sbin/wpa_cli',
       prepareSwitchWifi: async () => {},
+      prepareSelectWifi: async (intf, ssid, bssid) => {
+        calls.push(`prepareSelectWifi ${ssid} ${bssid}`);
+        return hooks.disconnected;
+      },
       needResetLinkBeforeSwitchWifi: () => false,
       setDFSScanState: async () => {},
     };
@@ -100,7 +109,7 @@ describe('Test switchWifi early failure', function() {
   beforeEach(() => {
     calls = [];
     monitor = null;
-    hooks = { pong: true, completed: false, onCommand: null, failSet: false, list: '0\tOld\tany\t[CURRENT]\n' };
+    hooks = { pong: true, completed: false, onCommand: null, failSet: false, failSelect: false, disconnected: false, replyFail: [], list: '0\tOld\tany\t[CURRENT]\n' };
   });
 
   const emitLater = (line) => setTimeout(() => monitor.opts.onLine(line), 20);
@@ -299,5 +308,46 @@ describe('Test switchWifi early failure', function() {
     expect(result).to.eql(['Invalid wpa_supplicant parameter: bogus']);
     expect(wpaOf()).to.eql([]);
     expect(monitor).to.equal(null, 'no wpa_cli monitor is spawned for a rejected request');
+  });
+
+  it('should prepare selecting only after the network is set up, with the pinned BSSID', async () => {
+    hooks.list = '0\tOld\tany\t[CURRENT]\n1\tlab\t20:6d:31:ef:b3:70\t\n';
+    hooks.completed = true;
+    hooks.onCommand = (cmd) => { if (cmd.endsWith('select_network 1')) hooks.list = '0\tOld\tany\t\n1\tlab\t20:6d:31:ef:b3:70\t[CURRENT]\n'; };
+    await ncm.switchWifi('wlan0', 'lab', {});
+    const order = calls.filter(c => c.startsWith('prepareSelectWifi') || c.includes(' set_network ') || c.includes(' select_network '));
+    expect(order[0]).to.include('set_network 1 ssid');
+    expect(order[1]).to.equal('prepareSelectWifi lab 20:6d:31:ef:b3:70');
+    expect(order[2]).to.include('select_network 1');
+  });
+
+  it('should not prepare selecting for a rejected request', async () => {
+    const result = await ncm.switchWifi('wlan0', 'lab', { bogus: '1' });
+    expect(result[0]).to.include('bogus');
+    expect(calls.filter(c => c.startsWith('prepareSelectWifi'))).to.eql([]);
+  });
+
+  it('should restore the previous uplink when select_network fails after preparing disconnected it', async () => {
+    hooks.disconnected = true;
+    hooks.failSelect = true;
+    await ncm.switchWifi('wlan0', 'lab', { key_mgmt: 'NONE' });
+    const wpa = calls.filter(c => c.startsWith('sudo /sbin/wpa_cli')).map(c => c.split(' -i wlan0 ')[1]);
+    expect(wpa.slice(-2)).to.eql(['reconfigure', 'select_network 0']);
+  });
+
+  it('should not prepare or select when set_network replies FAIL', async () => {
+    hooks.replyFail = ['set_network'];
+    const result = await ncm.switchWifi('wlan0', 'lab', { key_mgmt: 'NONE' });
+    expect(result).to.eql(['FAIL']);
+    expect(calls.filter(c => c.startsWith('prepareSelectWifi'))).to.eql([]);
+    expect(wpaOf().filter(c => c.startsWith('select_network'))).to.eql([]);
+  });
+
+  it('should restore the previous uplink when select_network replies FAIL after preparing disconnected it', async () => {
+    hooks.disconnected = true;
+    hooks.replyFail = ['select_network'];
+    const result = await ncm.switchWifi('wlan0', 'lab', { key_mgmt: 'NONE' });
+    expect(result).to.eql(['FAIL']);
+    expect(wpaOf().slice(-2)).to.eql(['reconfigure', 'select_network 0']);
   });
 });
