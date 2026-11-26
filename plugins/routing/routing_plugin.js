@@ -682,6 +682,9 @@ class RoutingPlugin extends Plugin {
     // async context and apply/flush context should be mutually exclusive, so they acquire the same LOCK_SHARED
     await lock.acquire(inAsyncContext ? LOCK_SHARED : LOCK_APPLY_ACTIVE_WAN, async () => {
       const activeWANsBefore = this._getActiveWANNames();
+      // the active WANs the subscribers of wan_switched were last set up for
+      if (this._notifiedActiveWANs === undefined)
+        this._notifiedActiveWANs = activeWANsBefore;
       const holder = this._holdingBackup();
       // flush global default routing table, no need to touch global static routing table here
       const type = this.networkConfig.default.type || "single";
@@ -906,9 +909,40 @@ class RoutingPlugin extends Plugin {
 
   async _applyActiveGlobalDefaultRoutingAndNotify(inAsyncContext = false, af = null) {
     const wanSwitched = await this._applyActiveGlobalDefaultRouting(inAsyncContext, af);
-    if (wanSwitched)
-      this.propagateEvent(event.buildEvent(event.EVENT_WAN_SWITCHED, {}));
+    // a full apply installs the new WAN status before this, so a gap it starts is seen as no active WAN before and after
+    if (wanSwitched || _.isEmpty(this._getActiveWANNames())) {
+      this._notifyWANSwitched();
+    } else if (!inAsyncContext) {
+      // a full apply that changes the WANs, e.g. reordered by config, keeps the status by seq, so it is no switch here and the
+      // loader re-applies the subscribers of the routing config directly: they are now set up for these WANs
+      this._notifiedActiveWANs = this._getActiveWANNames();
+      delete this._wanGapStartTs;
+    }
     return wanSwitched;
+  }
+
+  // subscribers (wireguard, dns, upnp...) rebuild on wan_switched, which takes a full reapply. With no active WAN they can only
+  // be set up broken and are rebuilt again when a WAN is back, often the same one, e.g. a Wi-Fi WAN switching uplinks, so a gap
+  // of no active WAN is not notified, and the WANs that come back only if they differ from what the subscribers were set up for
+  _notifyWANSwitched() {
+    const activeWANs = this._getActiveWANNames();
+    if (_.isEmpty(activeWANs)) {
+      if (this._wanGapStartTs === undefined) {
+        this._wanGapStartTs = Date.now() / 1000;
+        this.log.info(`No active WAN, keep wan_switched subscribers on ${this._notifiedActiveWANs}`);
+      }
+      return;
+    }
+    const gapStartTs = this._wanGapStartTs;
+    delete this._wanGapStartTs;
+    // a reapply during the gap, e.g. on the DHCP lease's ipchange, set up the subscribers it applied with no active WAN
+    const reappliedInGap = gapStartTs !== undefined && (pl.isApplyInProgress() || (pl.getLastAppliedTimestamp() || 0) >= gapStartTs);
+    if (!reappliedInGap && _.isEqual(activeWANs, this._notifiedActiveWANs)) {
+      this.log.info(`Active WAN is back to ${activeWANs}, no need to notify wan_switched`);
+      return;
+    }
+    this._notifiedActiveWANs = activeWANs;
+    this.propagateEvent(event.buildEvent(event.EVENT_WAN_SWITCHED, {}));
   }
 
   // a primary inherits ready/active by seq from the last apply's primary, a backup by name from the same backup, so reordering
@@ -1385,6 +1419,9 @@ class RoutingPlugin extends Plugin {
 
   // in seconds
   getApplyTimeoutInterval(changeDesc = {}) {
+    // nothing to flap away from without an active WAN, the delay would only keep the box offline longer
+    if (changeDesc.ready && _.isEmpty(this._getActiveWANNames()))
+      return 0.5;
     const failures = changeDesc.failures || [];
     const carrierFailures = failures.filter((x) => x.type === 'carrier');
     const hasCarrierError = !_.isEmpty(carrierFailures);
