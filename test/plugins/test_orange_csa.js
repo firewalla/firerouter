@@ -276,6 +276,22 @@ describe('Test Orange AP channel switch on STA authentication', function(){
       expect(stub.matching("chan_switch").length).to.equal(10);
       expect(stub.matching("abort_scan").length).to.equal(20);
     });
+    it('should restart the AP when it does not come back at the STA width after the switch', async() => {
+      staChandef = {channel: 40, freq: 5200, width: 160, center1: 5250};
+      apChandef = {channel: 40, freq: 5200, width: 80, center1: 5210};
+      widenedAP = null;
+      stub.outputFor("status", "state=ENABLED\n");
+      expect(await platform._widenAPToSTA()).to.equal("5g");
+      expect(stub.matching("chan_switch")).to.have.lengthOf(1);
+      expect(stub.matching(" status")).to.have.lengthOf(25);
+    });
+    it('should not restart the AP once it is back at the STA width', async() => {
+      staChandef = {channel: 40, freq: 5200, width: 160, center1: 5250};
+      apChandef = {channel: 40, freq: 5200, width: 80, center1: 5210};
+      widenedAP = staChandef;
+      stub.outputFor("status", "state=ENABLED\n");
+      expect(await platform._widenAPToSTA()).to.equal(undefined);
+    });
     it('should widen a 2.4G AP to a 40 MHz STA', async() => {
       staChandef = {channel: 5, freq: 2432, width: 40, center1: 2442};
       apChandef = {channel: 5, freq: 2432, width: 20, center1: 2432};
