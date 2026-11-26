@@ -142,6 +142,85 @@ class DNSPlugin extends Plugin {
     await execFile("mkdir", ["-p", `${r.getFirewallaUserConfigFolder()}/dnsmasq/${this._intfUuid}`]).catch((err) => {});
   }
 
+  async _findWANWithNameservers(wanIntfPlugins, requireCarrier = false) {
+    for (const wanIntfPlugin of wanIntfPlugins) {
+      // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
+      if (!fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)))
+        continue;
+      if (!await wanIntfPlugin.isInterfacePresent())
+        continue;
+      // isInterfacePresent only means the netdev is there, so an unplugged WAN passes it with the
+      // nameservers of its last lease still in its resolv.conf
+      if (requireCarrier && await wanIntfPlugin.carrierState() !== "1")
+        continue;
+      if (_.isEmpty(await wanIntfPlugin.getDNSNameservers()))
+        continue;
+      return wanIntfPlugin;
+    }
+    return null;
+  }
+
+  // a WAN that still has a carrier in any of the lists beats one without in all of them: the inUse
+  // seq fallback and getAllWANPlugins() are both ordered by seq, which puts the (wired) primary
+  // first even while it is down. Falling back to a WAN with no carrier keeps an upstream at all
+  // when nothing is connected.
+  async _findTentativeWAN(wanIntfPluginLists) {
+    for (const requireCarrier of [true, false]) {
+      for (const wanIntfPlugins of wanIntfPluginLists) {
+        const intfPlugin = await this._findWANWithNameservers(wanIntfPlugins, requireCarrier);
+        if (intfPlugin)
+          return intfPlugin;
+      }
+    }
+    return null;
+  }
+
+  // in load_balance a standby backup gets its DNS host routes removed and reinstalled with
+  // dns: false (RoutingPlugin._applyBackupWanRoutes), so its nameservers would be queried over the
+  // active WAN's default route instead of the backup, which fails for a resolver only the backup
+  // can reach. primary_standby routes its backups through the same loop as every other WAN, which
+  // keeps their DNS routes, so there they stay eligible.
+  _isStandbyBackup(routingPlugin, intfPlugin) {
+    if (_.get(routingPlugin, "networkConfig.default.type") !== "load_balance")
+      return false;
+    const state = routingPlugin.getWANConnState && routingPlugin.getWANConnState(intfPlugin.name);
+    return Boolean(state && state.backup === true && state.active !== true);
+  }
+
+  // links the resolv.conf of the active WAN, or a tentative one while no WAN is active
+  async _linkWANResolvConf(routingPlugin) {
+    const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
+    const inUseWanIntfPlugins = routingPlugin.getInUseWANPlugins() || [];
+    let intfPlugin = null;
+    if (wanIntfPlugins && wanIntfPlugins.length > 0) {
+      // an active WAN is only passed over when its resolv.conf has no nameserver at all: linking it
+      // would leave dnsmasq with no upstream, which is worse than borrowing one from another WAN.
+      // an active WAN without a carrier is still kept, so this never overrides the primary/standby
+      // choice routing has made
+      const borrowable = (plugins) => plugins.filter(p => !this._isStandbyBackup(routingPlugin, p));
+      intfPlugin = await this._findTentativeWAN([wanIntfPlugins])
+        || await this._findTentativeWAN([borrowable(inUseWanIntfPlugins), borrowable(routingPlugin.getAllWANPlugins() || [])])
+        || wanIntfPlugins[0];
+    } else if (inUseWanIntfPlugins.length > 0) {
+      // use first connected WAN's name server as tentative upstream DNS nameserver, else any WAN's: a Wi-Fi WAN between
+      // uplinks is not in use, while its resolv.conf already has the new uplink's nameservers
+      intfPlugin = await this._findTentativeWAN([inUseWanIntfPlugins, routingPlugin.getAllWANPlugins() || []]);
+      if (!intfPlugin) {
+        this.log.error(`No connected WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
+        return;
+      }
+    } else {
+      // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
+      intfPlugin = await this._findTentativeWAN([routingPlugin.getAllWANPlugins() || []]) || routingPlugin.getPrimaryWANPlugin();
+      if (!intfPlugin) {
+        this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
+        return;
+      }
+      this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
+    }
+    await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
+  }
+
   async writeDNSConfFile() {
     let content = await fs.readFileAsync(dnsConfTemplate, {encoding: "utf8"});
     content = content.replace(/%INTERFACE%/g, this.name);
@@ -166,47 +245,7 @@ class DNSPlugin extends Plugin {
         const routingPlugin = pl.getPluginInstance("routing", this.name) || pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
           this.subscribeChangeFrom(routingPlugin);
-          const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
-          const inUseWanIntfPlugins = routingPlugin.getInUseWANPlugins() || [];
-          if (wanIntfPlugins && wanIntfPlugins.length > 0) {
-            const wanIntf = wanIntfPlugins[0].name;
-            await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
-          } else if (inUseWanIntfPlugins.length > 0) {
-            // use first connected WAN's name server as tentative upstream DNS nameserver
-            let intfPlugin = null;
-            for (const wanIntfPlugin of inUseWanIntfPlugins) {
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
-                await wanIntfPlugin.isInterfacePresent() &&
-                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
-                intfPlugin = wanIntfPlugin;
-                break;
-              }
-            }
-            if (intfPlugin) {
-              await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
-            } else {
-              this.log.error(`No connected WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
-            }
-          } else {
-            // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
-            let intfPlugin = routingPlugin.getPrimaryWANPlugin();
-            const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
-            for (const wanIntfPlugin of allWanIntfPlugins) {
-              // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
-                await wanIntfPlugin.isInterfacePresent() &&
-                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
-                intfPlugin = wanIntfPlugin;
-                break;
-              }
-            }
-            if (intfPlugin) {
-              this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the primary WAN ${intfPlugin.name}`);
-              await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
-            } else {
-              this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
-            }
-          }
+          await this._linkWANResolvConf(routingPlugin);
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
         }
@@ -233,47 +272,7 @@ class DNSPlugin extends Plugin {
         const routingPlugin = pl.getPluginInstance("routing", "global");
         if (routingPlugin) {
           this.subscribeChangeFrom(routingPlugin);
-          const wanIntfPlugins = routingPlugin.getActiveWANPlugins();
-          const inUseWanIntfPlugins = routingPlugin.getInUseWANPlugins() || [];
-          if (wanIntfPlugins && wanIntfPlugins.length > 0) {
-            const wanIntf = wanIntfPlugins[0].name;
-            await fs.symlinkAsync(r.getInterfaceResolvConfPath(wanIntf), this._getResolvFilePath());
-          } else if (inUseWanIntfPlugins.length > 0){
-            // use first connected WAN's name server as tentative upstream DNS nameserver
-            let intfPlugin = null;
-            for (const wanIntfPlugin of inUseWanIntfPlugins) {
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
-                await wanIntfPlugin.isInterfacePresent() &&
-                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
-                intfPlugin = wanIntfPlugin;
-                break;
-              }
-            }
-            if (intfPlugin) {
-              await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
-            } else {
-              this.log.error(`No connected WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
-            }
-          }else {
-            // use primary WAN's name server as tentative upstream DNS nameserver if no active WAN is available
-            let intfPlugin = routingPlugin.getPrimaryWANPlugin();
-            const allWanIntfPlugins = routingPlugin.getAllWANPlugins() || [];
-            for (const wanIntfPlugin of allWanIntfPlugins) {
-              // fs.existsSync will return false if the (recursive) symlink points to a non-existing file
-              if (fs.existsSync(r.getInterfaceResolvConfPath(wanIntfPlugin.name)) &&
-                await wanIntfPlugin.isInterfacePresent() &&
-                !_.isEmpty(await wanIntfPlugin.getDNSNameservers())) {
-                intfPlugin = wanIntfPlugin;
-                break;
-              }
-            }
-            if (intfPlugin) {
-              this.log.error(`No active WAN is found for dns ${this.name}, tentatively choosing the WAN ${intfPlugin.name}`);
-              await fs.symlinkAsync(r.getInterfaceResolvConfPath(intfPlugin.name), this._getResolvFilePath());
-            } else {
-              this.log.error(`No active WAN is found for dns ${this.name}, DNS is temporarily unavailable`);
-            }
-          }
+          await this._linkWANResolvConf(routingPlugin);
         } else {
           this.fatal(`Cannot find routing plugin for ${this.name}`);
         }
