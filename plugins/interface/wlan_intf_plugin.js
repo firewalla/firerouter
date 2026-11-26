@@ -305,6 +305,19 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
     }
   }
 
+  async configure(networkConfig) {
+    // the networks this config adds or changes, e.g. the uplink the app is switching to; none on the first config since
+    // firerouter started, while a config without networks yet counts as an empty list
+    if (networkConfig !== this.networkConfig) {
+      // a malformed list fails later where the wpa_supplicant config is written, not in here where nothing awaits it
+      const list = (config) => { const networks = _.get(config, ["wpaSupplicant", "networks"]); return Array.isArray(networks) ? networks : []; };
+      const prevNetworks = list(this.networkConfig);
+      const networks = list(networkConfig);
+      this._changedNetworks = this.networkConfig ? networks.filter(network => !prevNetworks.some(prev => _.isEqual(prev, network))) : [];
+    }
+    await super.configure(networkConfig);
+  }
+
   _getWpaSupplicantConfigPath() {
     return `${r.getUserConfigFolder()}/wpa_supplicant/${this.name}.conf`;
   }
@@ -388,6 +401,11 @@ class WLANInterfacePlugin extends InterfaceBasePlugin {
       await this.writeConfigFile()
 
       if (shouldUp) {
+        const changedNetworks = this._changedNetworks || [];
+        this._changedNetworks = [];
+        await platform.prepareWpaSupplicantStart(this.name, changedNetworks).catch((err) => {
+          this.log.error(`Failed to prepare wpa_supplicant start on ${this.name}`, err.message);
+        });
         await execFile("sudo", ["systemctl", "start", `firerouter_wpa_supplicant@${this.name}`]).catch((err) => {
           this.log.error(`Failed to start firerouter_wpa_supplicant on $${this.name}`, err.message);
         });

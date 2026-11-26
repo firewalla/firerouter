@@ -363,13 +363,12 @@ class InterfaceBasePlugin extends Plugin {
       this.log.error(`Failed to get dhcpcd version`, err.message);
       return null;
     });
-    if (version) {
-      if (version.startsWith("6."))
-        return `/var/lib/dhcpcd5/dhcpcd-${this.name}.lease6`;
-      if (version.startsWith("7."))
-        return `/var/lib/dhcpcd/${this.name}.lease6`;
-    }
-    return null;
+    if (!version)
+      return null;
+    // only the 6.x Debian package differs; 7.x and later (incl. our 9.x build) share one layout
+    if (version.startsWith("6."))
+      return `/var/lib/dhcpcd5/dhcpcd-${this.name}.lease6`;
+    return `/var/lib/dhcpcd/${this.name}.lease6`;
   }
 
   isWAN() {
