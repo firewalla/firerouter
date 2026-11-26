@@ -307,4 +307,51 @@ describe('Test wlan interface plugin', function() {
       expect(scans().length).to.equal(1);
     });
   });
+
+  describe('networks a new config adds or changes', function() {
+    const config = (networks) => ({meta: {type: 'wan'}, enabled: true, wpaSupplicant: {networks}});
+    const ssids = (plugin) => plugin._changedNetworks.map(n => n.ssid);
+
+    it('should report none on the first config', async() => {
+      const plugin = new WLANInterfacePlugin('wlan0');
+      await plugin.configure(config([{ssid: "home", priority: 0}]));
+      expect(plugin._changedNetworks).to.eql([]);
+    });
+    it('should report the first network added to a config that had none', async() => {
+      const plugin = stub.build(WLANInterfacePlugin, 'wlan0', {meta: {type: 'wan'}, enabled: true, wpaSupplicant: {}});
+      await plugin.configure(config([{ssid: "venue", key_mgmt: "NONE"}]));
+      expect(ssids(plugin)).to.eql(["venue"]);
+    });
+    it('should report a network added anywhere in the list', async() => {
+      const plugin = stub.build(WLANInterfacePlugin, 'wlan0', config([{ssid: "home", priority: 0}, {ssid: "office", priority: 0}]));
+      await plugin.configure(config([{ssid: "venue", priority: 0}, {ssid: "home", priority: 0}, {ssid: "office", priority: 0}]));
+      expect(ssids(plugin)).to.eql(["venue"]);
+    });
+    it('should report a network whose settings changed, e.g. a new password', async() => {
+      const plugin = stub.build(WLANInterfacePlugin, 'wlan0', config([{ssid: "home", psk: "a"}, {ssid: "venue", key_mgmt: "NONE"}]));
+      await plugin.configure(config([{ssid: "home", psk: "b"}, {ssid: "venue", key_mgmt: "NONE"}]));
+      expect(ssids(plugin)).to.eql(["home"]);
+    });
+    it('should report none when only other settings or the removal of a network changed', async() => {
+      const plugin = stub.build(WLANInterfacePlugin, 'wlan0', config([{ssid: "home"}, {ssid: "venue"}]));
+      const next = config([{ssid: "home"}]);
+      next.wpaSupplicant.bgscan = "simple";
+      await plugin.configure(next);
+      expect(plugin._changedNetworks).to.eql([]);
+    });
+    it('should not throw on networks that are not a list', async() => {
+      const plugin = stub.build(WLANInterfacePlugin, 'wlan0', config([{ssid: "home"}]));
+      await plugin.configure(config({ssid: "venue"}));
+      expect(plugin._changedNetworks).to.eql([]);
+      await plugin.configure(config([{ssid: "home"}]));
+      expect(ssids(plugin)).to.eql(["home"]);
+    });
+    it('should keep the result when configured again with the same config', async() => {
+      const plugin = stub.build(WLANInterfacePlugin, 'wlan0', config([{ssid: "home"}]));
+      const next = config([{ssid: "home"}, {ssid: "venue"}]);
+      await plugin.configure(next);
+      await plugin.configure(next);
+      expect(ssids(plugin)).to.eql(["venue"]);
+    });
+  });
 });

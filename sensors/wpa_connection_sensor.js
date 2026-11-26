@@ -37,7 +37,8 @@ class WPAConnectionSensor extends Sensor {
   }
 
   async run() {
-    this.logWatcher = new LogReader(this.config.log_file, true)
+    // the last lines are old connections and attempts, acting on them at start would move or silence the APs for no reason
+    this.logWatcher = new LogReader(this.config.log_file, true, true)
     this.logWatcher.on('line', this.watchLog.bind(this))
     this.logWatcher.watch()
 

@@ -177,3 +177,38 @@ describe('Test pppoe interface plugin', function(){
     expect(injected(content)).to.deep.equal([]);
   });
 });
+
+// A same-prefix rebind publishes no pd_change, so flushIP removes dhcpcd's lease file to force a
+// fresh BOUND6. It has to find the file for the dhcpcd build in use.
+describe('Test pppoe interface dhcpcd lease6 removal', function(){
+  this.timeout(30000);
+
+  const lease6 = async (version) => {
+    stub.reset();
+    // the awk in the command is not run by the stub, so reply with what it would print
+    stub.outputFor("--version", `${version}\n`);
+    const plugin = stub.build(PPPoEInterfacePlugin, "pppoe0", {enabled: true, intf: "eth0"});
+    return plugin._getDHCPCDLease6Filename();
+  };
+
+  it('should find the lease6 file of each dhcpcd version', async() => {
+    expect(await lease6("6.11.5")).to.equal("/var/lib/dhcpcd5/dhcpcd-pppoe0.lease6");
+    expect(await lease6("7.1.0")).to.equal("/var/lib/dhcpcd/pppoe0.lease6");
+    expect(await lease6("9.5.2")).to.equal("/var/lib/dhcpcd/pppoe0.lease6");
+  });
+
+  it('should not guess a path when the dhcpcd version is unknown', async() => {
+    stub.reset();
+    const plugin = stub.build(PPPoEInterfacePlugin, "pppoe0", {enabled: true, intf: "eth0"});
+    expect(await plugin._getDHCPCDLease6Filename()).to.be.null;
+  });
+
+  it('should remove the lease6 file when the pppoe interface is flushed on dhcpcd 9', async() => {
+    stub.reset();
+    stub.outputFor("--version", "9.5.2\n");
+    const plugin = stub.build(PPPoEInterfacePlugin, "pppoe0", {enabled: true, intf: "eth0"});
+    plugin._getConfFilePath = () => path.join(os.tmpdir(), `firerouter_test_ppp_flush_${process.pid}.conf`);
+    await plugin.flushIP();
+    expect(stub.matching("rm -f /var/lib/dhcpcd/pppoe0.lease6")).to.have.lengthOf(1);
+  });
+});
