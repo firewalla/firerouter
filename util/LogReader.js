@@ -20,9 +20,11 @@ const log = require('./logger.js')(__filename);
 const readline = require('readline');
 
 class Tail {
-  constructor(file, sudo = false) {
+  // fromEnd: only lines written after watch(), tail would otherwise replay the last lines of the file as if they were new
+  constructor(file, sudo = false, fromEnd = false) {
     this.file = file;
     this.sudo = sudo;
+    this.fromEnd = fromEnd;
   }
 
   on(event, callback) {
@@ -36,7 +38,8 @@ class Tail {
   watch() {
     log.info("Watching file", this.file);
     const cmd = this.sudo ? "sudo" : "tail";
-    const args = this.sudo ? ["tail", "-F", this.file] : ["-F", this.file];
+    const tailArgs = (this.fromEnd ? ["-n", "0"] : []).concat(["-F", this.file]);
+    const args = this.sudo ? ["tail"].concat(tailArgs) : tailArgs;
 
     const source = spawn(cmd, args,
                          { stdio: ['ignore', 'pipe', 'ignore'] }
