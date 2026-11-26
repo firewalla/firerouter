@@ -451,11 +451,20 @@ describe('Test network config validation', function(){
         { range: null },
         { range: { from: "10.10.0.2/24", to: "010.10.0.254" } },
         { subnetMask: "x", lease: "x", gateway: "x", nameservers: "x", searchDomain: 5, tags: 5 },
+        { extraOptions: { "abc": "x", " 15": "y", "256": "z" } },
       ];
       for (const entry of entries) {
         const relay = { servers: ["10.30.0.5"] };
         expect(await ncm.validateConfig(relayConfig(relay, entry)), JSON.stringify(entry)).to.be.empty;
         expect(await ncm.validateConfig(relayConfig(relay, entry), { incoming: true }), JSON.stringify(entry)).to.be.empty;
+      }
+    });
+
+    it('should still check extraOptions of a local entry', async()=> {
+      const config = baseConfig();
+      config.dhcp = { "br0": { range: { from: "10.10.0.2", to: "10.10.0.254" }, extraOptions: { "abc": "x" } } };
+      for (const opts of [undefined, { incoming: true }]) {
+        expect(await ncm.validateConfig(config, opts)).to.deep.equal(["extraOptions of dhcp br0 is not a dhcp option code abc"]);
       }
     });
 
