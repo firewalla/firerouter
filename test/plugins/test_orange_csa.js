@@ -236,6 +236,135 @@ describe('Test Orange AP channel switch on STA authentication', function(){
       // falls back to the STA's results, where TerryGold is on 5200
       expect(stub.matching("chan_switch")[0]).to.include("wlan5g_a chan_switch 5 5200 ");
     });
+    it('should stop the 5G AP when the uplink is on several 5G channels', async() => {
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+        {mac: "D4:68:4D:FE:CD:CC", freq: 5805, signal: -70, flags: [], ssid: "venue"},
+        {mac: "C8:08:73:ED:92:38", freq: 2437, signal: -50, flags: [], ssid: "venue"},
+      ]};
+      expect(await platform.prepareSelectWifi("wlan0", "venue")).to.equal(false);
+      expect(stub.matching("chan_switch")).to.eql([]);
+      expect(stub.matching("disconnect")).to.eql([]);
+      expect(paused).to.eql(["5g"]);
+      // stopped right away, not after the 2 second restart timer
+      expect(stub.matching("systemctl stop firerouter_hostapd@band_5g")).to.have.lengthOf(1);
+      expect(band("5g").state).to.equal("STATE_AP_SILENCE");
+      expect(band("2.4g").state).to.equal("STATE_NORMAL");
+      // the first attempt in the silence period extends it
+      const silenceEndTs = band("5g").silenceEndTs;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      await auth(5805, "venue");
+      expect(band("5g").silenceEndTs).to.be.above(silenceEndTs);
+      expect(stub.matching("chan_switch")).to.eql([]);
+    });
+    it('should switch the AP when several BSSes share one 5G channel', async() => {
+      platform._switchedTo = 5805;
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+        {mac: "D4:68:4D:FE:CD:CC", freq: 5805, signal: -70, flags: [], ssid: "venue"},
+        {mac: "C8:08:73:ED:92:38", freq: 2437, signal: -50, flags: [], ssid: "venue"},
+      ]};
+      await platform.prepareSelectWifi("wlan0", "venue");
+      expect(stub.matching("chan_switch")[0]).to.include("wlan5g_a chan_switch 5 5805 ");
+      expect(paused).to.eql([]);
+    });
+    it('should switch the AP to a BSSID the switch asks for on an uplink with several 5G channels', async() => {
+      platform._switchedTo = 5805;
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+      ]};
+      await platform.prepareSelectWifi("wlan0", "venue", "f0:b0:52:e0:5d:2c");
+      expect(stub.matching("chan_switch")[0]).to.include("wlan5g_a chan_switch 5 5805 ");
+      expect(paused).to.eql([]);
+    });
+    it('should stop a 5G AP that is not running yet, so that a pending restart keeps it stopped', async() => {
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+      ]};
+      apChandef = null;
+      await platform.prepareSelectWifi("wlan0", "venue");
+      expect(paused).to.eql(["5g"]);
+      expect(band("5g").state).to.equal("STATE_AP_SILENCE");
+      expect(stub.matching("systemctl stop firerouter_hostapd@band_5g")).to.have.lengthOf(1);
+    });
+    it('should keep an ongoing silence period for at least 45 seconds', async() => {
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+      ]};
+      band("5g").state = "STATE_AP_SILENCE";
+      // about to end, e.g. 5 seconds after the STA joined another saved uplink
+      band("5g").silenceEndTs = Date.now() + 5000;
+      await platform.prepareSelectWifi("wlan0", "venue");
+      expect(band("5g").silenceEndTs).to.be.within(Date.now() + 44000, Date.now() + 46000);
+      expect(paused).to.eql([]);
+      const later = Date.now() + 100000;
+      band("5g").silenceEndTs = later;
+      await platform.prepareSelectWifi("wlan0", "venue");
+      expect(band("5g").silenceEndTs).to.equal(later);
+    });
+    it('should leave the 5G band alone without a configured 5G AP', async() => {
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+      ]};
+      platform._getPrimaryAPInterface = async () => null;
+      await platform.prepareSelectWifi("wlan0", "venue");
+      expect(paused).to.eql([]);
+      expect(band("5g").state).to.equal("STATE_NORMAL");
+      expect(stub.matching("systemctl stop")).to.eql([]);
+    });
+    it('should prepare the AP for the network the app added last before wpa_supplicant starts', async() => {
+      const networks = [{ssid: "TerryGold"}, {ssid: "venue"}];
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "20:6D:31:61:00:0F", freq: 5200, signal: -40, flags: [], ssid: "TerryGold"},
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+      ]};
+      await platform.prepareWpaSupplicantStart("wlan0", networks);
+      expect(paused).to.eql(["5g"]);
+      expect(stub.matching("systemctl stop firerouter_hostapd@band_5g")).to.have.lengthOf(1);
+      expect(stub.matching("chan_switch")).to.eql([]);
+
+      band("5g").state = "STATE_NORMAL";
+      paused = [];
+      platform._switchedTo = 5805;
+      ncm.lastWlanScan.wlans = ncm.lastWlanScan.wlans.filter(w => w.freq !== 5260);
+      await platform.prepareWpaSupplicantStart("wlan0", networks);
+      expect(paused).to.eql([]);
+      expect(stub.matching("chan_switch")[0]).to.include("wlan5g_a chan_switch 5 5805 ");
+    });
+    it('should not prepare the AP for another interface or without networks', async() => {
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [{mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"}]};
+      await platform.prepareWpaSupplicantStart("wlan1", [{ssid: "venue"}]);
+      await platform.prepareWpaSupplicantStart("wlan0", []);
+      await platform.prepareWpaSupplicantStart("wlan0", undefined);
+      expect(stub.matching("chan_switch")).to.eql([]);
+      expect(paused).to.eql([]);
+    });
+    it('should give up preparing the AP when the AP state lock stays held', async() => {
+      ncm.lastWlanScan = {ts: Date.now(), wlans: [
+        {mac: "F0:B0:52:E0:89:DC", freq: 5260, signal: -60, flags: [], ssid: "venue"},
+        {mac: "F0:B0:52:E0:5D:2C", freq: 5805, signal: -55, flags: [], ssid: "venue"},
+      ]};
+      // a channel switch on an authentication attempt holds the lock until released
+      let release;
+      platform._switchAPChannel = () => new Promise(resolve => { release = () => resolve(true); });
+      const holding = auth(5200);
+      while (!release)
+        await new Promise(resolve => setTimeout(resolve, 10));
+      const t0 = Date.now();
+      await platform.prepareWpaSupplicantStart("wlan0", [{ssid: "venue"}]);
+      expect(Date.now() - t0).to.be.within(2900, 5000);
+      expect(paused).to.eql([]);
+      expect(stub.matching("systemctl stop firerouter_hostapd")).to.eql([]);
+      expect(band("5g").state).to.equal("STATE_NORMAL");
+      release();
+      await holding;
+    });
     it('should leave the AP alone without a scan result or when it is already there', async() => {
       await platform.prepareSelectWifi("wlan0", "Unknown");
       apChandef = {channel: 40, freq: 5200, width: 80, center1: 5210};

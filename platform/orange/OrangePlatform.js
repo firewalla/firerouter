@@ -842,6 +842,15 @@ class OrangePlatform extends Platform {
     return Boolean(live) && live.freq === chandef.freq && live.width === chandef.width;
   }
 
+  // called with LOCK_AP_STATE_AUTOMATA held
+  _enterSilence(band) {
+    const stateAutomata = this.apStateAutomata.bands[band];
+    stateAutomata.state = STATE_AP_SILENCE;
+    stateAutomata.silenceStartTs = Date.now();
+    stateAutomata.silenceEndTs = Date.now() + 45000;
+    this.pauseAP(band);
+  }
+
   pauseAP(band) {
     this.apPause[band] = true;
     this.scheduleHostapdRestart(band);
@@ -1173,10 +1182,7 @@ class OrangePlatform extends Platform {
                 if (switched === null)
                   return;
                 log.info(`${LOG_TAG_STA_AP} AP band ${band} cannot switch to channel ${channel}, entering silence period`);
-                stateAutomata.state = STATE_AP_SILENCE;
-                stateAutomata.silenceStartTs = Date.now();
-                stateAutomata.silenceEndTs = Date.now() + 45000;
-                this.pauseAP(band);
+                this._enterSilence(band);
                 break;
               }
               for (const key of Object.keys(hostapds)) {
@@ -1188,10 +1194,7 @@ class OrangePlatform extends Platform {
                 }
               }
               log.info(`${LOG_TAG_STA_AP} AP band ${band} is not configured on the same channel ${channel} as SSID ${ssid}, entering silence period`);
-              stateAutomata.state = STATE_AP_SILENCE;
-              stateAutomata.silenceStartTs = Date.now();
-              stateAutomata.silenceEndTs = Date.now() + 45000;
-              this.pauseAP(band);
+              this._enterSilence(band);
               break;
             }
           }
@@ -1387,8 +1390,19 @@ class OrangePlatform extends Platform {
     });
   }
 
-  // the uplink's BSS from the scan the app just did, or from what the STA has seen, 5G preferred while its signal is usable
-  async _findUplinkBSS(ssid, bssid) {
+  // a network the config adds or changes is the uplink the app switches to, wpa_supplicant may join it before the switch request arrives
+  async prepareWpaSupplicantStart(intf, changedNetworks) {
+    const network = _.last(changedNetworks || []);
+    if (intf !== this.getWifiClientInterface() || !network || !network.ssid)
+      return;
+    // a silence period ending may hold the AP state lock while it waits for this config apply
+    await this._switchAPChannelForUplink(network.ssid, network.bssid, {timeout: 3000}).catch((err) => {
+      log.warn(`${LOG_TAG_STA_AP} Skip preparing the AP for uplink ${network.ssid}`, err.message);
+    });
+  }
+
+  // the uplink's BSSes from the scan the app just did, or from what the STA has seen
+  async _getUplinkBSSes(ssid, bssid) {
     const ncm = require('../../core/network_config_mgr.js');
     const wanted = (bss) => bss.ssid === ssid && bss.freq && (!bssid || bss.bssid === bssid.toUpperCase());
     let bsses = (ncm.getRecentWlanScan() || []).map(wlan => ({bssid: wlan.mac, freq: wlan.freq, signal: wlan.signal, ssid: wlan.ssid}));
@@ -1400,14 +1414,40 @@ class OrangePlatform extends Platform {
         .map(([mac, freq, signal, flags, name]) => ({bssid: mac.toUpperCase(), freq: Number(freq), signal: Number(signal), ssid: util.parseEscapedString(name)}));
     }
     // a BSSID the switch asks for, or the network is pinned to, is the one the STA will authenticate to
-    bsses = bsses.filter(wanted);
+    return bsses.filter(wanted);
+  }
+
+  // 5G preferred while its signal is usable
+  _pickUplinkBSS(bsses) {
     return _.maxBy(bsses.filter(bss => bss.freq >= 5000 && bss.signal >= -75), "signal") || _.maxBy(bsses, "signal") || null;
   }
 
   // move the AP to the uplink's channel before the STA tries it, so the first authentication is not rejected.
   // true if the current uplink had to be disconnected for it
-  async _switchAPChannelForUplink(ssid, bssid) {
-    const bss = await this._findUplinkBSS(ssid, bssid);
+  async _switchAPChannelForUplink(ssid, bssid, lockOpts = {}) {
+    const bsses = await this._getUplinkBSSes(ssid, bssid);
+    // after a failed attempt the STA moves on to a BSS on another channel, the AP cannot follow it with a channel switch
+    const channels5G = _.uniq(bsses.filter(bss => bss.freq >= 5000).map(bss => bss.freq));
+    if (channels5G.length > 1) {
+      await lock.acquire(LOCK_AP_STATE_AUTOMATA, async () => {
+        // a 5G AP that is configured but not running may be about to come back, e.g. at the end of a silence period
+        if (!await this._getPrimaryAPInterface(BAND_5G))
+          return;
+        const stateAutomata = this.apStateAutomata.bands[BAND_5G];
+        const channels = channels5G.map(freq => util.freqToChannel(freq)).join(",");
+        if (stateAutomata.state === STATE_AP_SILENCE) {
+          log.info(`${LOG_TAG_STA_AP} Uplink ${ssid} is on 5G channels ${channels}, keeping the silence period on band ${BAND_5G}`);
+          stateAutomata.silenceEndTs = Math.max(stateAutomata.silenceEndTs || 0, Date.now() + 45000);
+        } else {
+          log.info(`${LOG_TAG_STA_AP} Uplink ${ssid} is on 5G channels ${channels}, entering silence period on band ${BAND_5G}`);
+          this._enterSilence(BAND_5G);
+        }
+        // the scheduled stop waits for a running config apply, the STA tries the uplink right after this returns
+        await execFile("sudo", ["systemctl", "stop", `firerouter_hostapd@band_${BAND_5G}`]).catch((err) => {});
+      }, lockOpts);
+      return false;
+    }
+    const bss = this._pickUplinkBSS(bsses);
     if (!bss) {
       log.info(`${LOG_TAG_STA_AP} No scan result for uplink ${ssid}, the AP channel follows on the first attempt`);
       return false;
@@ -1432,7 +1472,7 @@ class OrangePlatform extends Platform {
       }
       const switched = await this._switchAPChannel(band, apIntf, bss.freq, apChandef.width);
       log.info(`${LOG_TAG_STA_AP} AP band ${band} ${switched ? "switched" : "not switched"} to ${bss.freq} ahead of uplink ${ssid}`);
-    });
+    }, lockOpts);
     return disconnected;
   }
 
