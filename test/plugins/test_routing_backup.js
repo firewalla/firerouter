@@ -882,4 +882,122 @@ describe('Test global routing plugin', function() {
       expect(new InterfaceBasePlugin('eth0').getWANConnState()).to.not.have.property('backup');
     });
   });
+
+  describe('wan_switched across a gap with no active WAN', function() {
+    const PS = {type: 'primary_standby', viaIntfs: ['eth0', 'eth1'], failback: true};
+    // sets the ready state of each WAN and applies the active WANs as a WAN_CONN_CHECK does
+    async function readyAndApply(plugin, intfs, ready) {
+      for (const name of Object.keys(ready)) {
+        plugin._wanStatus[name].ready = ready[name];
+        intfs[name].o.ready = ready[name];
+        intfs[name].o.carrier = ready[name] ? 1 : 0;
+      }
+      await plugin._applyActiveGlobalDefaultRoutingAndNotify(true);
+    }
+    const origLoader = {isApplyInProgress: pl.isApplyInProgress, getLastAppliedTimestamp: pl.getLastAppliedTimestamp};
+    let lastApplied;
+    let applying;
+    beforeEach(() => {
+      lastApplied = null;
+      applying = false;
+      pl.isApplyInProgress = () => applying;
+      pl.getLastAppliedTimestamp = () => lastApplied;
+    });
+    afterEach(() => {
+      Object.assign(pl, origLoader);
+    });
+    function setupNotified() {
+      const {plugin, intfs} = setup(PS, [{name: 'eth0'}, {name: 'eth1', ready: false, carrier: 0}]);
+      plugin.notified = [];
+      plugin.propagateEvent = (e) => { plugin.notified.push(plugin._getActiveWANNames()); };
+      return {plugin, intfs};
+    }
+
+    it('notifies the first active WAN', async() => {
+      const {plugin} = setupNotified();
+      await plugin.apply();
+      expect(plugin.notified).to.deep.equal([['eth0']]);
+    });
+    it('does not notify the gap, nor the same WAN coming back', async() => {
+      const {plugin, intfs} = setupNotified();
+      await plugin.apply();
+      await readyAndApply(plugin, intfs, {eth0: false});
+      expect(plugin._getActiveWANNames()).to.deep.equal([]);
+      await readyAndApply(plugin, intfs, {eth0: true});
+      expect(plugin._getActiveWANNames()).to.deep.equal(['eth0']);
+      expect(plugin.notified).to.deep.equal([['eth0']]);
+    });
+    it('notifies the same WAN coming back when a reapply ran or runs during the gap', async() => {
+      // the reapply on the DHCP lease's ipchange set up dns and upnp with no active WAN
+      const {plugin, intfs} = setupNotified();
+      await plugin.apply();
+      await readyAndApply(plugin, intfs, {eth0: false});
+      lastApplied = Date.now() / 1000;
+      await readyAndApply(plugin, intfs, {eth0: true});
+      expect(plugin.notified).to.deep.equal([['eth0'], ['eth0']]);
+      await readyAndApply(plugin, intfs, {eth0: false});
+      applying = true;
+      await readyAndApply(plugin, intfs, {eth0: true});
+      expect(plugin.notified).to.deep.equal([['eth0'], ['eth0'], ['eth0']]);
+    });
+    it('notifies the same WAN coming back after a full apply that found no active WAN', async() => {
+      // the secondary WAN is active, then a hotplug or config reapply runs while it is absent: the new status has no active
+      // WAN before and after, and the subscribers it applies are set up with no active WAN
+      const {plugin, intfs} = setup(PS, [{name: 'eth0', ready: false, carrier: 0}, {name: 'eth1'}]);
+      plugin.notified = [];
+      plugin.propagateEvent = (e) => { plugin.notified.push(plugin._getActiveWANNames()); };
+      await plugin.apply();
+      expect(plugin.notified).to.deep.equal([['eth1']]);
+      Object.assign(intfs.eth1.o, {present: false, ready: false, carrier: 0});
+      applying = true;
+      await plugin.apply();
+      applying = false;
+      lastApplied = Date.now() / 1000;
+      expect(plugin._getActiveWANNames()).to.deep.equal([]);
+      Object.assign(intfs.eth1.o, {present: true});
+      await readyAndApply(plugin, intfs, {eth1: true});
+      expect(plugin._getActiveWANNames()).to.deep.equal(['eth1']);
+      expect(plugin.notified).to.deep.equal([['eth1'], ['eth1']]);
+    });
+    it('takes the WANs of a full apply that is no switch as what the subscribers are set up for', async() => {
+      const {plugin, intfs} = setupNotified();
+      Object.assign(intfs.eth1.o, {ready: true, carrier: 1});
+      plugin._wanStatus.eth1.ready = true;
+      await plugin.apply();
+      expect(plugin.notified).to.deep.equal([['eth0']]);
+      // a config reorders the WANs, the status is kept by seq, so the active WAN is eth1 before and after
+      Object.assign(plugin._wanStatus.eth0, {seq: 1, active: false});
+      Object.assign(plugin._wanStatus.eth1, {seq: 0, active: true});
+      await plugin._applyActiveGlobalDefaultRoutingAndNotify(false);
+      expect(plugin._getActiveWANNames()).to.deep.equal(['eth1']);
+      await readyAndApply(plugin, intfs, {eth0: false, eth1: false});
+      await readyAndApply(plugin, intfs, {eth1: true});
+      expect(plugin._getActiveWANNames()).to.deep.equal(['eth1']);
+      expect(plugin.notified).to.deep.equal([['eth0']]);
+    });
+    it('notifies another WAN coming back after the gap', async() => {
+      const {plugin, intfs} = setupNotified();
+      await plugin.apply();
+      await readyAndApply(plugin, intfs, {eth0: false});
+      await readyAndApply(plugin, intfs, {eth1: true});
+      await readyAndApply(plugin, intfs, {eth1: false});
+      await readyAndApply(plugin, intfs, {eth0: true});
+      expect(plugin.notified).to.deep.equal([['eth0'], ['eth1'], ['eth0']]);
+    });
+    it('still notifies a failover without a gap', async() => {
+      const {plugin, intfs} = setupNotified();
+      await plugin.apply();
+      await readyAndApply(plugin, intfs, {eth0: false, eth1: true});
+      expect(plugin.notified).to.deep.equal([['eth0'], ['eth1']]);
+    });
+    it('applies a WAN that turns ready right away when no WAN is active', async() => {
+      const {plugin, intfs} = setupNotified();
+      await plugin.apply();
+      plugin.lastApplyTimestamp = Date.now();
+      expect(plugin.getApplyTimeoutInterval({ready: true, failures: []})).to.equal(10);
+      await readyAndApply(plugin, intfs, {eth0: false});
+      expect(plugin.getApplyTimeoutInterval({ready: true, failures: []})).to.equal(0.5);
+      expect(plugin.getApplyTimeoutInterval({ready: false, failures: [{type: 'carrier'}]})).to.equal(3);
+    });
+  });
 });
