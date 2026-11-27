@@ -315,7 +315,8 @@ router.post('/set',
           default:
         }
       }
-      let errors = await ncm.validateConfig(newConfig);
+      // a revert applies the persisted config again, which is not new input
+      let errors = await ncm.validateConfig(newConfig, { incoming: transactionOp !== T_OP_REVERT });
       if (errors && errors.length != 0) {
         log.error("Invalid network config", errors);
         res.status(400).json({errors: errors});
