@@ -963,9 +963,18 @@ class RoutingPlugin extends Plugin {
     }
     if (backup)
       wanStatus[viaIntf].backup = true;
+    // a WAN new to this plugin holds a default or another WAN's ready until its first check here, and firewalla has not
+    // heard of it
+    const lastOfIntf = lastWanStatus[viaIntf];
+    if (!lastOfIntf || lastOfIntf.untested)
+      wanStatus[viaIntf].untested = true;
+    if (!lastOfIntf || lastOfIntf.unannounced)
+      wanStatus[viaIntf].unannounced = true;
     if (await viaIntfPlugin.isInterfacePresent() === false) {
+      delete wanStatus[viaIntf].untested;
       // need to publish wan conn change events if it was ready previously
       if (wanStatus[viaIntf].ready === true) {
+        delete wanStatus[viaIntf].unannounced;
         changeDescs.push({
           intf: viaIntf,
           ready: false,
@@ -1085,18 +1094,11 @@ class RoutingPlugin extends Plugin {
                 // in apply context here
                 this._wanStatus = wanStatus;
                 await this._applyActiveGlobalDefaultRoutingAndNotify(false);
-                if (!_.isEmpty(changeDescs)) {
-                  for (const desc of changeDescs) {
-                    this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
-                      if (enrichedWanStatus) {
-                        desc.currentStatus = enrichedWanStatus;
-                        this.publishWANConnChange(desc);
-                      }
-                    }).catch((err) => {
-                      this.log.error("Failed to enrich WAN status", err.message);
-                    });
-                  }
-                }
+                for (const desc of changeDescs)
+                  this._publishWANConnChangeWithStatus(desc);
+                if (Object.keys(lastWanStatus).some(i => !wanStatus[i]))
+                  this._wanRemoved = true;
+                this._announceWANChanges();
                 break;
               }
               case "static": {
@@ -1351,6 +1353,7 @@ class RoutingPlugin extends Plugin {
           currentStatus.carrier = payload.carrier;
         }
         currentStatus.pendingTest = false;
+        delete currentStatus.untested;
         let changeActiveWanNeeded = false;
         let changeDesc = null;
         if (currentStatus.ready && !intfPlugin.isReady()) {
@@ -1388,14 +1391,7 @@ class RoutingPlugin extends Plugin {
                 this.log.error(`Failed to refresh routes of standby backup WAN ${intf}`, err.message);
               });
             }
-            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
-              if (enrichedWanStatus) {
-                changeDesc.currentStatus = enrichedWanStatus;
-                this.publishWANConnChange(changeDesc);
-              }
-            }).catch((err) => {
-              this.log.error("Failed to enrich WAN status", err.message);
-            });
+            this._publishWANConnChangeWithStatus(changeDesc);
           }
         } else if (carrierChanged && type === "primary_standby") {
           if (currentStatus.carrier) {
@@ -1412,9 +1408,38 @@ class RoutingPlugin extends Plugin {
               this.scheduleApplyActiveGlobalDefaultRouting({intf:intf, ready: intfPlugin.isReady(),wanSwitched: true,failures: failures});
           }
         }
+        // the publish above already carries this WAN in its status
+        if (changeDesc)
+          delete currentStatus.unannounced;
+        this._announceWANChanges(intf, failures);
       }
       default: 
     }
+  }
+
+  // a WAN just added may pass its first check without changing ready and a removed one changes nothing, so neither would
+  // reach firewalla. Publish once, after every WAN has finished its first check and after a pending switch. Not during a
+  // reapply either: firewalla reloads on it and would read the config before it is saved; the next check publishes it
+  _announceWANChanges(checkedIntf = null, failures = []) {
+    const names = Object.keys(this._wanStatus);
+    const added = names.find(i => this._wanStatus[i].unannounced);
+    if (!added && !this._wanRemoved)
+      return;
+    if (pl.isApplyInProgress() || names.some(i => this._wanStatus[i].untested || this._wanStatus[i].plugin.isPendingTest()))
+      return;
+    for (const i of names)
+      delete this._wanStatus[i].unannounced;
+    delete this._wanRemoved;
+    // firewalla needs the interface of the change in the status, a removed one is not there any more
+    const intf = added || names.find(i => this._wanStatus[i].active) || names[0];
+    if (!intf)
+      return;
+    const changeDesc = {intf, ready: this._wanStatus[intf].ready, wanSwitched: false, failures: intf === checkedIntf ? failures : [], noNotify: true};
+    this.log.info(`Announce WAN changes on ${intf}`);
+    if (!_.isEmpty(this._pendingChangeDescs))
+      this._pendingChangeDescs.push(changeDesc);
+    else
+      this._publishWANConnChangeWithStatus(changeDesc);
   }
 
   // in seconds
@@ -1460,16 +1485,8 @@ class RoutingPlugin extends Plugin {
       }));
       // in async context here
       this._applyActiveGlobalDefaultRoutingAndNotify(true).then(() => {
-        if (!_.isEmpty(this._pendingChangeDescs)) {
-          for (const desc of this._pendingChangeDescs) {
-            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
-              if (enrichedWanStatus) {
-                desc.currentStatus = enrichedWanStatus;
-                this.publishWANConnChange(desc);
-              }
-            });
-          }
-        }
+        for (const desc of this._pendingChangeDescs)
+          this._publishWANConnChangeWithStatus(desc);
         this._pendingChangeDescs = [];
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
@@ -1504,6 +1521,20 @@ class RoutingPlugin extends Plugin {
       return result;
     }
     return null;
+  }
+
+  // not awaited by the callers, the status is read when the publish runs. An untested WAN is left out, its ready is not a
+  // result yet, and the announcement adds it once it has one
+  _publishWANConnChangeWithStatus(changeDesc) {
+    const states = _.omitBy(this.getWANConnStates(), (s, i) => this._wanStatus[i].untested);
+    this.enrichWanStatus(states).then((enrichedWanStatus) => {
+      if (enrichedWanStatus) {
+        changeDesc.currentStatus = enrichedWanStatus;
+        this.publishWANConnChange(changeDesc);
+      }
+    }).catch((err) => {
+      this.log.error("Failed to enrich WAN status", err.message);
+    });
   }
 
   async publishWANConnChange(changeDesc) {
