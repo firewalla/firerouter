@@ -1085,18 +1085,8 @@ class RoutingPlugin extends Plugin {
                 // in apply context here
                 this._wanStatus = wanStatus;
                 await this._applyActiveGlobalDefaultRoutingAndNotify(false);
-                if (!_.isEmpty(changeDescs)) {
-                  for (const desc of changeDescs) {
-                    this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
-                      if (enrichedWanStatus) {
-                        desc.currentStatus = enrichedWanStatus;
-                        this.publishWANConnChange(desc);
-                      }
-                    }).catch((err) => {
-                      this.log.error("Failed to enrich WAN status", err.message);
-                    });
-                  }
-                }
+                for (const desc of changeDescs)
+                  this._publishWANConnChangeWithStatus(desc);
                 break;
               }
               case "static": {
@@ -1388,14 +1378,7 @@ class RoutingPlugin extends Plugin {
                 this.log.error(`Failed to refresh routes of standby backup WAN ${intf}`, err.message);
               });
             }
-            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
-              if (enrichedWanStatus) {
-                changeDesc.currentStatus = enrichedWanStatus;
-                this.publishWANConnChange(changeDesc);
-              }
-            }).catch((err) => {
-              this.log.error("Failed to enrich WAN status", err.message);
-            });
+            this._publishWANConnChangeWithStatus(changeDesc);
           }
         } else if (carrierChanged && type === "primary_standby") {
           if (currentStatus.carrier) {
@@ -1460,16 +1443,8 @@ class RoutingPlugin extends Plugin {
       }));
       // in async context here
       this._applyActiveGlobalDefaultRoutingAndNotify(true).then(() => {
-        if (!_.isEmpty(this._pendingChangeDescs)) {
-          for (const desc of this._pendingChangeDescs) {
-            this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
-              if (enrichedWanStatus) {
-                desc.currentStatus = enrichedWanStatus;
-                this.publishWANConnChange(desc);
-              }
-            });
-          }
-        }
+        for (const desc of this._pendingChangeDescs)
+          this._publishWANConnChangeWithStatus(desc);
         this._pendingChangeDescs = [];
       }).catch((err) => {
         this.log.error("Failed to apply active global default routing", err.message);
@@ -1504,6 +1479,18 @@ class RoutingPlugin extends Plugin {
       return result;
     }
     return null;
+  }
+
+  // not awaited by the callers, the status is read when the publish runs
+  _publishWANConnChangeWithStatus(changeDesc) {
+    this.enrichWanStatus(this.getWANConnStates()).then((enrichedWanStatus) => {
+      if (enrichedWanStatus) {
+        changeDesc.currentStatus = enrichedWanStatus;
+        this.publishWANConnChange(changeDesc);
+      }
+    }).catch((err) => {
+      this.log.error("Failed to enrich WAN status", err.message);
+    });
   }
 
   async publishWANConnChange(changeDesc) {
