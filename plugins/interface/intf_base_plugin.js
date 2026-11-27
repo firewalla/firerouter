@@ -1164,9 +1164,16 @@ class InterfaceBasePlugin extends Plugin {
   // is escaped: an unescaped quote, and an odd run of backslashes at the end. Not _quotedPPPDWord,
   // pppd quotes with ' and has its own escape rules
   _quotedDHClientString(value) {
-    const escaped = String(value).replace(/(\\*)("|$)/g, (m, backslashes, quote) =>
-      backslashes.length % 2 === 0 ? backslashes + (quote ? '\\"' : "") : backslashes + (quote || "\\"));
-    return `"${escaped}"`;
+    // one linear pass, a regex over a long backslash run backtracks quadratically
+    let out = "", run = 0;
+    for (const c of String(value)) {
+      if (c === "\\") { run++; out += c; continue; }
+      if (c === '"' && run % 2 === 0) out += "\\";
+      out += c;
+      run = 0;
+    }
+    if (run % 2) out += "\\";
+    return `"${out}"`;
   }
 
   _getDHClientSendOptions() {

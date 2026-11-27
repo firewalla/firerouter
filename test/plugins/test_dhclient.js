@@ -167,6 +167,13 @@ describe('Test dhclient send options', function(){
       expect(build({"vendor-class-identifier": value})._getDHClientSendOptions(), value).to.eql([`send vendor-class-identifier "${written}";`]);
   });
 
+  it('should escape a long backslash run in linear time', () => {
+    const start = Date.now();
+    const lines = build({"vendor-class-identifier": "\\".repeat(100000) + "a"})._getDHClientSendOptions();
+    expect(Date.now() - start).to.be.below(100);
+    expect(lines).to.eql([`send vendor-class-identifier "${"\\".repeat(100000)}a";`]);
+  });
+
   it('should keep config key order, unknown keys as quoted text', () => {
     expect(build({"my-option": "x", "dhcp-lease-time": "3600", "host-name": "fr-test", "user-class": 5})._getDHClientSendOptions()).to.eql([
       'send my-option "x";',
