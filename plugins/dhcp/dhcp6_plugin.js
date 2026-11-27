@@ -15,7 +15,6 @@
 
 'use strict';
 
-const pl = require('../plugin_loader.js');
 const r = require('../../util/firerouter.js');
 const fs = require('fs');
 const Promise = require('bluebird');
@@ -32,13 +31,6 @@ class DHCP6Plugin extends DHCPPlugin {
 
   _getConfFilePath() {
     return `${dhcpConfDir}/${this.name}_v6.conf`;
-  }
-
-  async flush() {
-    this.log.info("Flushing dhcp6", this.name);
-    const confPath = this._getConfFilePath();
-    await fs.unlinkAsync(confPath).catch((err) => {});
-    this._restartService();
   }
 
   async writeDHCPConfFile(iface, tags, type = "stateless", from, to, nameservers, prefixLen, leaseTime = 86400, raInterval = 200, raLifetime, deprecatedPrefixes = []) {
@@ -107,21 +99,10 @@ class DHCP6Plugin extends DHCPPlugin {
   }
 
   async apply() {
-    let iface = this.name;
-    if (iface.includes(":")) {
-      // virtual interface, need to strip suffix
-      iface = this.name.substr(0, this.name.indexOf(":"));
-    }
-    const ifacePlugin = pl.getPluginInstance("interface", this.name);
-    if (!ifacePlugin) {
-      this.fatal(`Interface plugin ${this.name} is not found`);
-    }
-    // in case prefix delegation is used, address may be changed dynamically
-    this.subscribeChangeFrom(ifacePlugin);
-    if (await ifacePlugin.isInterfacePresent() === false) {
-      this.log.warn(`Interface ${this.name} is not present yet`);
+    const resolved = await this._resolveInterface();
+    if (!resolved)
       return;
-    }
+    const {iface, ifacePlugin} = resolved;
     // the conf is fully regenerated, so an expired deprecated address just drops out of the file
     const deprecatedPrefixes = await ifacePlugin.getDeprecatedIPv6Prefixes();
     await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.type, this.networkConfig.range && this.networkConfig.range.from, this.networkConfig.range && this.networkConfig.range.to, this.networkConfig.nameservers,

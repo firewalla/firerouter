@@ -49,6 +49,7 @@ function fakeIntf(name, idx, opts) {
     isStaticIP() { return o.staticIP === true; },
     async getIPv4Addresses() { return [`10.0.${idx}.2`]; },
     isReady() { return o.ready; },
+    isPendingTest() { return o.pendingTest === true; },
   };
 }
 
@@ -56,6 +57,7 @@ const origGetPluginInstance = pl.getPluginInstance;
 const origScheduleReapply = pl.scheduleReapply;
 const origPublishChangeApplied = pl.publishChangeApplied;
 const origAcquireApplyLock = pl.acquireApplyLock;
+const origIsApplyInProgress = pl.isApplyInProgress;
 let reapplies = 0;
 let applyLocks = 0;
 
@@ -119,6 +121,7 @@ describe('Test global routing plugin', function() {
     pl.scheduleReapply = origScheduleReapply;
     pl.publishChangeApplied = origPublishChangeApplied;
     pl.acquireApplyLock = origAcquireApplyLock;
+    pl.isApplyInProgress = origIsApplyInProgress;
   });
 
   describe('golden command sequences', function() {
@@ -274,6 +277,141 @@ describe('Test global routing plugin', function() {
       intfs.eth1.o.ready = false;
       connCheck(plugin, 'eth1');
       expect(plugin.scheduled.map(d => [d.intf, d.ready, d.wanSwitched])).to.deep.equal([['eth1', false, true]]);
+    });
+  });
+
+  describe('new WAN announcement', function() {
+    const PS = {type: 'primary_standby', viaIntfs: ['eth0', 'wlan0'], failback: true};
+    const summary = (plugin) => plugin.published.map(d => [d.intf, d.ready, d.wanSwitched, d.noNotify === true, Object.keys(d.currentStatus)]);
+
+    // wlan0 is what the app just added: the last apply has no status of it
+    async function addWlan(wans) {
+      const ctx = setup(PS, wans);
+      delete ctx.plugin._wanStatus.wlan0;
+      await ctx.plugin.apply();
+      return ctx;
+    }
+
+    it('publishes once when a new WAN passes its first check without changing ready', async() => {
+      const {plugin} = await addWlan([{name: 'eth0', ready: false, carrier: 0}, {name: 'wlan0'}]);
+      expect(plugin._wanStatus.wlan0.unannounced).to.be.true;
+      expect(plugin._wanStatus.eth0.unannounced).to.be.undefined;
+      await settle();
+      // its ready is still the default until its first check
+      expect(plugin.published).to.be.empty;
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['wlan0', true, false, true, ['eth0', 'wlan0']]]);
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(plugin.published).to.have.lengthOf(1);
+    });
+
+    it('waits until every WAN has finished its first check', async() => {
+      const {plugin, intfs} = await addWlan([{name: 'eth0', pendingTest: true}, {name: 'wlan0'}]);
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(plugin.published).to.be.empty;
+      intfs.eth0.o.pendingTest = false;
+      connCheck(plugin, 'eth0');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['wlan0', true, false, true, ['eth0', 'wlan0']]]);
+      expect(plugin.published[0].failures).to.deep.equal([]);
+    });
+
+    it('queues behind a pending switch so it carries the status after it', async() => {
+      const {plugin} = await addWlan([{name: 'eth0'}, {name: 'wlan0'}]);
+      const pending = {intf: 'eth0', ready: true, wanSwitched: true, failures: []};
+      plugin._pendingChangeDescs = [pending];
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(plugin.published).to.be.empty;
+      expect(plugin._pendingChangeDescs.map(d => [d.intf, d.noNotify === true])).to.deep.equal([['eth0', false], ['wlan0', true]]);
+    });
+
+    it('does not announce again when the first check changes ready', async() => {
+      const {plugin, intfs} = await addWlan([{name: 'eth0'}, {name: 'wlan0'}]);
+      intfs.wlan0.o.ready = false;
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['wlan0', false, false, false, ['eth0', 'wlan0']]]);
+      expect(plugin._wanStatus.wlan0.unannounced).to.be.undefined;
+      // a WAN that never connects is never announced as ready
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(plugin.published).to.have.lengthOf(1);
+    });
+
+    it('keeps the announcement across an apply before the first check', async() => {
+      const {plugin} = await addWlan([{name: 'eth0'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      expect(plugin._wanStatus.wlan0.unannounced).to.be.true;
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['wlan0', true, false, true, ['eth0', 'wlan0']]]);
+    });
+
+    it('leaves a new WAN on its first check out of another WAN\'s publish', async() => {
+      const {plugin, intfs} = setup({type: 'primary_standby', viaIntfs: ['eth0', 'eth1', 'wlan0'], failback: true},
+        [{name: 'eth0'}, {name: 'eth1'}, {name: 'wlan0', pendingTest: true}]);
+      delete plugin._wanStatus.wlan0;
+      await plugin.apply();
+      intfs.eth1.o.ready = false;
+      connCheck(plugin, 'eth1');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['eth1', false, false, false, ['eth0', 'eth1']]]);
+      intfs.wlan0.o.pendingTest = false;
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(summary(plugin)[1]).to.deep.equal(['wlan0', true, false, true, ['eth0', 'eth1', 'wlan0']]);
+    });
+
+    it('publishes once without the WAN the config removed', async() => {
+      const {plugin} = setup(PS, [{name: 'eth0'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      plugin.networkConfig = {default: {type: 'primary_standby', viaIntfs: ['eth0'], failback: true}};
+      await plugin.apply();
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['eth0', true, false, true, ['eth0']]]);
+      connCheck(plugin, 'eth0');
+      await settle();
+      expect(plugin.published).to.have.lengthOf(1);
+    });
+
+    it('publishes a removal after the reapply it is part of', async() => {
+      const {plugin} = setup(PS, [{name: 'eth0'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      pl.isApplyInProgress = () => true;
+      plugin.networkConfig = {default: {type: 'primary_standby', viaIntfs: ['eth0'], failback: true}};
+      await plugin.apply();
+      await settle();
+      expect(plugin.published).to.be.empty;
+      pl.isApplyInProgress = origIsApplyInProgress;
+      connCheck(plugin, 'eth0');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['eth0', true, false, true, ['eth0']]]);
+    });
+
+    it('publishes a removal once the remaining WANs have finished their first check', async() => {
+      const {plugin, intfs} = setup(PS, [{name: 'eth0'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      intfs.eth0.o.pendingTest = true;
+      plugin.networkConfig = {default: {type: 'primary_standby', viaIntfs: ['eth0'], failback: true}};
+      await plugin.apply();
+      await settle();
+      expect(plugin.published).to.be.empty;
+      intfs.eth0.o.pendingTest = false;
+      connCheck(plugin, 'eth0');
+      await settle();
+      expect(summary(plugin)).to.deep.equal([['eth0', true, false, true, ['eth0']]]);
+    });
+
+    it('does not announce a WAN the last apply already had', async() => {
+      const {plugin} = setup(PS, [{name: 'eth0'}, {name: 'wlan0'}]);
+      await plugin.apply();
+      connCheck(plugin, 'wlan0');
+      await settle();
+      expect(plugin.published).to.be.empty;
     });
   });
 
