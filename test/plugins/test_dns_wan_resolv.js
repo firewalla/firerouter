@@ -32,11 +32,16 @@ describe('Test dns upstream from the WAN resolv.conf', function() {
   let plugin;
 
   // nameservers: null for a WAN without a resolv.conf, [] for an empty one
-  const wan = (name, nameservers, present = true, carrier = "1") => {
+  // lease: ip4s on the WAN, whether it runs dhcp, and the nameservers dhclient got (not yet written
+  // into its resolv.conf); the default is a WAN that has no address yet
+  const wan = (name, nameservers, present = true, carrier = "1", lease = {}) => {
     if (nameservers)
       resolvFiles.add(r.getInterfaceResolvConfPath(name));
-    return {name, isInterfacePresent: async () => present, getDNSNameservers: async () => nameservers || [],
-      carrierState: async () => carrier};
+    const {ip4s = null, dhcp = true, dhcp6 = false, origDns = [], origDns6 = []} = lease;
+    return {name, networkConfig: {dhcp, dhcp6}, isInterfacePresent: async () => present,
+      getDNSNameservers: async () => nameservers || [],
+      carrierState: async () => carrier, getIPv4Addresses: async () => ip4s, isDHCP: () => dhcp || dhcp6,
+      getOrigDNSNameservers: async () => origDns, getOrigDNS6Nameservers: async () => origDns6};
   };
   // backups: names configured as backup.viaIntfs, which are standby unless they are active
   const routing = (all, active, inUse, backups = [], type = "primary_standby") => ({
@@ -85,6 +90,85 @@ describe('Test dns upstream from the WAN resolv.conf', function() {
     const wlan0 = wan("wlan0", ["10.0.1.1"], true, "1");
     await plugin._linkWANResolvConf(routing([eth1, wlan0], [eth1], [eth1]));
     expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('keeps an active WAN with a carrier that waits for its lease, not an unplugged one', async() => {
+    // a Wi-Fi WAN that just associated has an empty resolv.conf until its lease is written, while
+    // the unplugged eth1 kept the nameservers of its last lease
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "0");
+    const wlan0 = wan("wlan0", [], true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [wlan0], [wlan0]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('keeps an active WAN with a carrier that waits for its lease, even over a connected one', async() => {
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "1");
+    const wlan0 = wan("wlan0", null, true, "1");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [wlan0], [wlan0, eth1]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('keeps an active WAN whose lease came in before its resolv.conf is written', async() => {
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "1");
+    const wlan0 = wan("wlan0", [], true, "1", {ip4s: ["10.0.1.5/24"], origDns: ["10.0.1.1"]});
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [wlan0], [wlan0, eth1]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('borrows from a WAN with a carrier when the active WAN got a lease without nameservers', async() => {
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "1");
+    const wlan0 = wan("wlan0", [], true, "1", {ip4s: ["10.0.1.5/24"]});
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [wlan0], [wlan0, eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('borrows from a WAN with a carrier when the active static WAN has no nameservers', async() => {
+    const eth0 = wan("eth0", [], true, "1", {ip4s: ["10.0.0.5/24"], dhcp: false});
+    const eth1 = wan("eth1", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, eth1], [eth0], [eth0, eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('keeps an active WAN whose first nameservers came from DHCPv6 before its resolv.conf is written', async() => {
+    const eth1 = wan("eth1", ["10.0.0.1"], true, "1");
+    const wlan0 = wan("wlan0", [], true, "1", {ip4s: ["10.0.1.5/24"], origDns6: ["fd00::1"]});
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [wlan0], [wlan0, eth1]));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('borrows from a WAN with a carrier when the active static IPv6-only WAN has no nameservers', async() => {
+    const eth0 = wan("eth0", [], true, "1", {dhcp: false});
+    const eth1 = wan("eth1", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, eth1], [eth0], [eth0, eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('borrows from a WAN with a carrier when the active DHCPv6-only WAN got no nameservers', async() => {
+    const eth0 = wan("eth0", [], true, "1", {dhcp: false, dhcp6: true});
+    const eth1 = wan("eth1", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, eth1], [eth0], [eth0, eth1]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
+  });
+
+  it('keeps an active DHCPv6-only WAN whose nameservers came before its resolv.conf is written', async() => {
+    const eth0 = wan("eth0", [], true, "1", {dhcp: false, dhcp6: true, origDns6: ["fd00::1"]});
+    const eth1 = wan("eth1", ["10.0.1.1"], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, eth1], [eth0], [eth0, eth1]));
+    expect(linked()).to.eql(["eth0.resolv.conf"]);
+  });
+
+  it('picks the active WAN awaiting its lease over an unplugged active one in load_balance', async() => {
+    const eth0 = wan("eth0", ["10.0.0.1"], true, "0");
+    const wlan0 = wan("wlan0", [], true, "1");
+    await plugin._linkWANResolvConf(routing([eth0, wlan0], [eth0, wlan0], [eth0, wlan0], [], "load_balance"));
+    expect(linked()).to.eql(["wlan0.resolv.conf"]);
+  });
+
+  it('does not borrow from a WAN without a carrier', async() => {
+    const eth1 = wan("eth1", [], true, "0");
+    const wlan0 = wan("wlan0", ["10.0.1.1"], true, "0");
+    await plugin._linkWANResolvConf(routing([eth1, wlan0], [eth1], [eth1, wlan0]));
+    expect(linked()).to.eql(["eth1.resolv.conf"]);
   });
 
   it('still links the active WAN when no WAN has nameservers', async() => {

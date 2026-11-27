@@ -18,8 +18,12 @@
 const chai = require('chai');
 const expect = chai.expect;
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
+const stub = require('./stub_exec.js');
 const DHCP6Plugin = require('../../plugins/dhcp/dhcp6_plugin.js');
+const pl = require('../../plugins/plugin_loader.js');
 
 
 describe('Test DHCP6 configuration', function(){
@@ -209,5 +213,84 @@ describe('Test DHCP6 configuration', function(){
     expect(error).to.not.equal(null);
     const exists = await fs.accessAsync(this.plugin._getConfFilePath()).then(() => true).catch(() => false);
     expect(exists).to.equal(false);
+  });
+});
+
+describe('Test DHCP6 plugin apply and flush', function(){
+  this.timeout(30000);
+
+  const confPath = path.join(os.tmpdir(), `firerouter_test_dhcp6_apply_${process.pid}.conf`);
+  const origGetPluginInstance = pl.getPluginInstance;
+  let ifaces;
+  let restarts;
+
+  const build = (name) => {
+    const plugin = stub.build(DHCP6Plugin, name, {type: "stateless", lease: 86400, raInterval: 200});
+    plugin._getConfFilePath = () => confPath;
+    plugin._restartService = () => { restarts++; };
+    return plugin;
+  };
+  const read = () => fs.readFileAsync(confPath, {encoding: 'utf8'}).catch(() => null);
+
+  beforeEach(async () => {
+    ifaces = {};
+    restarts = 0;
+    pl.getPluginInstance = (category, name) => category === "interface" ? ifaces[name] : null;
+    await fs.unlinkAsync(confPath).catch(() => {});
+  });
+
+  afterEach(async () => {
+    pl.getPluginInstance = origGetPluginInstance;
+    await fs.unlinkAsync(confPath).catch(() => {});
+  });
+
+  it('should subscribe to the interface, write its range and restart dhcp', async () => {
+    ifaces.eth5 = stub.fakeInterface();
+    const plugin = build("eth5");
+    await plugin.apply();
+    expect(ifaces.eth5.subscribers).to.deep.equal([plugin]);
+    expect(await read()).to.contain('dhcp-range=tag:eth5,::,constructor:eth5,slaac,86400');
+    expect(restarts).to.equal(1);
+  });
+
+  it('should tag a virtual interface by its parent but look it up by its own name', async () => {
+    ifaces["br0:0"] = stub.fakeInterface();
+    const plugin = build("br0:0");
+    await plugin.apply();
+    expect(ifaces["br0:0"].subscribers).to.deep.equal([plugin]);
+    expect(await read()).to.contain('dhcp-range=tag:br0,::,constructor:br0:0,slaac,86400');
+  });
+
+  it('should advertise the prefixes the interface plugin reports as renumbered away', async () => {
+    ifaces.eth5 = stub.fakeInterface({
+      getDeprecatedIPv6Prefixes: async () => [{prefix: '2001:db8:1::/64', validLft: 6800}]
+    });
+    await build("eth5").apply();
+    expect(await read()).to.contain('dhcp-range=tag:eth5,2001:db8:1::,ra-only,deprecated');
+  });
+
+  it('should write nothing and schedule no restart while the interface is not present', async () => {
+    ifaces.eth5 = stub.fakeInterface({isInterfacePresent: async () => false});
+    const plugin = build("eth5");
+    await plugin.apply();
+    expect(ifaces.eth5.subscribers).to.deep.equal([plugin]);
+    expect(await read()).to.be.null;
+    expect(restarts).to.equal(0);
+  });
+
+  it('should fail without an interface plugin and write nothing', async () => {
+    let thrown = null;
+    await build("eth5").apply().catch((err) => { thrown = err; });
+    expect(thrown).to.equal("Interface plugin eth5 is not found");
+    expect(await read()).to.be.null;
+    expect(restarts).to.equal(0);
+  });
+
+  it('should flush its own _v6 conf file and schedule a restart', async () => {
+    expect(new DHCP6Plugin("eth5")._getConfFilePath()).to.match(/\/eth5_v6\.conf$/);
+    await fs.writeFileAsync(confPath, "enable-ra");
+    await build("eth5").flush();
+    expect(await read()).to.be.null;
+    expect(restarts).to.equal(1);
   });
 });
