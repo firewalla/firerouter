@@ -1152,14 +1152,19 @@ class InterfaceBasePlugin extends Plugin {
     return dhclientConf
   }
 
+  _getDHClientSendOptions() {
+    const lines = [];
+    if (this.networkConfig.dhcpOptions) {
+      for (const option of Object.keys(this.networkConfig.dhcpOptions)) {
+        lines.push(`send ${option} "${this.networkConfig.dhcpOptions[option]}";`);
+      }
+    }
+    return lines;
+  }
+
   async applyIpSettings() {
     if (this.networkConfig.dhcp) {
-      const dhcpOptions = [];
-      if (this.networkConfig.dhcpOptions) {
-        for (const option of Object.keys(this.networkConfig.dhcpOptions)) {
-          dhcpOptions.push(`send ${option} "${this.networkConfig.dhcpOptions[option]}";`);
-        }
-      }
+      const dhcpOptions = this._getDHClientSendOptions();
       let dhclientConf = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhclient.conf.template`, {encoding: "utf8"});
       dhclientConf=this._overrideNTPoverDHCP(dhclientConf);
       dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
