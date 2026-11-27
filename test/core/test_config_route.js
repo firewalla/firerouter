@@ -34,20 +34,22 @@ describe('Test config service routes', function() {
    * focused on the transactionOp control flow without adding another HTTP
    * testing dependency.
    */
-  const getSetHandler = () => {
+  const getHandler = (path) => {
     const layer = configRouter.stack.find(
-      (entry) => entry.route && entry.route.path === '/set'
+      (entry) => entry.route && entry.route.path === path
     );
 
-    expect(layer, 'POST /set route should be registered').to.exist;
+    expect(layer, `POST ${path} route should be registered`).to.exist;
 
     const handlers = layer.route.stack.map((entry) => entry.handle);
     const handler = handlers[handlers.length - 1];
 
-    expect(handler, 'POST /set route handler should be registered').to.be.a('function');
+    expect(handler, `POST ${path} route handler should be registered`).to.be.a('function');
 
     return handler;
   };
+
+  const getSetHandler = () => getHandler('/set');
 
   const createResponse = () => {
     const response = {
@@ -162,5 +164,61 @@ describe('Test config service routes', function() {
       ncm.tryApplyConfig = originalTryApplyConfig;
       ncm.saveConfig = originalSaveConfig;
     }
+  });
+
+  // validateConfig takes `incoming` so that a check meant for new input does not refuse a saved
+  // config at boot or on revert
+  describe('validateConfig incoming option', function() {
+    const methods = ['acquireConfigRWLock', 'validateConfig', 'validateNcidOrReqId', 'tryApplyConfig',
+      'saveConfig', 'getActiveConfig'];
+    const originals = {};
+    let validateCalls;
+
+    beforeEach(() => {
+      for (const m of methods)
+        originals[m] = ncm[m];
+      validateCalls = [];
+      ncm.acquireConfigRWLock = async (callback) => callback();
+      ncm.validateConfig = async (config, options) => {
+        validateCalls.push(options);
+        return [];
+      };
+      ncm.validateNcidOrReqId = async () => [];
+      ncm.tryApplyConfig = async () => [];
+      ncm.saveConfig = async () => {};
+      ncm.getActiveConfig = async () => ({ interface: {}, saved: true });
+    });
+
+    afterEach(() => {
+      for (const m of methods)
+        ncm[m] = originals[m];
+    });
+
+    const post = async (path, body) => {
+      const res = createResponse();
+      await getHandler(path)({ body, url: path }, res, () => {});
+      return res;
+    };
+
+    it('should validate a config posted to /set as incoming', async () => {
+      const res = await post('/set', { interface: {} });
+      expect(res.statusCalls).to.deep.equal([200]);
+      expect(validateCalls).to.deep.equal([{ incoming: true }]);
+    });
+
+    it('should not validate the persisted config of a revert as incoming', async () => {
+      let res = await post('/set', { interface: {}, transactionOp: 'append', transID: 't1' });
+      expect(res.statusCalls).to.deep.equal([200]);
+      res = await post('/set', { transactionOp: 'revert', transID: 't1' });
+      expect(res.statusCalls).to.deep.equal([200]);
+      expect(validateCalls).to.deep.equal([{ incoming: true }, { incoming: false }]);
+    });
+
+    it('should not validate the saved config of apply_current_config as incoming', async () => {
+      const res = await post('/apply_current_config', {});
+      expect(res.statusCalls).to.deep.equal([200]);
+      expect(validateCalls).to.have.length(1);
+      expect(validateCalls[0]).to.not.exist;
+    });
   });
 });

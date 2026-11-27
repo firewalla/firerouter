@@ -119,6 +119,12 @@ class DHCPPlugin extends Plugin {
     await fs.writeFileAsync(this._getConfFilePath(), content);
   }
 
+  // one dhcp-relay line per remote server, giaddr is the address of this network on the box
+  async writeDHCPRelayConfFile(giaddr, servers) {
+    const content = servers.map(server => `dhcp-relay=${giaddr},${server}`).join("\n");
+    await fs.writeFileAsync(this._getConfFilePath(), content);
+  }
+
   _restartService() {
     if (!_restartTask) {
       _restartTask = setTimeout(() => {
@@ -130,7 +136,8 @@ class DHCPPlugin extends Plugin {
     }
   }
 
-  async apply() {
+  // null while the interface is not present yet
+  async _resolveInterface() {
     let iface = this.name;
     if (iface.includes(":")) {
       // virtual interface, need to strip suffix
@@ -140,13 +147,33 @@ class DHCPPlugin extends Plugin {
     if (!ifacePlugin) {
       this.fatal(`Interface plugin ${this.name} is not found`);
     }
+    // in case prefix delegation is used, address may be changed dynamically
     this.subscribeChangeFrom(ifacePlugin);
     if (await ifacePlugin.isInterfacePresent() === false) {
       this.log.warn(`Interface ${this.name} is not present yet`);
-      return;
+      return null;
     }
-    await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
-      this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain, this.networkConfig.extraOptions);
+    return {iface, ifacePlugin};
+  }
+
+  async apply() {
+    const resolved = await this._resolveInterface();
+    if (!resolved)
+      return;
+    const {iface, ifacePlugin} = resolved;
+    // a relay entry may still carry local server fields, they are not used
+    if (this.networkConfig.relay) {
+      const ip4s = await ifacePlugin.getIPv4Addresses();
+      // skip rather than throw: an apply error makes the whole previous config be applied again
+      if (_.isEmpty(ip4s)) {
+        this.log.warn(`Interface ${this.name} has no ipv4 address to relay dhcp from`);
+        return;
+      }
+      await this.writeDHCPRelayConfFile(ip4s[0].split("/")[0], this.networkConfig.relay.servers);
+    } else {
+      await this.writeDHCPConfFile(iface, this.networkConfig.tags, this.networkConfig.range.from, this.networkConfig.range.to, this.networkConfig.subnetMask,
+        this.networkConfig.lease, this.networkConfig.gateway, this.networkConfig.nameservers, this.networkConfig.searchDomain, this.networkConfig.extraOptions);
+    }
     this._restartService();
   }
 }
