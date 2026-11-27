@@ -59,6 +59,14 @@ const OFF_ON_THRESHOLD = 5;
 const CONNTRACK_MONITOR_SEC_DEFAULT = 5;
 const CONNTRACK_MONITOR_SEC_AFTER_SUCCESS = 8;
 const CONNTRACK_MONITOR_SEC_AFTER_FAILURE = 10;
+// dhclient syntax of the dhcpOptions keys the app and MSP write, any other key is sent as text
+const DHCLIENT_SEND_FORMATS = {
+  "dhcp-lease-time": "uint32",
+  "host-name": "text",
+  "vendor-class-identifier": "text",
+  "dhcp-client-identifier": "text",
+  "vendor-encapsulated-options": "text",
+};
 
 const DUID_RECORD_MAX = 10;
 
@@ -1152,11 +1160,35 @@ class InterfaceBasePlugin extends Plugin {
     return dhclientConf
   }
 
+  // dhclient's own string escapes (\001, \x01) stay as typed, only what would end the string early
+  // is escaped: an unescaped quote, and an odd run of backslashes at the end. Not _quotedPPPDWord,
+  // pppd quotes with ' and has its own escape rules
+  _quotedDHClientString(value) {
+    const escaped = String(value).replace(/(\\*)("|$)/g, (m, backslashes, quote) =>
+      backslashes.length % 2 === 0 ? backslashes + (quote ? '\\"' : "") : backslashes + (quote || "\\"));
+    return `"${escaped}"`;
+  }
+
   _getDHClientSendOptions() {
     const lines = [];
-    if (this.networkConfig.dhcpOptions) {
-      for (const option of Object.keys(this.networkConfig.dhcpOptions)) {
-        lines.push(`send ${option} "${this.networkConfig.dhcpOptions[option]}";`);
+    const dhcpOptions = this.networkConfig.dhcpOptions || {};
+    for (const option of Object.keys(dhcpOptions)) {
+      const value = dhcpOptions[option];
+      // the key is written bare into the statement, anything else would start a statement of its own
+      if (!/^[a-z0-9-]+(\.[a-z0-9-]+)?$/i.test(option)) {
+        this.log.warn(`Skip dhcp option with invalid name on ${this.name}: ${option}`);
+        continue;
+      }
+      if (DHCLIENT_SEND_FORMATS[option] === "uint32") {
+        // dhclient wants a bare number here, a quoted one fails parsing and drops every option after it
+        const n = util.toBoundedInt(value, 1, 4294967295);
+        if (n === null) {
+          this.log.warn(`Skip dhcp option ${option} with invalid value on ${this.name}: ${value}`);
+          continue;
+        }
+        lines.push(`send ${option} ${n};`);
+      } else {
+        lines.push(`send ${option} ${this._quotedDHClientString(value)};`);
       }
     }
     return lines;
@@ -1167,7 +1199,8 @@ class InterfaceBasePlugin extends Plugin {
       const dhcpOptions = this._getDHClientSendOptions();
       let dhclientConf = await fs.readFileAsync(`${r.getFireRouterHome()}/etc/dhclient.conf.template`, {encoding: "utf8"});
       dhclientConf=this._overrideNTPoverDHCP(dhclientConf);
-      dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, dhcpOptions.join("\n"));
+      // a function, so $& or $$ in an option value is written as typed
+      dhclientConf = dhclientConf.replace(/%ADDITIONAL_OPTIONS%/g, () => dhcpOptions.join("\n"));
       await fs.writeFileAsync(this._getDHClientConfigPath(), dhclientConf);
       await fs.writeFileAsync(this._getDHClientEnvPath(), this._getDHClientEnvContent());
       await execFile("sudo", ["systemctl", "restart", `firerouter_dhclient@${this.name}`]).catch((err) => {
