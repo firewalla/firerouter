@@ -160,6 +160,21 @@ class DNSPlugin extends Plugin {
     return null;
   }
 
+  // a DHCP WAN with a carrier whose resolv.conf is about to be filled: a DHCPv4 WAN without an IPv4
+  // address yet, or DHCP/DHCPv6/RA already gave nameservers that applyDnsSettings has not written (it
+  // waits for the apply lock). A static WAN has nothing that would fill it, so it is never awaiting
+  async _findWANAwaitingNameservers(wanIntfPlugins) {
+    for (const wanIntfPlugin of wanIntfPlugins) {
+      if (!wanIntfPlugin.isDHCP() || !await wanIntfPlugin.isInterfacePresent() || await wanIntfPlugin.carrierState() !== "1")
+        continue;
+      if (_.get(wanIntfPlugin, "networkConfig.dhcp") && _.isEmpty(await wanIntfPlugin.getIPv4Addresses().catch(() => null)))
+        return wanIntfPlugin;
+      if (!_.isEmpty(await wanIntfPlugin.getOrigDNSNameservers()) || !_.isEmpty(await wanIntfPlugin.getOrigDNS6Nameservers()))
+        return wanIntfPlugin;
+    }
+    return null;
+  }
+
   // a WAN that still has a carrier in any of the lists beats one without in all of them: the inUse
   // seq fallback and getAllWANPlugins() are both ordered by seq, which puts the (wired) primary
   // first even while it is down. Falling back to a WAN with no carrier keeps an upstream at all
@@ -193,13 +208,17 @@ class DNSPlugin extends Plugin {
     const inUseWanIntfPlugins = routingPlugin.getInUseWANPlugins() || [];
     let intfPlugin = null;
     if (wanIntfPlugins && wanIntfPlugins.length > 0) {
-      // an active WAN is only passed over when its resolv.conf has no nameserver at all: linking it
-      // would leave dnsmasq with no upstream, which is worse than borrowing one from another WAN.
-      // an active WAN without a carrier is still kept, so this never overrides the primary/standby
-      // choice routing has made
+      // an active WAN waiting for its nameservers beats any WAN without a carrier: they are written
+      // into the linked resolv.conf in place, while any other link is only redone on a later reapply
+      // and can leave dnsmasq on a dead resolver for good. Otherwise borrow, only from a WAN with a
+      // carrier. An active WAN without a carrier but with nameservers is still kept before
+      // borrowing, so this never overrides the primary/standby choice routing has made
       const borrowable = (plugins) => plugins.filter(p => !this._isStandbyBackup(routingPlugin, p));
-      intfPlugin = await this._findTentativeWAN([wanIntfPlugins])
-        || await this._findTentativeWAN([borrowable(inUseWanIntfPlugins), borrowable(routingPlugin.getAllWANPlugins() || [])])
+      intfPlugin = await this._findWANWithNameservers(wanIntfPlugins, true)
+        || await this._findWANAwaitingNameservers(wanIntfPlugins)
+        || await this._findWANWithNameservers(wanIntfPlugins, false)
+        || await this._findWANWithNameservers(borrowable(inUseWanIntfPlugins), true)
+        || await this._findWANWithNameservers(borrowable(routingPlugin.getAllWANPlugins() || []), true)
         || wanIntfPlugins[0];
     } else if (inUseWanIntfPlugins.length > 0) {
       // use first connected WAN's name server as tentative upstream DNS nameserver, else any WAN's: a Wi-Fi WAN between
