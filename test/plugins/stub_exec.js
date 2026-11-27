@@ -79,9 +79,23 @@ function build(Klass, name, config) {
   return plugin;
 }
 
+// the interface plugin as the dhcp plugins see it through plugin_loader, with the change
+// subscribers it collects exposed for assertions
+function fakeInterface(overrides = {}) {
+  const subscribers = [];
+  return Object.assign({
+    subscribers,
+    _publishChangeTo: (plugin) => subscribers.push(plugin),
+    isInterfacePresent: async () => true,
+    getIPv4Addresses: async () => null,
+    getDeprecatedIPv6Prefixes: async () => [],
+  }, overrides);
+}
+
 module.exports = {
   load,
   build,
+  fakeInterface,
   calls,
   reset: () => { calls.length = 0; failing.length = 0; Object.keys(outputs).forEach(k => delete outputs[k]); },
   failOn: (needle) => { failing.push(needle); },
