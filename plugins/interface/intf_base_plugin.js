@@ -1234,7 +1234,8 @@ class InterfaceBasePlugin extends Plugin {
 
   async applyDnsSettings() {
     if (this.isDHCP() || (this.networkConfig.nameservers && this.networkConfig.nameservers.length > 0) || (this.networkConfig.dns6Servers && this.networkConfig.dns6Servers.length > 0)) {
-      await fs.accessAsync(r.getInterfaceResolvConfPath(this.name), fs.constants.F_OK).then(() => {
+      // lstat, not access: older versions left a symlink into root-owned /run/resolvconf, and writing through it fails with EACCES
+      await fs.lstatAsync(r.getInterfaceResolvConfPath(this.name)).then(() => {
         this.log.info(`Remove old resolv conf for ${this.name}`);
         return fs.unlinkAsync(r.getInterfaceResolvConfPath(this.name));
       }).catch((err) => {});
